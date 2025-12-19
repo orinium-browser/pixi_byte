@@ -11,6 +11,11 @@ pub mod error;
 pub use error::{JSError, JSResult};
 pub use value::JSValue;
 
+// テストで使用するための再エクスポート
+pub use lexer::{Lexer, TokenKind};
+pub use parser::Parser;
+pub use compiler::{Compiler, Opcode};
+
 /// メインインターフェース
 pub struct JSEngine {
     /// 仮想マシンインスタンス
