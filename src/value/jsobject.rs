@@ -117,10 +117,10 @@ impl JSObject {
 
     /// プロパティを削除
     pub fn delete(&mut self, key: &str) -> bool {
-        if let Some(prop) = self.properties.borrow().get(key) {
-            if !prop.configurable {
-                return false; // 設定変更不可
-            }
+        if let Some(prop) = self.properties.borrow().get(key)
+            && !prop.configurable
+        {
+            return false; // 設定変更不可
         }
 
         self.properties.borrow_mut().remove(key).is_some()

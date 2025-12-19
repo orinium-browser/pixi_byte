@@ -195,12 +195,10 @@ impl Parser {
             } else {
                 return Err(JSError::SyntaxError("Expected parameter name".to_string()));
             }
-            if !self.check(&TokenKind::RightParen) {
-                if !self.match_token(&TokenKind::Comma) {
-                    return Err(JSError::SyntaxError(
-                        "Expected ',' in parameter list".to_string(),
-                    ));
-                }
+            if !self.check(&TokenKind::RightParen) && !self.match_token(&TokenKind::Comma) {
+                return Err(JSError::SyntaxError(
+                    "Expected ',' in parameter list".to_string(),
+                ));
             }
         }
         if !self.match_token(&TokenKind::RightParen) {
@@ -534,12 +532,10 @@ impl Parser {
 
             elements.push(self.parse_assignment()?);
 
-            if !self.check(&TokenKind::RightBracket) {
-                if !self.match_token(&TokenKind::Comma) {
-                    return Err(JSError::SyntaxError(
-                        "Expected ',' or ']' in array literal".to_string(),
-                    ));
-                }
+            if !self.check(&TokenKind::RightBracket) && !self.match_token(&TokenKind::Comma) {
+                return Err(JSError::SyntaxError(
+                    "Expected ',' or ']' in array literal".to_string(),
+                ));
             }
         }
 
@@ -577,12 +573,10 @@ impl Parser {
 
             properties.push((key, value));
 
-            if !self.check(&TokenKind::RightBrace) {
-                if !self.match_token(&TokenKind::Comma) {
-                    return Err(JSError::SyntaxError(
-                        "Expected ',' or '}' in object literal".to_string(),
-                    ));
-                }
+            if !self.check(&TokenKind::RightBrace) && !self.match_token(&TokenKind::Comma) {
+                return Err(JSError::SyntaxError(
+                    "Expected ',' or '}' in object literal".to_string(),
+                ));
             }
         }
 
@@ -607,12 +601,10 @@ impl Parser {
 
             args.push(self.parse_expression()?);
 
-            if !self.check(&TokenKind::RightParen) {
-                if !self.match_token(&TokenKind::Comma) {
-                    return Err(JSError::SyntaxError(
-                        "Expected ',' or ')' in function call".to_string(),
-                    ));
-                }
+            if !self.check(&TokenKind::RightParen) && !self.match_token(&TokenKind::Comma) {
+                return Err(JSError::SyntaxError(
+                    "Expected ',' or ')' in function call".to_string(),
+                ));
             }
         }
 

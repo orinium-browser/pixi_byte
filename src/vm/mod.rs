@@ -59,12 +59,8 @@ impl VM {
                         (JSValue::String(s1), JSValue::String(s2)) => {
                             JSValue::String(format!("{}{}", s1, s2))
                         }
-                        (JSValue::String(s), _) => {
-                            JSValue::String(format!("{}{}", s, b.to_string()))
-                        }
-                        (_, JSValue::String(s)) => {
-                            JSValue::String(format!("{}{}", a.to_string(), s))
-                        }
+                        (JSValue::String(s), _) => JSValue::String(format!("{}{}", s, b)),
+                        (_, JSValue::String(s)) => JSValue::String(format!("{}{}", a, s)),
                         _ => JSValue::Number(a.to_number() + b.to_number()),
                     }
                 })?,
