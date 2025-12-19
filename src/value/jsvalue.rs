@@ -19,7 +19,7 @@ pub enum JSValue {
 
 impl JSValue {
     /// 値を文字列に変換（ToString 抽象操作）
-    pub fn to_string(&self) -> String {
+    pub fn to_console_string(&self) -> String {
         match self {
             JSValue::Undefined => "undefined".to_string(),
             JSValue::Null => "null".to_string(),
