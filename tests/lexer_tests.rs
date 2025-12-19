@@ -11,6 +11,20 @@ fn test_tokenize_numbers() {
 }
 
 #[test]
+fn test_weird_number_digits() {
+    let mut lexer = Lexer::new(".0.1 0.2.1");
+    let tokens = lexer.tokenize().unwrap();
+
+    assert!(matches!(tokens[0].kind, TokenKind::Number(0.0)));
+    assert!(matches!(tokens[1].kind, TokenKind::Dot));
+    assert!(matches!(tokens[2].kind, TokenKind::Number(1.0)));
+    assert!(matches!(tokens[3].kind, TokenKind::Number(0.2)));
+    assert!(matches!(tokens[4].kind, TokenKind::Dot));
+    assert!(matches!(tokens[5].kind, TokenKind::Number(1.0)));
+
+}
+
+#[test]
 fn test_tokenize_operators() {
     let mut lexer = Lexer::new("+ - * / % ** ++ --");
     let tokens = lexer.tokenize().unwrap();
