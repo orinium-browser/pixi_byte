@@ -146,7 +146,8 @@ impl Compiler {
                     self.chunk.emit(Opcode::LoadConst(idx));
                 }
                 self.chunk.emit(Opcode::StoreVar(name));
-                // 変数宣言が最後の文の場合、undefined を返す（JavaScriptの仕様）
+
+                // 変数宣言の文は常にundefinedを返す
                 if is_last {
                     let idx = self.chunk.add_constant(JSValue::Undefined);
                     self.chunk.emit(Opcode::LoadConst(idx));
@@ -234,7 +235,8 @@ impl Compiler {
 
                 match *left {
                     Expression::Identifier(name) => {
-                        self.chunk.emit(Opcode::StoreVar(name));
+                        self.chunk.emit(Opcode::StoreVar(name.clone()));
+                        self.chunk.emit(Opcode::LoadVar(name));
                     }
                     _ => {
                         return Err(JSError::SyntaxError("Invalid assignment target".to_string()));
