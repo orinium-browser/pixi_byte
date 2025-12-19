@@ -17,7 +17,11 @@ pub enum Statement {
         init: Option<Expression>,
     },
     Return(Option<Expression>),
-    FunctionDeclaration { name: String, params: Vec<String>, body: Vec<Statement> },
+    FunctionDeclaration {
+        name: String,
+        params: Vec<String>,
+        body: Vec<Statement>,
+    },
     // TODO: 他の文を追加
 }
 
@@ -193,7 +197,9 @@ impl Parser {
             }
             if !self.check(&TokenKind::RightParen) {
                 if !self.match_token(&TokenKind::Comma) {
-                    return Err(JSError::SyntaxError("Expected ',' in parameter list".to_string()));
+                    return Err(JSError::SyntaxError(
+                        "Expected ',' in parameter list".to_string(),
+                    ));
                 }
             }
         }
@@ -247,7 +253,10 @@ impl Parser {
     /// return 文をパース
     fn parse_return_statement(&mut self) -> JSResult<Statement> {
         self.advance(); // consume 'return'
-        if self.check(&TokenKind::Semicolon) || self.check(&TokenKind::Eof) || self.check(&TokenKind::RightBrace) {
+        if self.check(&TokenKind::Semicolon)
+            || self.check(&TokenKind::Eof)
+            || self.check(&TokenKind::RightBrace)
+        {
             self.consume_semicolon();
             return Ok(Statement::Return(None));
         }
@@ -415,7 +424,11 @@ impl Parser {
                             self.advance();
                             Expression::Literal(Literal::String(s))
                         }
-                        _ => return Err(JSError::SyntaxError("Expected property name after '.'".to_string())),
+                        _ => {
+                            return Err(JSError::SyntaxError(
+                                "Expected property name after '.'".to_string(),
+                            ));
+                        }
                     };
                     expr = Expression::MemberAccess {
                         object: Box::new(expr),
@@ -458,9 +471,9 @@ impl Parser {
         let token = self.peek().clone();
 
         match &token.kind {
-            TokenKind::Number(n) => {
+            TokenKind::NumberLiteral(n) => {
                 self.advance();
-                Ok(Expression::Literal(Literal::Number(*n)))
+                Ok(Expression::Literal(Literal::Number((*n).parse().unwrap())))
             }
             TokenKind::String(s) => {
                 let s = s.clone();
@@ -496,12 +509,8 @@ impl Parser {
                 }
                 Ok(expr)
             }
-            TokenKind::LeftBracket => {
-                self.parse_array_literal()
-            }
-            TokenKind::LeftBrace => {
-                self.parse_object_literal()
-            }
+            TokenKind::LeftBracket => self.parse_array_literal(),
+            TokenKind::LeftBrace => self.parse_object_literal(),
             _ => Err(JSError::SyntaxError(format!(
                 "Unexpected token: {:?}",
                 token.kind
@@ -527,7 +536,9 @@ impl Parser {
 
             if !self.check(&TokenKind::RightBracket) {
                 if !self.match_token(&TokenKind::Comma) {
-                    return Err(JSError::SyntaxError("Expected ',' or ']' in array literal".to_string()));
+                    return Err(JSError::SyntaxError(
+                        "Expected ',' or ']' in array literal".to_string(),
+                    ));
                 }
             }
         }
@@ -556,7 +567,9 @@ impl Parser {
 
             // ':' を期待
             if !self.match_token(&TokenKind::Colon) {
-                return Err(JSError::SyntaxError("Expected ':' after property key".to_string()));
+                return Err(JSError::SyntaxError(
+                    "Expected ':' after property key".to_string(),
+                ));
             }
 
             // 値をパース
@@ -566,7 +579,9 @@ impl Parser {
 
             if !self.check(&TokenKind::RightBrace) {
                 if !self.match_token(&TokenKind::Comma) {
-                    return Err(JSError::SyntaxError("Expected ',' or '}' in object literal".to_string()));
+                    return Err(JSError::SyntaxError(
+                        "Expected ',' or '}' in object literal".to_string(),
+                    ));
                 }
             }
         }
@@ -594,7 +609,9 @@ impl Parser {
 
             if !self.check(&TokenKind::RightParen) {
                 if !self.match_token(&TokenKind::Comma) {
-                    return Err(JSError::SyntaxError("Expected ',' or ')' in function call".to_string()));
+                    return Err(JSError::SyntaxError(
+                        "Expected ',' or ')' in function call".to_string(),
+                    ));
                 }
             }
         }
@@ -644,4 +661,3 @@ impl Parser {
         matches!(self.peek().kind, TokenKind::Eof)
     }
 }
-
