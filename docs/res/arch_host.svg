@@ -1,0 +1,29 @@
+<svg viewBox="0 0 600 400" xmlns="http://www.w3.org/2000/svg">
+    <!-- 外枠: ホスト側 -->
+    <rect x="50" y="30" width="500" height="340" fill="none" stroke="#333" stroke-width="2" rx="5"/>
+    <text x="60" y="55" font-family="monospace" font-size="16" fill="#333" font-weight="bold">OriniumBrowser (ホスト側)</text>
+
+    <!-- Web APIs ボックス -->
+    <rect x="80" y="80" width="440" height="60" fill="#e3f2fd" stroke="#1976d2" stroke-width="2" rx="3"/>
+    <text x="95" y="115" font-family="monospace" font-size="14" fill="#1565c0">Web APIs (DOM, Fetch, etc.)</text>
+
+    <!-- FFI Boundary 矢印と境界線 -->
+    <line x1="300" y1="140" x2="300" y2="180" stroke="#666" stroke-width="2" marker-end="url(#arrowhead)"/>
+    <text x="220" y="165" font-family="monospace" font-size="12" fill="#666">FFI Boundary</text>
+
+    <!-- PixiByte JS Engine ボックス -->
+    <rect x="80" y="200" width="440" height="140" fill="#fff3e0" stroke="#f57c00" stroke-width="2" rx="3"/>
+    <text x="95" y="230" font-family="monospace" font-size="14" fill="#e65100" font-weight="bold">PixiByte JS Engine (Core)</text>
+
+    <!-- 内部コンポーネント -->
+    <text x="110" y="260" font-family="monospace" font-size="13" fill="#333">- ECMAScript Runtime</text>
+    <text x="110" y="290" font-family="monospace" font-size="13" fill="#333">- Bytecode VM</text>
+    <text x="110" y="320" font-family="monospace" font-size="13" fill="#333">- Garbage Collector</text>
+
+    <!-- 矢印マーカー定義 -->
+    <defs>
+        <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+            <polygon points="0 0, 10 3, 0 6" fill="#666"/>
+        </marker>
+    </defs>
+</svg>
