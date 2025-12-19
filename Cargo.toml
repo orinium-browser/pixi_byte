@@ -11,7 +11,7 @@ repository = "https://github.com/oriniumbrowser/pixi_byte"
 rustc-hash = "2.1"
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 
 [[bench]]
 name = "vm_bench"
