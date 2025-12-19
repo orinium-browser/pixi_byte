@@ -261,39 +261,115 @@ Object Creation → Heap Allocation → GC Tracking
 
 ## 実装ロードマップ
 
-### Phase 1: 基礎実装（v0.1.0）
+### Phase 1: 基礎実装
 
 **目標**: 基本的なJavaScript実行環境
 
 - [x] プロジェクトセットアップ
-- [ ] Lexer: 基本トークン認識
-- [ ] Parser: 式と基本的な文のパース
-- [ ] AST定義
-- [ ] バイトコード命令セット設計
-- [ ] 単純なスタックベースVM
-- [ ] 基本的な値表現（Number, String, Boolean, Undefined, Null）
-- [ ] グローバルスコープ
-- [ ] 基本的なGC（Mark-and-Sweep）
+- [x] Lexer: 基本トークン認識
+- [x] Parser: 式と基本的な文のパース
+- [x] AST定義
+- [x] バイトコード命令セット設計
+- [x] 単純なスタックベースVM
+- [x] 基本的な値表現（Number, String, Boolean, Undefined, Null）
+- [x] グローバルスコープ
+- [x] 基本的なGC（Mark-and-Sweep）
 
 **サポート機能**:
-- 変数宣言（`var`, `let`, `const`）
-- 算術演算、論理演算
-- if/else文
-- while/forループ
-- 関数宣言と呼び出し
+- [x] 変数宣言（`var`, `let`, `const`）
+- [x] 算術演算、論理演算
+- [x] if/else文
+- [x] while/forループ
+- [x] 関数宣言と呼び出し
 
-### Phase 2: ECMAScript コア機能（v0.2.0）
+### Phase 2: ECMAScript コア機能
 
-- [ ] 完全なパーサー実装（全文法）
-- [ ] オブジェクトとプロトタイプ
-- [ ] 配列
-- [ ] クロージャ
-- [ ] `this`バインディング
-- [ ] 例外処理（try-catch-finally）
-- [ ] 正規表現
-- [ ] 組み込みオブジェクト（Object, Array, String, Number等）
+**目標**: JavaScriptの基本的なオブジェクト指向機能とクロージャのサポート
+#### 2.1 オブジェクトシステム基礎
+- [x] オブジェクト型の実装（JSObject）
+- [x] プロパティアクセス（get/set）
+- [x] プロトタイプチェーン
+- [ ] `Object.create()`, `Object.getPrototypeOf()`
+- [ ] プロパティディスクリプタ（基本）
+- [ ] `hasOwnProperty`, `in` 演算子
 
-### Phase 3: 最適化と最新仕様（v0.3.0）
+#### 2.2 配列
+- [x] 配列の基本実装（JSArray）
+- [x] インデックスアクセス `arr[0]`（基本構造）
+- [x] `length` プロパティ
+- [x] 配列メソッド:
+  - [x] `push`, `pop`, `shift`, `unshift`
+  - [ ] `slice`, `splice`
+  - [ ] `map`, `filter`, `reduce`
+  - [ ] `forEach`, `find`, `findIndex`
+  - [ ] `join`, `concat`
+  - [ ] `indexOf`, `includes`
+- [ ] 配列リテラル構文 `[1, 2, 3]`（パーサー拡張が必要）
+
+#### 2.3 関数とクロージャ
+- [ ] 関数オブジェクト（Function型）
+- [ ] クロージャの実装（変数キャプチャ）
+- [ ] 関数スコープとレキシカルスコープ
+- [ ] 即座実行関数式（IIFE）
+- [ ] アロー関数 `() => {}`
+- [ ] 可変長引数（`arguments` オブジェクト）
+- [ ] デフォルト引数
+- [ ] レストパラメータ `...args`
+
+#### 2.4 `this` バインディング
+- [ ] 関数呼び出しでの`this`
+- [ ] メソッド呼び出しでの`this`
+- [ ] `call`, `apply`, `bind`
+- [ ] アロー関数の`this`継承
+
+#### 2.5 例外処理
+- [ ] `try-catch-finally` 文
+- [ ] `throw` 文
+- [ ] Error オブジェクト
+- [ ] スタックトレース
+
+#### 2.6 組み込みオブジェクト
+- [ ] `Object` グローバルオブジェクト
+- [ ] `Array` コンストラクタ
+- [ ] `String` オブジェクトとメソッド
+  - [ ] `charAt`, `charCodeAt`, `substring`, `substr`, `slice`
+  - [ ] `indexOf`, `lastIndexOf`, `includes`
+  - [ ] `split`, `replace`, `trim`
+  - [ ] `toUpperCase`, `toLowerCase`
+- [ ] `Number` オブジェクトとメソッド
+  - [ ] `toFixed`, `toPrecision`, `toExponential`
+  - [ ] `parseInt`, `parseFloat`
+  - [ ] `isNaN`, `isFinite`
+- [ ] `Boolean` オブジェクト
+- [ ] `Math` オブジェクト
+  - [ ] `abs`, `floor`, `ceil`, `round`
+  - [ ] `max`, `min`, `pow`, `sqrt`
+  - [ ] `sin`, `cos`, `tan`, `random`
+- [ ] `Date` オブジェクト（基本）
+- [ ] `RegExp` オブジェクト（基本）
+
+#### 2.7 パーサー拡張
+- [ ] オブジェクトリテラル `{ key: value }`
+- [ ] メンバーアクセス `obj.prop`, `obj[prop]`
+- [ ] メソッド定義構文
+- [ ] 配列/オブジェクト分割代入
+- [ ] スプレッド構文 `...`
+- [ ] テンプレートリテラル `` `hello ${name}` ``
+
+#### 2.8 コンパイラ拡張
+- [ ] オブジェクト作成命令
+- [ ] プロパティアクセス命令
+- [ ] 関数定義命令
+- [ ] クロージャキャプチャ
+- [ ] 例外ハンドリング命令
+
+**Phase 2 完了基準**:
+- オブジェクト、配列、関数、クロージャが動作
+- 基本的な組み込みオブジェクトが使用可能
+- 例外処理が機能
+- Test262の基本テストの50%以上が通過
+
+### Phase 3: 最適化と最新仕様
 
 - [ ] Hidden Classes（Shape-based optimization）
 - [ ] インライン化
@@ -305,7 +381,7 @@ Object Creation → Heap Allocation → GC Tracking
 - [ ] Map, Set, WeakMap, WeakSet
 - [ ] Proxy, Reflect
 
-### Phase 4: JITコンパイラ（v1.0.0）
+### Phase 4: JITコンパイラ
 
 - [ ] JITコンパイラ設計
 - [ ] ホットパス検出
@@ -314,7 +390,7 @@ Object Creation → Heap Allocation → GC Tracking
 - [ ] デオプティマイゼーション
 - [ ] インライン化、型推論
 
-### Phase 5: 高度な最適化（v1.x）
+### Phase 5: 高度な最適化
 
 - [ ] 世代別GC
 - [ ] 並行/インクリメンタルGC
