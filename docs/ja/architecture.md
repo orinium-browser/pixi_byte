@@ -417,6 +417,10 @@ Object Creation → Heap Allocation → GC Tracking
 3. **ECMAScript Conformance Tests**: Test262準拠テスト
 4. **Performance Benchmarks**: 各種ベンチマーク
 
+### テストの配置ポリシー
+- すべてのテストはリポジトリルートの `tests/` ディレクトリに配置します。
+  - `src/` 内の `#[cfg(test)]` やモジュール内テストは許容しません（例外的に非常に局所的で短命なテストを置く場合のみチーム合意の上で可）。
+
 ### Test262準拠
 
 ECMAScript仕様への準拠を確認するため、公式のTest262テストスイートを使用します。

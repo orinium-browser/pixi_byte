@@ -1,14 +1,16 @@
 use crate::compiler::{BytecodeChunk, Opcode};
 use crate::error::{JSError, JSResult};
+use crate::runtime::Environment;
 use crate::value::JSValue;
-use rustc_hash::FxHashMap;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// 仮想マシン
 pub struct VM {
     /// オペランドスタック
     stack: Vec<JSValue>,
-    /// グローバル変数テーブル
-    globals: FxHashMap<String, JSValue>,
+    /// グローバル環境（レキシカルスコープチェーンのルート）
+    pub env: Rc<RefCell<Environment>>,
 }
 
 impl VM {
@@ -16,11 +18,11 @@ impl VM {
     pub fn new() -> Self {
         Self {
             stack: Vec::new(),
-            globals: FxHashMap::default(),
+            env: Rc::new(RefCell::new(Environment::new())),
         }
     }
 
-    /// バイトコードを実行
+    /// バイトコードを実行（トップレベルはグローバル環境を使用）
     pub fn execute(&mut self, chunk: BytecodeChunk) -> JSResult<JSValue> {
         let mut pc = 0; // プログラムカウンタ
 
@@ -35,15 +37,18 @@ impl VM {
                 }
                 Opcode::LoadVar(name) => {
                     let value = self
-                        .globals
+                        .env
+                        .borrow()
                         .get(name)
-                        .cloned()
                         .unwrap_or(JSValue::Undefined);
                     self.stack.push(value);
                 }
                 Opcode::StoreVar(name) => {
                     if let Some(value) = self.stack.pop() {
-                        self.globals.insert(name.clone(), value);
+                        // 既存のスコープチェーンに存在すれば set、なければ現在の env に define
+                        if !self.env.borrow().set(name, value.clone()) {
+                            self.env.borrow().define(name.clone(), value);
+                        }
                     } else {
                         return Err(JSError::InternalError("Stack underflow".to_string()));
                     }
@@ -210,8 +215,20 @@ impl VM {
                 }
                 Opcode::CreateFunction(idx) => {
                     // 定数プールの関数オブジェクト（BytecodeChunk）をそのままプッシュ
-                    let func = chunk.constants[*idx].clone();
-                    self.stack.push(func);
+                    let func_const = chunk.constants[*idx].clone();
+                    match func_const {
+                        JSValue::Function(func_chunk, params, _maybe_env) => {
+                            let captured = Some(self.env.clone());
+                            let func = JSValue::Function(func_chunk, params, captured);
+                            self.stack.push(func);
+                        }
+                        _other => {
+                            // 不正な定数タイプ
+                            return Err(JSError::TypeError(
+                                "CreateFunction: constant is not a function".to_string(),
+                            ));
+                        }
+                    }
                 }
                 Opcode::CallFunction(arg_count) => {
                     // スタック: [..., arg1, arg2, ..., func]
@@ -225,21 +242,35 @@ impl VM {
                     let func = self.pop()?;
 
                     match func {
-                        JSValue::Function(func_chunk, params) => {
-                            // 新しいVMを作って関数を実行（簡易実装）
-                            let mut new_vm = VM::new();
+                        JSValue::Function(func_chunk, params, captured_env_opt) => {
+                            // 新しい環境を作成し、キャプチャされた環境または現在の環境を外側に設定
+                            let outer = match captured_env_opt {
+                                Some(env_rc) => env_rc,
+                                None => self.env.clone(),
+                            };
+                            let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
 
                             // パラメータ名があれば、それに対応して引数をセット
                             for (i, arg) in args.into_iter().enumerate() {
                                 if i < params.len() {
-                                    new_vm.globals.insert(params[i].clone(), arg);
+                                    new_env.borrow().define(params[i].clone(), arg);
                                 } else {
                                     // 余分な引数は argN としても格納
-                                    new_vm.globals.insert(format!("arg{}", i), arg);
+                                    new_env.borrow().define(format!("arg{}", i), arg);
                                 }
                             }
 
-                            let res = new_vm.execute(func_chunk)?;
+                            // スタックと環境を切り替えて同一VMで関数を実行
+                            let old_env = self.env.clone();
+                            let old_stack = std::mem::replace(&mut self.stack, Vec::new());
+                            self.env = new_env;
+
+                            let res = self.execute(func_chunk)?;
+
+                            // 関数実行後、内部スタックを破棄して呼び出し元のスタックを復元
+                            let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
+                            self.env = old_env;
+
                             self.stack.push(res);
                         }
                         _ => {

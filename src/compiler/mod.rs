@@ -186,7 +186,7 @@ impl Compiler {
                 // 現在のチャンクに関数を追加 (chunk, params)
                 let idx = self
                     .chunk
-                    .add_constant(JSValue::Function(function_chunk, params.clone()));
+                    .add_constant(JSValue::Function(function_chunk, params.clone(), None));
                 self.chunk.emit(Opcode::CreateFunction(idx));
 
                 // 関数名を変数としてストア
@@ -346,7 +346,7 @@ impl Compiler {
                 let function_chunk = Compiler::new().compile(program)?;
 
                 // 現在のチャンクに関数オブジェクト（チャンク + params）を追加
-                let func_value = JSValue::Function(function_chunk, params.clone());
+                let func_value = JSValue::Function(function_chunk, params.clone(), None);
                 let idx = self.chunk.add_constant(func_value);
                 self.chunk.emit(Opcode::CreateFunction(idx));
             }
