@@ -1,14 +1,18 @@
 use std::fmt;
+use std::rc::Rc;
+use std::cell::RefCell;
+use super::jsobject::JSObject;
 
 /// JavaScript の値型
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum JSValue {
     Undefined,
     Null,
     Boolean(bool),
     Number(f64),
     String(String),
-    // TODO: Object, Symbol, BigInt 等は後のフェーズで実装
+    Object(Rc<RefCell<JSObject>>),
+    // TODO: Symbol, BigInt 等は後のフェーズで実装
 }
 
 impl JSValue {
@@ -32,6 +36,7 @@ impl JSValue {
                 }
             }
             JSValue::String(s) => s.clone(),
+            JSValue::Object(_) => "[object Object]".to_string(),
         }
     }
 
@@ -50,6 +55,7 @@ impl JSValue {
                 }
                 trimmed.parse().unwrap_or(f64::NAN)
             }
+            JSValue::Object(_) => f64::NAN, // オブジェクトはNaN
         }
     }
 
@@ -60,6 +66,7 @@ impl JSValue {
             JSValue::Boolean(b) => *b,
             JSValue::Number(n) => !n.is_nan() && *n != 0.0,
             JSValue::String(s) => !s.is_empty(),
+            JSValue::Object(_) => true, // オブジェクトは常にtrue
         }
     }
 
@@ -71,6 +78,7 @@ impl JSValue {
             JSValue::Boolean(_) => "boolean",
             JSValue::Number(_) => "number",
             JSValue::String(_) => "string",
+            JSValue::Object(_) => "object",
         }
     }
 
@@ -88,6 +96,10 @@ impl JSValue {
                 }
             }
             (JSValue::String(a), JSValue::String(b)) => a == b,
+            (JSValue::Object(a), JSValue::Object(b)) => {
+                // オブジェクトは参照が同じ場合のみtrue
+                Rc::ptr_eq(a, b)
+            }
             _ => false,
         }
     }
@@ -113,6 +125,12 @@ impl JSValue {
 
             _ => false,
         }
+    }
+}
+
+impl PartialEq for JSValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.strict_equals(other)
     }
 }
 
