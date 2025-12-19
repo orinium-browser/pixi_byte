@@ -260,6 +260,9 @@ impl VM {
                                 }
                             }
 
+                            // 基本的な `this` バインディングをセット（現時点では undefined）
+                            new_env.borrow().define("this".to_string(), JSValue::Undefined);
+
                             // スタックと環境を切り替えて同一VMで関数を実行
                             let old_env = self.env.clone();
                             let old_stack = std::mem::replace(&mut self.stack, Vec::new());
@@ -276,6 +279,72 @@ impl VM {
                         _ => {
                             return Err(JSError::TypeError(
                                 "CallFunction: not a function".to_string(),
+                            ));
+                        }
+                    }
+                }
+                Opcode::CallMethod(arg_count) => {
+                    // スタック: ..., object, property, arg1, arg2, ..., argN
+                    // まず引数を取り出す
+                    let mut args = Vec::new();
+                    for _ in 0..*arg_count {
+                        args.push(self.pop()?);
+                    }
+                    args.reverse();
+
+                    // 次に property と object を取り出す
+                    let property = self.pop()?;
+                    let object = self.pop()?;
+
+                    // property を文字列化してプロパティアクセス
+                    let key_str = property.to_string();
+
+                    match object.clone() {
+                        JSValue::Object(obj_ref) => {
+                            let method = obj_ref.borrow().get(&key_str);
+                            match method {
+                                JSValue::Function(func_chunk, params, captured_env_opt) => {
+                                    // outer は関数生成時のキャプチャまたは現在の env
+                                    let outer = match captured_env_opt {
+                                        Some(env_rc) => env_rc,
+                                        None => self.env.clone(),
+                                    };
+                                    let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
+
+                                    // パラメータをバインド
+                                    for (i, arg) in args.into_iter().enumerate() {
+                                        if i < params.len() {
+                                            new_env.borrow().define(params[i].clone(), arg);
+                                        } else {
+                                            new_env.borrow().define(format!("arg{}", i), arg);
+                                        }
+                                    }
+
+                                    // this を receiver にセット
+                                    new_env.borrow().define("this".to_string(), object.clone());
+
+                                    // 実行
+                                    let old_env = self.env.clone();
+                                    let old_stack = std::mem::replace(&mut self.stack, Vec::new());
+                                    self.env = new_env;
+
+                                    let res = self.execute(func_chunk)?;
+
+                                    let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
+                                    self.env = old_env;
+
+                                    self.stack.push(res);
+                                }
+                                _ => {
+                                    return Err(JSError::TypeError(
+                                        "CallMethod: property is not a function".to_string(),
+                                    ));
+                                }
+                            }
+                        }
+                        _ => {
+                            return Err(JSError::TypeError(
+                                "CallMethod: receiver is not an object".to_string(),
                             ));
                         }
                     }

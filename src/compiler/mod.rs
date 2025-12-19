@@ -57,6 +57,7 @@ pub enum Opcode {
     // 関数操作
     CreateFunction(usize), // 定数プール内の関数オブジェクトを生成してプッシュ（func chunk idx）
     CallFunction(usize),   // 呼び出し（引数個数） - スタックから argN..arg1, func を使う
+    CallMethod(usize),     // メソッド呼び出し（arg count） - スタック: ..., object, property, arg1..argN
 
     // 制御フロー
     Jump(usize),        // 無条件ジャンプ
@@ -351,18 +352,34 @@ impl Compiler {
                 self.chunk.emit(Opcode::CreateFunction(idx));
             }
             Expression::Call { callee, args } => {
-                // 呼び出し対象をコンパイル
-                self.compile_expression(*callee)?;
+                // MemberAccess (obj.prop(args)) は receiver を使うので専用の CallMethod を出す
+                if let Expression::MemberAccess { object, property, computed } = *callee {
+                    self.compile_expression(*object)?;
+                    if computed {
+                        self.compile_expression(*property)?;
+                    } else {
+                        self.compile_expression(*property)?;
+                    }
 
-                // 引数をコンパイル
-                for arg in &args {
-                    self.compile_expression(arg.clone())?;
+                    // 引数をコンパイル
+                    for arg in &args {
+                        self.compile_expression(arg.clone())?;
+                    }
+
+                    // CallMethod は property と object を使ってメソッドを取得し呼び出す
+                    let arg_count = args.len();
+                    // 新 opcode を直接 encode as CallFunction for non-member and CallMethod for member
+                    self.chunk.emit(Opcode::CallMethod(arg_count));
+                } else {
+                    // 通常の関数呼び出し
+                    self.compile_expression(*callee)?;
+                    for arg in &args {
+                        self.compile_expression(arg.clone())?;
+                    }
+                    let arg_count = args.len();
+                    self.chunk.emit(Opcode::CallFunction(arg_count));
                 }
-
-                // 引数の数だけスタックからポップ
-                let arg_count = args.len();
-                self.chunk.emit(Opcode::CallFunction(arg_count));
-            }
+             }
         }
         Ok(())
     }
