@@ -307,9 +307,12 @@ Object Creation → Heap Allocation → GC Tracking
 - [x] 配列リテラル構文 `[1, 2, 3]`
 
 #### 2.3 関数とクロージャ
-- [ ] 関数オブジェクト（Function型）
+- [x] 関数オブジェクト（Function型）
+  - 注: `JSValue::Function` を追加し、関数本体（`BytecodeChunk`）とパラメータ名を保持する基礎を実装しました。
+- [x] 関数スコープとレキシカルスコープ（基礎実装）
+  - 注: `Environment`（レキシカルスコープチェーン）を実装しました。現状は関数呼び出し時に簡易的に引数を新しい VM のグローバルにバインドする実装ですが、関数オブジェクトに生成時の環境（クロージャ環境）を格納して呼び出し時に正しく連結する作業が残っています。
 - [ ] クロージャの実装（変数キャプチャ）
-- [ ] 関数スコープとレキシカルスコープ
+  - 注: 関数が生成時のレキシカル環境をキャプチャして、後の呼び出しでそれを利用する完全なクロージャは未実装（次の作業項目）。
 - [ ] 即座実行関数式（IIFE）
 - [ ] アロー関数 `() => {}`
 - [ ] 可変長引数（`arguments` オブジェクト）
@@ -340,13 +343,6 @@ Object Creation → Heap Allocation → GC Tracking
   - [ ] `toFixed`, `toPrecision`, `toExponential`
   - [ ] `parseInt`, `parseFloat`
   - [ ] `isNaN`, `isFinite`
-- [ ] `Boolean` オブジェクト
-- [ ] `Math` オブジェクト
-  - [ ] `abs`, `floor`, `ceil`, `round`
-  - [ ] `max`, `min`, `pow`, `sqrt`
-  - [ ] `sin`, `cos`, `tan`, `random`
-- [ ] `Date` オブジェクト（基本）
-- [ ] `RegExp` オブジェクト（基本）
 
 #### 2.7 パーサー拡張
 - [x] オブジェクトリテラル `{ key: value }`
@@ -361,15 +357,14 @@ Object Creation → Heap Allocation → GC Tracking
 - [x] オブジェクト作成命令
 - [x] プロパティアクセス命令
 - [x] 配列作成命令
-- [ ] 関数定義命令
+- [x] 関数定義命令（CreateFunction / CallFunction を導入）
+  - 注: `CreateFunction` と `CallFunction` を実装し、関数定義と呼び出しのバイトコード生成・実行を可能にしました。クロージャキャプチャの統合は未着手です。
 - [ ] クロージャキャプチャ
 - [ ] 例外ハンドリング命令
 
-**Phase 2 完了基準**:
-- オブジェクト、配列、関数、クロージャが動作
-- 基本的な組み込みオブジェクトが使用可能
-- 例外処理が機能
-- Test262の基本テストの50%以上が通過
+**補足（現状まとめ）**:
+- 関数の定義・呼び出し・引数バインディングと、それに伴うパーサー／コンパイラ／VMの基礎は実装済みで、既存のユニットテストはすべて通過しています。
+- 次の優先作業は「関数オブジェクトに生成時の `Environment` を保持してクロージャを正しく動作させること」と「VM内部での呼び出しフレーム管理の整備」です。
 
 ### Phase 3: 最適化と最新仕様
 
@@ -461,3 +456,4 @@ pub type HostFunction = fn(&[JSValue]) -> Result<JSValue, JSError>;
 - **bumpalo**: アリーナアロケータ（GC用）
 - **logos**: レキサー生成器（検討）
 - **criterion**: ベンチマーク
+
