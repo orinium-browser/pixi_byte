@@ -46,6 +46,14 @@ pub enum Opcode {
     RightShift,
     UnsignedRightShift,
 
+    // 配列・オブジェクト操作
+    NewArray(usize),        // 空の配列を作成（サイズ指定）
+    NewObject,              // 空のオブジェクトを作成
+    GetProperty,            // obj[key] - スタックから key, obj をポップ、結果をプッシュ
+    SetProperty,            // obj[key] = value - スタックから value, key, obj をポップ
+    ArrayPush,              // arr.push(value) - スタックから index, value をポップ、arr は残る
+    ObjectSetProperty,      // obj[key] = value - スタックから key, value をポップ、obj は残る
+
     // 制御フロー
     Jump(usize),            // 無条件ジャンプ
     JumpIfFalse(usize),     // false の場合ジャンプ
@@ -231,17 +239,72 @@ impl Compiler {
                 self.chunk.emit(opcode);
             }
             Expression::Assignment { left, right } => {
-                self.compile_expression(*right)?;
-
                 match *left {
                     Expression::Identifier(name) => {
+                        self.compile_expression(*right)?;
                         self.chunk.emit(Opcode::StoreVar(name.clone()));
                         self.chunk.emit(Opcode::LoadVar(name));
+                    }
+                    Expression::MemberAccess { object, property, computed } => {
+                        // obj[prop] = value の形式
+                        // スタック順序: [obj, key, value]
+                        self.compile_expression(*object)?;
+                        if computed {
+                            self.compile_expression(*property)?;
+                        } else {
+                            // obj.prop の場合、property は文字列リテラル
+                            self.compile_expression(*property)?;
+                        }
+                        self.compile_expression(*right)?;
+                        self.chunk.emit(Opcode::SetProperty);
                     }
                     _ => {
                         return Err(JSError::SyntaxError("Invalid assignment target".to_string()));
                     }
                 }
+            }
+            Expression::ArrayLiteral(elements) => {
+                // 空の配列を作成してスタックにプッシュ
+                self.chunk.emit(Opcode::NewArray(0));
+
+                // 各要素をコンパイルして配列に追加
+                for (i, element) in elements.into_iter().enumerate() {
+                    // 値をコンパイル
+                    self.compile_expression(element)?;
+                    // インデックスをプッシュ
+                    let idx = self.chunk.add_constant(JSValue::Number(i as f64));
+                    self.chunk.emit(Opcode::LoadConst(idx));
+                    // スタック: [array, value, index]
+                    // ArraySetElementを使用（新しいオペコード）
+                    self.chunk.emit(Opcode::ArrayPush);
+                }
+            }
+            Expression::ObjectLiteral(properties) => {
+                // 空のオブジェクトを作成してスタックにプッシュ
+                self.chunk.emit(Opcode::NewObject);
+
+                // 各プロパティを設定
+                for (key, value) in properties {
+                    // 値をコンパイル
+                    self.compile_expression(value)?;
+                    // キーをプッシュ
+                    let key_idx = self.chunk.add_constant(JSValue::String(key));
+                    self.chunk.emit(Opcode::LoadConst(key_idx));
+                    // スタック: [object, value, key]
+                    self.chunk.emit(Opcode::ObjectSetProperty);
+                }
+            }
+            Expression::MemberAccess { object, property, computed } => {
+                // obj[prop] または obj.prop
+                self.compile_expression(*object)?;
+                if computed {
+                    // obj[prop] - property を評価
+                    self.compile_expression(*property)?;
+                } else {
+                    // obj.prop - property は文字列リテラル
+                    self.compile_expression(*property)?;
+                }
+                self.chunk.emit(Opcode::GetProperty);
             }
         }
         Ok(())

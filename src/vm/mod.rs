@@ -1,5 +1,5 @@
-use crate::error::{JSError, JSResult};
 use crate::compiler::{BytecodeChunk, Opcode};
+use crate::error::{JSError, JSResult};
 use crate::value::JSValue;
 use rustc_hash::FxHashMap;
 
@@ -131,6 +131,79 @@ impl VM {
                     self.stack.push(JSValue::Number((a_u32 >> (b_u32 & 0x1f)) as f64));
                 }
                 
+                // 配列・オブジェクト操作
+                Opcode::NewArray(_size) => {
+                    use crate::value::JSArray;
+                    let arr = JSArray::new();
+                    self.stack.push(arr.to_object());
+                }
+                Opcode::NewObject => {
+                    use crate::value::JSObject;
+                    use std::rc::Rc;
+                    use std::cell::RefCell;
+                    let obj = JSObject::new();
+                    self.stack.push(JSValue::Object(Rc::new(RefCell::new(obj))));
+                }
+                Opcode::GetProperty => {
+                    let key = self.pop()?;
+                    let obj = self.pop()?;
+
+                    match obj {
+                        JSValue::Object(ref obj_ref) => {
+                            let key_str = key.to_string();
+                            let value = obj_ref.borrow().get(&key_str);
+                            self.stack.push(value);
+                        }
+                        _ => {
+                            // プリミティブ値のプロパティアクセスは後で実装
+                            self.stack.push(JSValue::Undefined);
+                        }
+                    }
+                }
+                Opcode::SetProperty => {
+                    let value = self.pop()?;
+                    let key = self.pop()?;
+                    let obj = self.pop()?;
+
+                    match obj {
+                        JSValue::Object(ref obj_ref) => {
+                            let key_str = key.to_string();
+                            obj_ref.borrow_mut().set(key_str, value.clone());
+                            self.stack.push(obj.clone()); // オブジェクトを返す
+                        }
+                        _ => {
+                            return Err(JSError::TypeError("Cannot set property on non-object".to_string()));
+                        }
+                    }
+                }
+                Opcode::ArrayPush => {
+                    // スタック: [array, value, index]
+                    let index = self.pop()?;
+                    let value = self.pop()?;
+
+                    // 配列はスタックの一番下にあるが、ポップしない
+                    if let Some(JSValue::Object(obj_ref)) = self.stack.last() {
+                        let idx_num = index.to_number() as usize;
+                        let key_str = idx_num.to_string();
+                        obj_ref.borrow_mut().set(key_str, value);
+                    } else {
+                        return Err(JSError::TypeError("ArrayPush: not an object".to_string()));
+                    }
+                }
+                Opcode::ObjectSetProperty => {
+                    // スタック: [object, value, key]
+                    let key = self.pop()?;
+                    let value = self.pop()?;
+
+                    // オブジェクトはスタックの一番下にあるが、ポップしない
+                    if let Some(JSValue::Object(obj_ref)) = self.stack.last() {
+                        let key_str = key.to_string();
+                        obj_ref.borrow_mut().set(key_str, value);
+                    } else {
+                        return Err(JSError::TypeError("ObjectSetProperty: not an object".to_string()));
+                    }
+                }
+
                 // その他
                 Opcode::Typeof => {
                     let value = self.pop()?;

@@ -304,7 +304,7 @@ Object Creation → Heap Allocation → GC Tracking
   - [ ] `forEach`, `find`, `findIndex`
   - [ ] `join`, `concat`
   - [ ] `indexOf`, `includes`
-- [ ] 配列リテラル構文 `[1, 2, 3]`（パーサー拡張が必要）
+- [x] 配列リテラル構文 `[1, 2, 3]`
 
 #### 2.3 関数とクロージャ
 - [ ] 関数オブジェクト（Function型）
@@ -349,16 +349,18 @@ Object Creation → Heap Allocation → GC Tracking
 - [ ] `RegExp` オブジェクト（基本）
 
 #### 2.7 パーサー拡張
-- [ ] オブジェクトリテラル `{ key: value }`
-- [ ] メンバーアクセス `obj.prop`, `obj[prop]`
+- [x] オブジェクトリテラル `{ key: value }`
+- [x] メンバーアクセス `obj.prop`, `obj[prop]`
+- [x] 配列リテラル `[1, 2, 3]`
 - [ ] メソッド定義構文
 - [ ] 配列/オブジェクト分割代入
 - [ ] スプレッド構文 `...`
 - [ ] テンプレートリテラル `` `hello ${name}` ``
 
 #### 2.8 コンパイラ拡張
-- [ ] オブジェクト作成命令
-- [ ] プロパティアクセス命令
+- [x] オブジェクト作成命令
+- [x] プロパティアクセス命令
+- [x] 配列作成命令
 - [ ] 関数定義命令
 - [ ] クロージャキャプチャ
 - [ ] 例外ハンドリング命令

@@ -46,6 +46,13 @@ pub enum Expression {
         left: Box<Expression>,
         right: Box<Expression>,
     },
+    ArrayLiteral(Vec<Expression>),
+    ObjectLiteral(Vec<(String, Expression)>),
+    MemberAccess {
+        object: Box<Expression>,
+        property: Box<Expression>,
+        computed: bool,
+    },
     // TODO: 他の式を追加
 }
 
@@ -330,7 +337,7 @@ impl Parser {
             TokenKind::Typeof => UnaryOp::Typeof,
             TokenKind::Void => UnaryOp::Void,
             TokenKind::Delete => UnaryOp::Delete,
-            _ => return self.parse_primary(),
+            _ => return self.parse_postfix(),
         };
         self.advance();
         let arg = self.parse_unary()?;
@@ -338,6 +345,47 @@ impl Parser {
             op,
             arg: Box::new(arg),
         })
+    }
+
+    /// 後置式をパース（メンバーアクセス等）
+    fn parse_postfix(&mut self) -> JSResult<Expression> {
+        let mut expr = self.parse_primary()?;
+
+        loop {
+            match &self.peek().kind {
+                TokenKind::Dot => {
+                    self.advance();
+                    let property = match &self.peek().kind {
+                        TokenKind::Identifier(s) => {
+                            let s = s.clone();
+                            self.advance();
+                            Expression::Literal(Literal::String(s))
+                        }
+                        _ => return Err(JSError::SyntaxError("Expected property name after '.'".to_string())),
+                    };
+                    expr = Expression::MemberAccess {
+                        object: Box::new(expr),
+                        property: Box::new(property),
+                        computed: false,
+                    };
+                }
+                TokenKind::LeftBracket => {
+                    self.advance();
+                    let property = self.parse_expression()?;
+                    if !self.match_token(&TokenKind::RightBracket) {
+                        return Err(JSError::SyntaxError("Expected ']'".to_string()));
+                    }
+                    expr = Expression::MemberAccess {
+                        object: Box::new(expr),
+                        property: Box::new(property),
+                        computed: true,
+                    };
+                }
+                _ => break,
+            }
+        }
+
+        Ok(expr)
     }
 
     /// 基本式をパース
@@ -383,11 +431,86 @@ impl Parser {
                 }
                 Ok(expr)
             }
+            TokenKind::LeftBracket => {
+                self.parse_array_literal()
+            }
+            TokenKind::LeftBrace => {
+                self.parse_object_literal()
+            }
             _ => Err(JSError::SyntaxError(format!(
                 "Unexpected token: {:?}",
                 token.kind
             ))),
         }
+    }
+
+    /// 配列リテラルをパース: [1, 2, 3]
+    fn parse_array_literal(&mut self) -> JSResult<Expression> {
+        self.advance(); // consume '['
+
+        let mut elements = Vec::new();
+
+        while !self.check(&TokenKind::RightBracket) && !self.is_at_end() {
+            // 空要素をサポート (例: [1,,3])
+            if self.check(&TokenKind::Comma) {
+                elements.push(Expression::Literal(Literal::Undefined));
+                self.advance();
+                continue;
+            }
+
+            elements.push(self.parse_assignment()?);
+
+            if !self.check(&TokenKind::RightBracket) {
+                if !self.match_token(&TokenKind::Comma) {
+                    return Err(JSError::SyntaxError("Expected ',' or ']' in array literal".to_string()));
+                }
+            }
+        }
+
+        if !self.match_token(&TokenKind::RightBracket) {
+            return Err(JSError::SyntaxError("Expected ']'".to_string()));
+        }
+
+        Ok(Expression::ArrayLiteral(elements))
+    }
+
+    /// オブジェクトリテラルをパース: { key: value }
+    fn parse_object_literal(&mut self) -> JSResult<Expression> {
+        self.advance(); // consume '{'
+
+        let mut properties = Vec::new();
+
+        while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+            // プロパティキーをパース
+            let key = match &self.peek().kind {
+                TokenKind::Identifier(s) => s.clone(),
+                TokenKind::String(s) => s.clone(),
+                _ => return Err(JSError::SyntaxError("Expected property key".to_string())),
+            };
+            self.advance();
+
+            // ':' を期待
+            if !self.match_token(&TokenKind::Colon) {
+                return Err(JSError::SyntaxError("Expected ':' after property key".to_string()));
+            }
+
+            // 値をパース
+            let value = self.parse_assignment()?;
+
+            properties.push((key, value));
+
+            if !self.check(&TokenKind::RightBrace) {
+                if !self.match_token(&TokenKind::Comma) {
+                    return Err(JSError::SyntaxError("Expected ',' or '}' in object literal".to_string()));
+                }
+            }
+        }
+
+        if !self.match_token(&TokenKind::RightBrace) {
+            return Err(JSError::SyntaxError("Expected '}'".to_string()));
+        }
+
+        Ok(Expression::ObjectLiteral(properties))
     }
 
     /// 現在のトークンを取得
