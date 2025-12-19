@@ -144,9 +144,9 @@ impl fmt::Display for TokenKind {
     /// トークンの種類をフォーマット表示
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TokenKind::Number(n) => write!(f, "Number({})", n),
-            TokenKind::String(s) => write!(f, "String(\"{}\")", s),
-            TokenKind::Identifier(s) => write!(f, "Identifier({})", s),
+            TokenKind::Number(n) => write!(f, "JsNumber({})", n),
+            TokenKind::String(s) => write!(f, "JsString(\"{}\")", s),
+            TokenKind::Identifier(s) => write!(f, "JsIdentifier({})", s),
             _ => write!(f, "{:?}", self),
         }
     }
