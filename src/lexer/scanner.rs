@@ -25,6 +25,10 @@ impl Lexer {
     }
 
     /// ソースコードを字句解析してトークン列を生成
+    /// 
+    /// TODO:
+    /// - Numberを廃止し、NumberLiteral(String) を実装する
+    /// - .0.1 や 0.2.1 のような数値リテラルを連続したものではなく、Dot と Number に分割する
     pub fn tokenize(&mut self) -> JSResult<Vec<Token>> {
         let mut tokens = Vec::new();
 
