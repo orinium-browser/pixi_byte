@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use pixi_byte::JSEngine;
 
 /// 単純な算術演算のベンチマーク
@@ -30,4 +30,3 @@ fn benchmark_variables(c: &mut Criterion) {
 
 criterion_group!(benches, benchmark_arithmetic, benchmark_variables);
 criterion_main!(benches);
-

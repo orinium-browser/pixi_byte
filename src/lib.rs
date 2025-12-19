@@ -1,20 +1,20 @@
+pub mod builtins;
+pub mod compiler;
+pub mod error;
+pub mod gc;
 pub mod lexer;
 pub mod parser;
-pub mod compiler;
-pub mod vm;
-pub mod value;
 pub mod runtime;
-pub mod gc;
-pub mod builtins;
-pub mod error;
+pub mod value;
+pub mod vm;
 
 pub use error::{JSError, JSResult};
 pub use value::JSValue;
 
 // テストで使用するための再エクスポート
+pub use compiler::{Compiler, Opcode};
 pub use lexer::{Lexer, TokenKind};
 pub use parser::Parser;
-pub use compiler::{Compiler, Opcode};
 
 /// メインインターフェース
 pub struct JSEngine {
@@ -25,9 +25,7 @@ pub struct JSEngine {
 impl JSEngine {
     /// 新しいJSエンジンインスタンスを作成
     pub fn new() -> Self {
-        Self {
-            vm: vm::VM::new(),
-        }
+        Self { vm: vm::VM::new() }
     }
 
     /// JavaScriptコードを評価

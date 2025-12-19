@@ -1,4 +1,4 @@
-﻿use pixi_byte::{JSValue, JSEngine};
+use pixi_byte::{JSEngine, JSValue};
 #[test]
 fn test_vm_execute_literal() {
     let mut engine = JSEngine::new();

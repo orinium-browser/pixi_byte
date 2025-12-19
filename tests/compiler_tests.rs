@@ -1,4 +1,4 @@
-use pixi_byte::{Lexer, Parser, Compiler, Opcode};
+use pixi_byte::{Compiler, Lexer, Opcode, Parser};
 
 #[test]
 fn test_compile_literal() {
@@ -25,4 +25,3 @@ fn test_compile_binary_expr() {
 
     assert!(chunk.code.contains(&Opcode::Add));
 }
-

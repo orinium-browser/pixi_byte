@@ -1,6 +1,6 @@
-use std::rc::Rc;
+use super::{JSObject, JSValue};
 use std::cell::RefCell;
-use super::{JSValue, JSObject};
+use std::rc::Rc;
 
 /// JavaScript 配列の内部表現
 #[derive(Debug, Clone)]
@@ -35,7 +35,10 @@ impl JSArray {
 
     /// インデックスで要素を取得
     pub fn get(&self, index: usize) -> JSValue {
-        self.elements.get(index).cloned().unwrap_or(JSValue::Undefined)
+        self.elements
+            .get(index)
+            .cloned()
+            .unwrap_or(JSValue::Undefined)
     }
 
     /// インデックスで要素を設定
@@ -105,5 +108,3 @@ impl Default for JSArray {
         Self::new()
     }
 }
-
-

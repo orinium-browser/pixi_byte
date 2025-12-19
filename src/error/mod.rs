@@ -31,4 +31,3 @@ impl fmt::Display for JSError {
 }
 
 impl std::error::Error for JSError {}
-

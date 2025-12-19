@@ -34,7 +34,11 @@ impl VM {
                     self.stack.push(value);
                 }
                 Opcode::LoadVar(name) => {
-                    let value = self.globals.get(name).cloned().unwrap_or(JSValue::Undefined);
+                    let value = self
+                        .globals
+                        .get(name)
+                        .cloned()
+                        .unwrap_or(JSValue::Undefined);
                     self.stack.push(value);
                 }
                 Opcode::StoreVar(name) => {
@@ -47,7 +51,7 @@ impl VM {
                 Opcode::Pop => {
                     self.stack.pop();
                 }
-                
+
                 // 算術演算
                 Opcode::Add => self.binary_op(|a, b| {
                     // JavaScriptの加算は文字列連結も含む
@@ -69,7 +73,7 @@ impl VM {
                 Opcode::Div => self.binary_numeric_op(|a, b| a / b)?,
                 Opcode::Mod => self.binary_numeric_op(|a, b| a % b)?,
                 Opcode::Power => self.binary_numeric_op(|a, b| a.powf(b))?,
-                
+
                 // 単項演算
                 Opcode::Neg => {
                     let value = self.pop()?;
@@ -84,7 +88,7 @@ impl VM {
                     let n = value.to_number() as i32;
                     self.stack.push(JSValue::Number((!n) as f64));
                 }
-                
+
                 // 比較演算
                 Opcode::Eq => self.comparison_op(|a, b| a.abstract_equals(b))?,
                 Opcode::NotEq => self.comparison_op(|a, b| !a.abstract_equals(b))?,
@@ -94,7 +98,7 @@ impl VM {
                 Opcode::Gt => self.numeric_comparison_op(|a, b| a > b)?,
                 Opcode::LtEq => self.numeric_comparison_op(|a, b| a <= b)?,
                 Opcode::GtEq => self.numeric_comparison_op(|a, b| a >= b)?,
-                
+
                 // 論理演算
                 Opcode::And => {
                     let b = self.pop()?;
@@ -116,7 +120,7 @@ impl VM {
                         self.stack.push(b);
                     }
                 }
-                
+
                 // ビット演算
                 Opcode::BitAnd => self.bitwise_op(|a, b| a & b)?,
                 Opcode::BitOr => self.bitwise_op(|a, b| a | b)?,
@@ -128,9 +132,10 @@ impl VM {
                     let a = self.pop()?;
                     let a_u32 = a.to_number() as u32;
                     let b_u32 = b.to_number() as u32;
-                    self.stack.push(JSValue::Number((a_u32 >> (b_u32 & 0x1f)) as f64));
+                    self.stack
+                        .push(JSValue::Number((a_u32 >> (b_u32 & 0x1f)) as f64));
                 }
-                
+
                 // 配列・オブジェクト操作
                 Opcode::NewArray(_size) => {
                     use crate::value::JSArray;
@@ -139,8 +144,8 @@ impl VM {
                 }
                 Opcode::NewObject => {
                     use crate::value::JSObject;
-                    use std::rc::Rc;
                     use std::cell::RefCell;
+                    use std::rc::Rc;
                     let obj = JSObject::new();
                     self.stack.push(JSValue::Object(Rc::new(RefCell::new(obj))));
                 }
@@ -172,7 +177,9 @@ impl VM {
                             self.stack.push(obj.clone()); // オブジェクトを返す
                         }
                         _ => {
-                            return Err(JSError::TypeError("Cannot set property on non-object".to_string()));
+                            return Err(JSError::TypeError(
+                                "Cannot set property on non-object".to_string(),
+                            ));
                         }
                     }
                 }
@@ -200,7 +207,9 @@ impl VM {
                         let key_str = key.to_string();
                         obj_ref.borrow_mut().set(key_str, value);
                     } else {
-                        return Err(JSError::TypeError("ObjectSetProperty: not an object".to_string()));
+                        return Err(JSError::TypeError(
+                            "ObjectSetProperty: not an object".to_string(),
+                        ));
                     }
                 }
                 Opcode::CreateFunction(idx) => {
@@ -238,7 +247,9 @@ impl VM {
                             self.stack.push(res);
                         }
                         _ => {
-                            return Err(JSError::TypeError("CallFunction: not a function".to_string()));
+                            return Err(JSError::TypeError(
+                                "CallFunction: not a function".to_string(),
+                            ));
                         }
                     }
                 }
@@ -246,13 +257,14 @@ impl VM {
                 // その他
                 Opcode::Typeof => {
                     let value = self.pop()?;
-                    self.stack.push(JSValue::String(value.type_of().to_string()));
+                    self.stack
+                        .push(JSValue::String(value.type_of().to_string()));
                 }
                 Opcode::Void => {
                     self.pop()?;
                     self.stack.push(JSValue::Undefined);
                 }
-                
+
                 // 制御フロー
                 Opcode::Jump(offset) => {
                     pc = *offset;
@@ -280,9 +292,9 @@ impl VM {
 
     /// スタックから値をポップ
     fn pop(&mut self) -> JSResult<JSValue> {
-        self.stack.pop().ok_or_else(|| {
-            JSError::InternalError("Stack underflow".to_string())
-        })
+        self.stack
+            .pop()
+            .ok_or_else(|| JSError::InternalError("Stack underflow".to_string()))
     }
 
     /// 二項演算ヘルパー

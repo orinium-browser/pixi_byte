@@ -1,6 +1,6 @@
-﻿use pixi_byte::value::{JSObject, JSValue, Property};
-use std::rc::Rc;
+use pixi_byte::value::{JSObject, JSValue, Property};
 use std::cell::RefCell;
+use std::rc::Rc;
 #[test]
 fn test_object_create() {
     let obj = JSObject::new();
@@ -27,14 +27,23 @@ fn test_object_delete() {
 #[test]
 fn test_prototype_chain() {
     let mut parent = JSObject::new();
-    parent.set("inherited".to_string(), JSValue::String("from parent".to_string()));
+    parent.set(
+        "inherited".to_string(),
+        JSValue::String("from parent".to_string()),
+    );
     let parent_rc = Rc::new(RefCell::new(parent));
     let child = JSObject::with_prototype(Some(parent_rc));
-    assert_eq!(child.get("inherited"), JSValue::String("from parent".to_string()));
+    assert_eq!(
+        child.get("inherited"),
+        JSValue::String("from parent".to_string())
+    );
 }
 #[test]
 fn test_read_only_property() {
     let mut obj = JSObject::new();
-    obj.define_property("const".to_string(), Property::read_only(JSValue::Number(42.0)));
+    obj.define_property(
+        "const".to_string(),
+        Property::read_only(JSValue::Number(42.0)),
+    );
     assert_eq!(obj.get("const"), JSValue::Number(42.0));
 }

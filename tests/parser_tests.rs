@@ -29,4 +29,3 @@ fn test_parse_var_declaration() {
 
     assert_eq!(program.body.len(), 1);
 }
-

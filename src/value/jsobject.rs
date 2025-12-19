@@ -1,7 +1,7 @@
-use rustc_hash::FxHashMap;
-use std::rc::Rc;
-use std::cell::RefCell;
 use super::JSValue;
+use rustc_hash::FxHashMap;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// JavaScript オブジェクトの内部表現
 #[derive(Debug, Clone)]
@@ -91,7 +91,9 @@ impl JSObject {
         }
 
         // 新しいプロパティを追加
-        self.properties.borrow_mut().insert(key, Property::data(value));
+        self.properties
+            .borrow_mut()
+            .insert(key, Property::data(value));
         true
     }
 
@@ -160,4 +162,3 @@ impl Default for JSObject {
         Self::new()
     }
 }
-

@@ -1,7 +1,7 @@
-use std::rc::Rc;
-use std::cell::RefCell;
-use rustc_hash::FxHashMap;
 use crate::value::JSValue;
+use rustc_hash::FxHashMap;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// 環境レコード（レキシカルスコープチェーン）
 #[derive(Debug, Clone)]

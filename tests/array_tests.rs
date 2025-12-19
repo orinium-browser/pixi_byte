@@ -1,4 +1,4 @@
-﻿use pixi_byte::value::{JSArray, JSValue};
+use pixi_byte::value::{JSArray, JSValue};
 #[test]
 fn test_array_create() {
     let arr = JSArray::new();
@@ -33,6 +33,9 @@ fn test_array_shift_unshift() {
 }
 #[test]
 fn test_array_from_vec() {
-    let arr = JSArray::from_vec(vec![JSValue::String("a".to_string()), JSValue::String("b".to_string())]);
+    let arr = JSArray::from_vec(vec![
+        JSValue::String("a".to_string()),
+        JSValue::String("b".to_string()),
+    ]);
     assert_eq!(arr.length(), 2);
 }

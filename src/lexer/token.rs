@@ -48,62 +48,62 @@ pub enum TokenKind {
     Instanceof,
 
     // 演算子
-    Plus,           // +
-    Minus,          // -
-    Star,           // *
-    Slash,          // /
-    Percent,        // %
-    Power,          // **
+    Plus,    // +
+    Minus,   // -
+    Star,    // *
+    Slash,   // /
+    Percent, // %
+    Power,   // **
 
-    Eq,             // =
-    EqEq,           // ==
-    EqEqEq,         // ===
-    NotEq,          // !=
-    NotEqEq,        // !==
+    Eq,      // =
+    EqEq,    // ==
+    EqEqEq,  // ===
+    NotEq,   // !=
+    NotEqEq, // !==
 
-    Lt,             // <
-    Gt,             // >
-    LtEq,           // <=
-    GtEq,           // >=
+    Lt,   // <
+    Gt,   // >
+    LtEq, // <=
+    GtEq, // >=
 
-    And,            // &&
-    Or,             // ||
-    Not,            // !
+    And, // &&
+    Or,  // ||
+    Not, // !
 
-    BitAnd,         // &
-    BitOr,          // |
-    BitXor,         // ^
-    BitNot,         // ~
-    LeftShift,      // <<
-    RightShift,     // >>
+    BitAnd,             // &
+    BitOr,              // |
+    BitXor,             // ^
+    BitNot,             // ~
+    LeftShift,          // <<
+    RightShift,         // >>
     UnsignedRightShift, // >>>
 
-    PlusPlus,       // ++
-    MinusMinus,     // --
+    PlusPlus,   // ++
+    MinusMinus, // --
 
-    Question,       // ?
-    Colon,          // :
+    Question, // ?
+    Colon,    // :
 
     // 代入演算子
-    PlusEq,         // +=
-    MinusEq,        // -=
-    StarEq,         // *=
-    SlashEq,        // /=
-    PercentEq,      // %=
+    PlusEq,    // +=
+    MinusEq,   // -=
+    StarEq,    // *=
+    SlashEq,   // /=
+    PercentEq, // %=
 
     // 区切り文字
-    LeftParen,      // (
-    RightParen,     // )
-    LeftBrace,      // {
-    RightBrace,     // }
-    LeftBracket,    // [
-    RightBracket,   // ]
+    LeftParen,    // (
+    RightParen,   // )
+    LeftBrace,    // {
+    RightBrace,   // }
+    LeftBracket,  // [
+    RightBracket, // ]
 
-    Semicolon,      // ;
-    Comma,          // ,
-    Dot,            // .
-    DotDotDot,      // ...
-    Arrow,          // =>
+    Semicolon, // ;
+    Comma,     // ,
+    Dot,       // .
+    DotDotDot, // ...
+    Arrow,     // =>
 
     // 特殊
     Eof,
@@ -122,7 +122,12 @@ pub struct Span {
 impl Span {
     /// 新しいSpanを作成
     pub fn new(start: usize, end: usize, line: usize, column: usize) -> Self {
-        Self { start, end, line, column }
+        Self {
+            start,
+            end,
+            line,
+            column,
+        }
     }
 }
 
@@ -151,4 +156,3 @@ impl fmt::Display for TokenKind {
         }
     }
 }
-

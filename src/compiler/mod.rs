@@ -1,15 +1,15 @@
 use crate::error::{JSError, JSResult};
-use crate::parser::{Program, Statement, Expression, Literal, BinaryOp, UnaryOp};
+use crate::parser::{BinaryOp, Expression, Literal, Program, Statement, UnaryOp};
 use crate::value::JSValue;
 
 /// バイトコード命令
 #[derive(Debug, Clone, PartialEq)]
 pub enum Opcode {
     // スタック操作
-    LoadConst(usize),       // 定数をスタックにロード
-    LoadVar(String),        // 変数をスタックにロード
-    StoreVar(String),       // スタックトップを変数に格納
-    Pop,                    // スタックトップを削除
+    LoadConst(usize), // 定数をスタックにロード
+    LoadVar(String),  // 変数をスタックにロード
+    StoreVar(String), // スタックトップを変数に格納
+    Pop,              // スタックトップを削除
 
     // 算術演算
     Add,
@@ -20,9 +20,9 @@ pub enum Opcode {
     Power,
 
     // 単項演算
-    Neg,                    // 符号反転
-    Not,                    // 論理否定
-    BitNot,                 // ビット否定
+    Neg,    // 符号反転
+    Not,    // 論理否定
+    BitNot, // ビット否定
 
     // 比較演算
     Eq,
@@ -47,21 +47,21 @@ pub enum Opcode {
     UnsignedRightShift,
 
     // 配列・オブジェクト操作
-    NewArray(usize),        // 空の配列を作成（サイズ指定）
-    NewObject,              // 空のオブジェクトを作成
-    GetProperty,            // obj[key] - スタックから key, obj をポップ、結果をプッシュ
-    SetProperty,            // obj[key] = value - スタックから value, key, obj をポップ
-    ArrayPush,              // arr.push(value) - スタックから index, value をポップ、arr は残る
-    ObjectSetProperty,      // obj[key] = value - スタックから key, value をポップ、obj は残る
+    NewArray(usize),   // 空の配列を作成（サイズ指定）
+    NewObject,         // 空のオブジェクトを作成
+    GetProperty,       // obj[key] - スタックから key, obj をポップ、結果をプッシュ
+    SetProperty,       // obj[key] = value - スタックから value, key, obj をポップ
+    ArrayPush,         // arr.push(value) - スタックから index, value をポップ、arr は残る
+    ObjectSetProperty, // obj[key] = value - スタックから key, value をポップ、obj は残る
 
     // 関数操作
-    CreateFunction(usize),  // 定数プール内の関数オブジェクトを生成してプッシュ（func chunk idx）
-    CallFunction(usize),    // 呼び出し（引数個数） - スタックから argN..arg1, func を使う
+    CreateFunction(usize), // 定数プール内の関数オブジェクトを生成してプッシュ（func chunk idx）
+    CallFunction(usize),   // 呼び出し（引数個数） - スタックから argN..arg1, func を使う
 
     // 制御フロー
-    Jump(usize),            // 無条件ジャンプ
-    JumpIfFalse(usize),     // false の場合ジャンプ
-    Return,                 // 関数から戻る
+    Jump(usize),        // 無条件ジャンプ
+    JumpIfFalse(usize), // false の場合ジャンプ
+    Return,             // 関数から戻る
 
     // その他
     Typeof,
@@ -149,7 +149,11 @@ impl Compiler {
                     self.chunk.emit(Opcode::Pop);
                 }
             }
-            Statement::VariableDeclaration { kind: _, name, init } => {
+            Statement::VariableDeclaration {
+                kind: _,
+                name,
+                init,
+            } => {
                 if let Some(expr) = init {
                     self.compile_expression(expr)?;
                 } else {
@@ -180,7 +184,9 @@ impl Compiler {
                 let function_chunk = Compiler::new().compile(program)?;
 
                 // 現在のチャンクに関数を追加 (chunk, params)
-                let idx = self.chunk.add_constant(JSValue::Function(function_chunk, params.clone()));
+                let idx = self
+                    .chunk
+                    .add_constant(JSValue::Function(function_chunk, params.clone()));
                 self.chunk.emit(Opcode::CreateFunction(idx));
 
                 // 関数名を変数としてストア
@@ -249,7 +255,9 @@ impl Compiler {
                     UnaryOp::Void => Opcode::Void,
                     UnaryOp::Delete => {
                         // Delete は現時点では未実装
-                        return Err(JSError::InternalError("delete operator not yet implemented".to_string()));
+                        return Err(JSError::InternalError(
+                            "delete operator not yet implemented".to_string(),
+                        ));
                     }
                 };
                 self.chunk.emit(opcode);
@@ -261,7 +269,11 @@ impl Compiler {
                         self.chunk.emit(Opcode::StoreVar(name.clone()));
                         self.chunk.emit(Opcode::LoadVar(name));
                     }
-                    Expression::MemberAccess { object, property, computed } => {
+                    Expression::MemberAccess {
+                        object,
+                        property,
+                        computed,
+                    } => {
                         // obj[prop] = value の形式
                         // スタック順序: [obj, key, value]
                         self.compile_expression(*object)?;
@@ -275,7 +287,9 @@ impl Compiler {
                         self.chunk.emit(Opcode::SetProperty);
                     }
                     _ => {
-                        return Err(JSError::SyntaxError("Invalid assignment target".to_string()));
+                        return Err(JSError::SyntaxError(
+                            "Invalid assignment target".to_string(),
+                        ));
                     }
                 }
             }
@@ -310,7 +324,11 @@ impl Compiler {
                     self.chunk.emit(Opcode::ObjectSetProperty);
                 }
             }
-            Expression::MemberAccess { object, property, computed } => {
+            Expression::MemberAccess {
+                object,
+                property,
+                computed,
+            } => {
                 // obj[prop] または obj.prop
                 self.compile_expression(*object)?;
                 if computed {

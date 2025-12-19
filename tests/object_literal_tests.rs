@@ -52,10 +52,14 @@ fn test_member_access_dot() {
     let mut engine = JSEngine::new();
 
     // ドット記法でのプロパティアクセス
-    let result = engine.eval(r#"
+    let result = engine
+        .eval(
+            r#"
         let obj = { x: 10 };
         obj.x
-    "#).unwrap();
+    "#,
+        )
+        .unwrap();
 
     assert_eq!(result, JSValue::Number(10.0));
 }
@@ -65,10 +69,14 @@ fn test_member_access_bracket() {
     let mut engine = JSEngine::new();
 
     // ブラケット記法でのプロパティアクセス
-    let result = engine.eval(r#"
+    let result = engine
+        .eval(
+            r#"
         let obj = { name: "Bob" };
         obj["name"]
-    "#).unwrap();
+    "#,
+        )
+        .unwrap();
 
     assert_eq!(result, JSValue::String("Bob".to_string()));
 }
@@ -78,11 +86,15 @@ fn test_member_assignment() {
     let mut engine = JSEngine::new();
 
     // プロパティへの代入
-    let result = engine.eval(r#"
+    let result = engine
+        .eval(
+            r#"
         let obj = {};
         obj.value = 42;
         obj.value
-    "#).unwrap();
+    "#,
+        )
+        .unwrap();
 
     assert_eq!(result, JSValue::Number(42.0));
 }
@@ -92,10 +104,14 @@ fn test_array_index_access() {
     let mut engine = JSEngine::new();
 
     // 配列のインデックスアクセス
-    let result = engine.eval(r#"
+    let result = engine
+        .eval(
+            r#"
         let arr = [10, 20, 30];
         arr[1]
-    "#).unwrap();
+    "#,
+        )
+        .unwrap();
 
     assert_eq!(result, JSValue::Number(20.0));
 }
@@ -105,11 +121,14 @@ fn test_nested_object() {
     let mut engine = JSEngine::new();
 
     // ネストされたオブジェクト
-    let result = engine.eval(r#"
+    let result = engine
+        .eval(
+            r#"
         let obj = { inner: { value: 100 } };
         obj.inner.value
-    "#).unwrap();
+    "#,
+        )
+        .unwrap();
 
     assert_eq!(result, JSValue::Number(100.0));
 }
-

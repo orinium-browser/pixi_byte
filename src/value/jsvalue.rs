@@ -1,8 +1,8 @@
-use std::fmt;
-use std::rc::Rc;
-use std::cell::RefCell;
 use super::jsobject::JSObject;
 use crate::compiler::BytecodeChunk;
+use std::cell::RefCell;
+use std::fmt;
+use std::rc::Rc;
 
 /// JavaScript の値型
 #[derive(Debug, Clone)]
@@ -58,7 +58,7 @@ impl JSValue {
                 }
                 trimmed.parse().unwrap_or(f64::NAN)
             }
-            JSValue::Object(_) => f64::NAN, // オブジェクトはNaN
+            JSValue::Object(_) => f64::NAN,      // オブジェクトはNaN
             JSValue::Function(_, _) => f64::NAN, // 関数もNaN
         }
     }
@@ -70,7 +70,7 @@ impl JSValue {
             JSValue::Boolean(b) => *b,
             JSValue::Number(n) => !n.is_nan() && *n != 0.0,
             JSValue::String(s) => !s.is_empty(),
-            JSValue::Object(_) => true, // オブジェクトは常にtrue
+            JSValue::Object(_) => true,      // オブジェクトは常にtrue
             JSValue::Function(_, _) => true, // 関数も常にtrue
         }
     }

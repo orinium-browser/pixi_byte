@@ -105,4 +105,3 @@ fn test_typeof() {
     let result = engine.eval("typeof undefined").unwrap();
     assert_eq!(result.to_string(), "undefined");
 }
-
