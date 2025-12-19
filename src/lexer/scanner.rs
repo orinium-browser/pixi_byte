@@ -1,5 +1,5 @@
+use super::token::{Span, Token, TokenKind};
 use crate::error::{JSError, JSResult};
-use super::token::{Token, TokenKind, Span};
 
 /// 字句解析器
 pub struct Lexer {
@@ -25,16 +25,12 @@ impl Lexer {
     }
 
     /// ソースコードを字句解析してトークン列を生成
-    /// 
-    /// TODO:
-    /// - Numberを廃止し、NumberLiteral(String) を実装する
-    /// - .0.1 や 0.2.1 のような数値リテラルを連続したものではなく、Dot と Number に分割する
     pub fn tokenize(&mut self) -> JSResult<Vec<Token>> {
         let mut tokens = Vec::new();
 
         loop {
             self.skip_whitespace();
-            
+
             if self.is_at_end() {
                 let span = self.current_span();
                 tokens.push(Token::new(TokenKind::Eof, span));
@@ -76,8 +72,10 @@ impl Lexer {
                     self.advance();
                     self.advance();
                     TokenKind::DotDotDot
+                } else if start > 0 && self.source[start - 1].is_ascii_digit() {
+                    TokenKind::Dot
                 } else if self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
-                    return self.scan_number_starting_with_dot();
+                    return self.scan_number();
                 } else {
                     TokenKind::Dot
                 }
@@ -223,6 +221,8 @@ impl Lexer {
         let start_line = self.line;
         let start_column = self.column - 1;
 
+        let start_from_dot = self.source[start] == '.';
+
         while let Some(ch) = self.peek() {
             if ch.is_ascii_digit() {
                 self.advance();
@@ -232,7 +232,13 @@ impl Lexer {
         }
 
         // 小数点
-        if self.peek() == Some('.') && self.peek_ahead(1).map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        if self.peek() == Some('.')
+            && !start_from_dot
+            && self
+                .peek_ahead(1)
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+        {
             self.advance(); // '.'
             while let Some(ch) = self.peek() {
                 if ch.is_ascii_digit() {
@@ -259,37 +265,17 @@ impl Lexer {
         }
 
         let text: String = self.source[start..self.position].iter().collect();
-        let value = text.parse::<f64>().map_err(|_| {
-            JSError::SyntaxError(format!("Invalid number literal: {}", text))
-        })?;
-
-        let span = Span::new(start, self.position, start_line, start_column);
-        Ok(Token::new(TokenKind::Number(value), span))
-    }
-
-    /// ドットで始まる数値リテラルのスキャン
-    fn scan_number_starting_with_dot(&mut self) -> JSResult<Token> {
-        let start = self.position - 1;
-        let start_line = self.line;
-        let start_column = self.column - 1;
-
-        while let Some(ch) = self.peek() {
-            if ch.is_ascii_digit() {
-                self.advance();
-            } else {
-                break;
-            }
+        if text.parse::<f64>().is_err() {
+            return Err(JSError::SyntaxError(format!(
+                "Invalid number literal: {}",
+                text
+            )));
         }
 
-        let text: String = self.source[start..self.position].iter().collect();
-        let value = text.parse::<f64>().map_err(|_| {
-            JSError::SyntaxError(format!("Invalid number literal: {}", text))
-        })?;
-
         let span = Span::new(start, self.position, start_line, start_column);
-        Ok(Token::new(TokenKind::Number(value), span))
+        Ok(Token::new(TokenKind::NumberLiteral(text), span))
     }
-    
+
     /// 文字列リテラルのスキャン
     fn scan_string(&mut self, quote: char) -> JSResult<Token> {
         let start = self.position - 1;
@@ -317,7 +303,9 @@ impl Lexer {
                     self.advance();
                 }
             } else if ch == '\n' {
-                return Err(JSError::SyntaxError("Unterminated string literal".to_string()));
+                return Err(JSError::SyntaxError(
+                    "Unterminated string literal".to_string(),
+                ));
             } else {
                 value.push(ch);
                 self.advance();
@@ -417,21 +405,23 @@ impl Lexer {
             }
             self.advance();
         }
-        Err(JSError::SyntaxError("Unterminated block comment".to_string()))
+        Err(JSError::SyntaxError(
+            "Unterminated block comment".to_string(),
+        ))
     }
 
     /// 次の文字を取得して位置を進める
     fn advance(&mut self) -> char {
         let ch = self.source[self.position];
         self.position += 1;
-        
+
         if ch == '\n' {
             self.line += 1;
             self.column = 1;
         } else {
             self.column += 1;
         }
-        
+
         ch
     }
 
@@ -474,4 +464,3 @@ impl Lexer {
         Span::new(self.position, self.position, self.line, self.column)
     }
 }
-

@@ -4,23 +4,43 @@ use pixi_byte::{Lexer, TokenKind};
 fn test_tokenize_numbers() {
     let mut lexer = Lexer::new("123 45.67 .89");
     let tokens = lexer.tokenize().unwrap();
-
-    assert!(matches!(tokens[0].kind, TokenKind::Number(123.0)));
-    assert!(matches!(tokens[1].kind, TokenKind::Number(45.67)));
-    assert!(matches!(tokens[2].kind, TokenKind::Number(0.89)));
+    let kinds: Vec<TokenKind> = tokens
+        .iter()
+        .map(|t| t.kind.clone())
+        .into_iter()
+        .filter(|k| *k != TokenKind::Eof)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            TokenKind::NumberLiteral("123".to_string()),
+            TokenKind::NumberLiteral("45.67".to_string()),
+            TokenKind::NumberLiteral(".89".to_string()),
+        ]
+    );
 }
 
 #[test]
 fn test_weird_number_digits() {
     let mut lexer = Lexer::new(".0.1 0.2.1");
     let tokens = lexer.tokenize().unwrap();
-
-    assert!(matches!(tokens[0].kind, TokenKind::Number(0.0)));
-    assert!(matches!(tokens[1].kind, TokenKind::Dot));
-    assert!(matches!(tokens[2].kind, TokenKind::Number(1.0)));
-    assert!(matches!(tokens[3].kind, TokenKind::Number(0.2)));
-    assert!(matches!(tokens[4].kind, TokenKind::Dot));
-    assert!(matches!(tokens[5].kind, TokenKind::Number(1.0)));
+    let kinds: Vec<TokenKind> = tokens
+        .iter()
+        .map(|t| t.kind.clone())
+        .into_iter()
+        .filter(|k| *k != TokenKind::Eof)
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            TokenKind::NumberLiteral(".0".to_string()),
+            TokenKind::Dot,
+            TokenKind::NumberLiteral("1".to_string()),
+            TokenKind::NumberLiteral("0.2".to_string()),
+            TokenKind::Dot,
+            TokenKind::NumberLiteral("1".to_string()),
+        ]
+    );
 }
 
 #[test]
