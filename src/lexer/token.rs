@@ -4,7 +4,7 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // リテラル
-    Number(f64),
+    NumberLiteral(String),
     String(String),
     True,
     False,
