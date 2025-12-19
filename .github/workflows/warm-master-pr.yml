@@ -31,5 +31,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: "⚠️ このリポジトリでは管理者によるsyncを除いて `master` ブランチではなく `dev` ブランチに対してPRを作成してください\n\nPlease create PRs against the `dev` branch instead of `master`, except for admin syncs."
+              body: "⚠️ このリポジトリではメンテナーによるsyncを除いて `master` ブランチではなく `dev` ブランチに対してPRを作成してください\n\nPlease create PRs against the `dev` branch instead of `master`, except for admin syncs."
             })
