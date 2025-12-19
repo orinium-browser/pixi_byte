@@ -143,6 +143,6 @@ impl PartialEq for JSValue {
 impl fmt::Display for JSValue {
     /// 値をフォーマット表示
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(f, "{}", self.to_console_string())
     }
 }
