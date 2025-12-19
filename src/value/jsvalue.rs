@@ -2,6 +2,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
 use super::jsobject::JSObject;
+use crate::compiler::BytecodeChunk;
 
 /// JavaScript の値型
 #[derive(Debug, Clone)]
@@ -12,6 +13,7 @@ pub enum JSValue {
     Number(f64),
     String(String),
     Object(Rc<RefCell<JSObject>>),
+    Function(BytecodeChunk, Vec<String>),
     // TODO: Symbol, BigInt 等は後のフェーズで実装
 }
 
@@ -37,6 +39,7 @@ impl JSValue {
             }
             JSValue::String(s) => s.clone(),
             JSValue::Object(_) => "[object Object]".to_string(),
+            JSValue::Function(_, _) => "[function]".to_string(),
         }
     }
 
@@ -56,6 +59,7 @@ impl JSValue {
                 trimmed.parse().unwrap_or(f64::NAN)
             }
             JSValue::Object(_) => f64::NAN, // オブジェクトはNaN
+            JSValue::Function(_, _) => f64::NAN, // 関数もNaN
         }
     }
 
@@ -67,6 +71,7 @@ impl JSValue {
             JSValue::Number(n) => !n.is_nan() && *n != 0.0,
             JSValue::String(s) => !s.is_empty(),
             JSValue::Object(_) => true, // オブジェクトは常にtrue
+            JSValue::Function(_, _) => true, // 関数も常にtrue
         }
     }
 
@@ -79,6 +84,7 @@ impl JSValue {
             JSValue::Number(_) => "number",
             JSValue::String(_) => "string",
             JSValue::Object(_) => "object",
+            JSValue::Function(_, _) => "function",
         }
     }
 
@@ -140,4 +146,3 @@ impl fmt::Display for JSValue {
         write!(f, "{}", self.to_string())
     }
 }
-

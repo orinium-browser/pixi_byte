@@ -54,6 +54,10 @@ pub enum Opcode {
     ArrayPush,              // arr.push(value) - スタックから index, value をポップ、arr は残る
     ObjectSetProperty,      // obj[key] = value - スタックから key, value をポップ、obj は残る
 
+    // 関数操作
+    CreateFunction(usize),  // 定数プール内の関数オブジェクトを生成してプッシュ（func chunk idx）
+    CallFunction(usize),    // 呼び出し（引数個数） - スタックから argN..arg1, func を使う
+
     // 制御フロー
     Jump(usize),            // 無条件ジャンプ
     JumpIfFalse(usize),     // false の場合ジャンプ
@@ -169,6 +173,18 @@ impl Compiler {
                     self.chunk.emit(Opcode::LoadConst(idx));
                 }
                 self.chunk.emit(Opcode::Return);
+            }
+            Statement::FunctionDeclaration { name, params, body } => {
+                // 関数本体をコンパイル
+                let program = Program { body };
+                let function_chunk = Compiler::new().compile(program)?;
+
+                // 現在のチャンクに関数を追加 (chunk, params)
+                let idx = self.chunk.add_constant(JSValue::Function(function_chunk, params.clone()));
+                self.chunk.emit(Opcode::CreateFunction(idx));
+
+                // 関数名を変数としてストア
+                self.chunk.emit(Opcode::StoreVar(name));
             }
         }
         Ok(())
@@ -306,6 +322,29 @@ impl Compiler {
                 }
                 self.chunk.emit(Opcode::GetProperty);
             }
+            Expression::Function { params, body } => {
+                // 関数本体をコンパイル
+                let program = Program { body };
+                let function_chunk = Compiler::new().compile(program)?;
+
+                // 現在のチャンクに関数オブジェクト（チャンク + params）を追加
+                let func_value = JSValue::Function(function_chunk, params.clone());
+                let idx = self.chunk.add_constant(func_value);
+                self.chunk.emit(Opcode::CreateFunction(idx));
+            }
+            Expression::Call { callee, args } => {
+                // 呼び出し対象をコンパイル
+                self.compile_expression(*callee)?;
+
+                // 引数をコンパイル
+                for arg in &args {
+                    self.compile_expression(arg.clone())?;
+                }
+
+                // 引数の数だけスタックからポップ
+                let arg_count = args.len();
+                self.chunk.emit(Opcode::CallFunction(arg_count));
+            }
         }
         Ok(())
     }
@@ -317,4 +356,3 @@ impl Default for Compiler {
         Self::new()
     }
 }
-

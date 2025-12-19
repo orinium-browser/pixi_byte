@@ -203,6 +203,45 @@ impl VM {
                         return Err(JSError::TypeError("ObjectSetProperty: not an object".to_string()));
                     }
                 }
+                Opcode::CreateFunction(idx) => {
+                    // 定数プールの関数オブジェクト（BytecodeChunk）をそのままプッシュ
+                    let func = chunk.constants[*idx].clone();
+                    self.stack.push(func);
+                }
+                Opcode::CallFunction(arg_count) => {
+                    // スタック: [..., arg1, arg2, ..., func]
+                    let mut args = Vec::new();
+                    for _ in 0..*arg_count {
+                        args.push(self.pop()?);
+                    }
+                    // argsは逆順なので反転
+                    args.reverse();
+
+                    let func = self.pop()?;
+
+                    match func {
+                        JSValue::Function(func_chunk, params) => {
+                            // 新しいVMを作って関数を実行（簡易実装）
+                            let mut new_vm = VM::new();
+
+                            // パラメータ名があれば、それに対応して引数をセット
+                            for (i, arg) in args.into_iter().enumerate() {
+                                if i < params.len() {
+                                    new_vm.globals.insert(params[i].clone(), arg);
+                                } else {
+                                    // 余分な引数は argN としても格納
+                                    new_vm.globals.insert(format!("arg{}", i), arg);
+                                }
+                            }
+
+                            let res = new_vm.execute(func_chunk)?;
+                            self.stack.push(res);
+                        }
+                        _ => {
+                            return Err(JSError::TypeError("CallFunction: not a function".to_string()));
+                        }
+                    }
+                }
 
                 // その他
                 Opcode::Typeof => {
@@ -313,4 +352,3 @@ impl Default for VM {
         Self::new()
     }
 }
-

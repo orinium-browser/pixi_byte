@@ -17,6 +17,7 @@ pub enum Statement {
         init: Option<Expression>,
     },
     Return(Option<Expression>),
+    FunctionDeclaration { name: String, params: Vec<String>, body: Vec<Statement> },
     // TODO: 他の文を追加
 }
 
@@ -52,6 +53,14 @@ pub enum Expression {
         object: Box<Expression>,
         property: Box<Expression>,
         computed: bool,
+    },
+    Call {
+        callee: Box<Expression>,
+        args: Vec<Expression>,
+    },
+    Function {
+        params: Vec<String>,
+        body: Vec<Statement>,
     },
     // TODO: 他の式を追加
 }
@@ -135,6 +144,7 @@ impl Parser {
             TokenKind::Let => self.parse_var_declaration(VarKind::Let),
             TokenKind::Const => self.parse_var_declaration(VarKind::Const),
             TokenKind::Return => self.parse_return_statement(),
+            TokenKind::Function => self.parse_function_declaration(),
             _ => {
                 let expr = self.parse_expression()?;
                 self.consume_semicolon();
@@ -143,43 +153,56 @@ impl Parser {
         }
     }
 
-    /// 変数宣言をパース
-    fn parse_var_declaration(&mut self, kind: VarKind) -> JSResult<Statement> {
-        self.advance(); // var/let/const
-
-        let name = match &self.peek().kind {
-            TokenKind::Identifier(s) => {
-                let name = s.clone();
-                self.advance();
-                name
-            }
-            _ => return Err(JSError::SyntaxError("Expected identifier".to_string())),
-        };
-
-        let init = if self.match_token(&TokenKind::Eq) {
-            Some(self.parse_expression()?)
-        } else {
-            None
-        };
-
-        self.consume_semicolon();
-
-        Ok(Statement::VariableDeclaration { kind, name, init })
+    /// ブロックをパースして文のベクタを返す
+    fn parse_block(&mut self) -> JSResult<Vec<Statement>> {
+        if !self.match_token(&TokenKind::LeftBrace) {
+            return Err(JSError::SyntaxError("Expected '{'".to_string()));
+        }
+        let mut body = Vec::new();
+        while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+            body.push(self.parse_statement()?);
+        }
+        if !self.match_token(&TokenKind::RightBrace) {
+            return Err(JSError::SyntaxError("Expected '}'".to_string()));
+        }
+        Ok(body)
     }
 
-    /// return文をパース
-    fn parse_return_statement(&mut self) -> JSResult<Statement> {
-        self.advance(); // return
-
-        let value = if self.check(&TokenKind::Semicolon) || self.is_at_end() {
-            None
+    /// 関数宣言をパース: function name(params) { body }
+    fn parse_function_declaration(&mut self) -> JSResult<Statement> {
+        self.advance(); // consume 'function'
+        let name = if let TokenKind::Identifier(s) = &self.peek().kind {
+            let s = s.clone();
+            self.advance();
+            s
         } else {
-            Some(self.parse_expression()?)
+            return Err(JSError::SyntaxError("Expected function name".to_string()));
         };
 
-        self.consume_semicolon();
+        // parameters
+        if !self.match_token(&TokenKind::LeftParen) {
+            return Err(JSError::SyntaxError("Expected '('".to_string()));
+        }
+        let mut params = Vec::new();
+        while !self.check(&TokenKind::RightParen) {
+            if let TokenKind::Identifier(s) = &self.peek().kind {
+                params.push(s.clone());
+                self.advance();
+            } else {
+                return Err(JSError::SyntaxError("Expected parameter name".to_string()));
+            }
+            if !self.check(&TokenKind::RightParen) {
+                if !self.match_token(&TokenKind::Comma) {
+                    return Err(JSError::SyntaxError("Expected ',' in parameter list".to_string()));
+                }
+            }
+        }
+        if !self.match_token(&TokenKind::RightParen) {
+            return Err(JSError::SyntaxError("Expected ')'".to_string()));
+        }
 
-        Ok(Statement::Return(value))
+        let body = self.parse_block()?;
+        Ok(Statement::FunctionDeclaration { name, params, body })
     }
 
     /// 式をパース
@@ -187,19 +210,50 @@ impl Parser {
         self.parse_assignment()
     }
 
-    /// 代入式をパース
+    /// 代入式をパース（右結合）
     fn parse_assignment(&mut self) -> JSResult<Expression> {
-        let expr = self.parse_logical_or()?;
-
+        let left = self.parse_logical_or()?;
         if self.match_token(&TokenKind::Eq) {
             let right = self.parse_assignment()?;
             return Ok(Expression::Assignment {
-                left: Box::new(expr),
+                left: Box::new(left),
                 right: Box::new(right),
             });
         }
+        Ok(left)
+    }
 
-        Ok(expr)
+    /// 変数宣言をパース
+    fn parse_var_declaration(&mut self, kind: VarKind) -> JSResult<Statement> {
+        // consume keyword
+        self.advance();
+        // identifier
+        let name = if let TokenKind::Identifier(s) = &self.peek().kind {
+            let s = s.clone();
+            self.advance();
+            s
+        } else {
+            return Err(JSError::SyntaxError("Expected variable name".to_string()));
+        };
+
+        let mut init = None;
+        if self.match_token(&TokenKind::Eq) {
+            init = Some(self.parse_expression()?);
+        }
+        self.consume_semicolon();
+        Ok(Statement::VariableDeclaration { kind, name, init })
+    }
+
+    /// return 文をパース
+    fn parse_return_statement(&mut self) -> JSResult<Statement> {
+        self.advance(); // consume 'return'
+        if self.check(&TokenKind::Semicolon) || self.check(&TokenKind::Eof) || self.check(&TokenKind::RightBrace) {
+            self.consume_semicolon();
+            return Ok(Statement::Return(None));
+        }
+        let expr = self.parse_expression()?;
+        self.consume_semicolon();
+        Ok(Statement::Return(Some(expr)))
     }
 
     /// 論理和式をパース
@@ -258,9 +312,9 @@ impl Parser {
         Ok(left)
     }
 
-    /// 比較式をパース
+    /// 比較をパース
     fn parse_comparison(&mut self) -> JSResult<Expression> {
-        let mut left = self.parse_additive()?;
+        let mut left = self.parse_term()?;
 
         loop {
             let op = match &self.peek().kind {
@@ -271,7 +325,7 @@ impl Parser {
                 _ => break,
             };
             self.advance();
-            let right = self.parse_additive()?;
+            let right = self.parse_term()?;
             left = Expression::Binary {
                 op,
                 left: Box::new(left),
@@ -282,9 +336,9 @@ impl Parser {
         Ok(left)
     }
 
-    /// 加算式をパース
-    fn parse_additive(&mut self) -> JSResult<Expression> {
-        let mut left = self.parse_multiplicative()?;
+    /// 加減乗除のパース
+    fn parse_term(&mut self) -> JSResult<Expression> {
+        let mut left = self.parse_factor()?;
 
         loop {
             let op = match &self.peek().kind {
@@ -293,7 +347,7 @@ impl Parser {
                 _ => break,
             };
             self.advance();
-            let right = self.parse_multiplicative()?;
+            let right = self.parse_factor()?;
             left = Expression::Binary {
                 op,
                 left: Box::new(left),
@@ -305,7 +359,7 @@ impl Parser {
     }
 
     /// 乗算式をパース
-    fn parse_multiplicative(&mut self) -> JSResult<Expression> {
+    fn parse_factor(&mut self) -> JSResult<Expression> {
         let mut left = self.parse_unary()?;
 
         loop {
@@ -379,6 +433,17 @@ impl Parser {
                         object: Box::new(expr),
                         property: Box::new(property),
                         computed: true,
+                    };
+                }
+                TokenKind::LeftParen => {
+                    self.advance();
+                    let args = self.parse_call_arguments()?;
+                    if !self.match_token(&TokenKind::RightParen) {
+                        return Err(JSError::SyntaxError("Expected ')'".to_string()));
+                    }
+                    expr = Expression::Call {
+                        callee: Box::new(expr),
+                        args,
                     };
                 }
                 _ => break,
@@ -511,6 +576,30 @@ impl Parser {
         }
 
         Ok(Expression::ObjectLiteral(properties))
+    }
+
+    /// 呼び出し引数リストをパース
+    fn parse_call_arguments(&mut self) -> JSResult<Vec<Expression>> {
+        let mut args = Vec::new();
+
+        while !self.check(&TokenKind::RightParen) && !self.is_at_end() {
+            // 空の引数をサポート (例: func(1,,3))
+            if self.check(&TokenKind::Comma) {
+                args.push(Expression::Literal(Literal::Undefined));
+                self.advance();
+                continue;
+            }
+
+            args.push(self.parse_expression()?);
+
+            if !self.check(&TokenKind::RightParen) {
+                if !self.match_token(&TokenKind::Comma) {
+                    return Err(JSError::SyntaxError("Expected ',' or ')' in function call".to_string()));
+                }
+            }
+        }
+
+        Ok(args)
     }
 
     /// 現在のトークンを取得
