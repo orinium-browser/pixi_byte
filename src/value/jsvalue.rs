@@ -14,7 +14,14 @@ pub enum JSValue {
     Number(f64),
     String(String),
     Object(Rc<RefCell<JSObject>>),
-    Function(BytecodeChunk, Vec<String>, Option<Rc<RefCell<Environment>>>),
+    Function(
+        BytecodeChunk,
+        Vec<String>,
+        Option<Rc<RefCell<Environment>>>,
+        Option<String>,
+    ),
+    /// ネイティブ（Rust側）で実装された関数を表す。関数ポインタを保持。
+    NativeFunction(fn(&mut crate::vm::VM, Vec<JSValue>) -> crate::error::JSResult<JSValue>),
     // TODO: Symbol, BigInt 等は後のフェーズで実装
 }
 
@@ -40,7 +47,8 @@ impl JSValue {
             }
             JSValue::String(s) => s.clone(),
             JSValue::Object(_) => "[object Object]".to_string(),
-            JSValue::Function(_, _, _) => "[function]".to_string(),
+            JSValue::Function(_, _, _, _) => "[function]".to_string(),
+            JSValue::NativeFunction(_) => "[native function]".to_string(),
         }
     }
 
@@ -60,7 +68,8 @@ impl JSValue {
                 trimmed.parse().unwrap_or(f64::NAN)
             }
             JSValue::Object(_) => f64::NAN,      // オブジェクトはNaN
-            JSValue::Function(_, _, _) => f64::NAN, // 関数もNaN
+            JSValue::Function(_, _, _, _) => f64::NAN, // 関数もNaN
+            JSValue::NativeFunction(_) => f64::NAN,
         }
     }
 
@@ -72,7 +81,8 @@ impl JSValue {
             JSValue::Number(n) => !n.is_nan() && *n != 0.0,
             JSValue::String(s) => !s.is_empty(),
             JSValue::Object(_) => true,      // オブジェクトは常にtrue
-            JSValue::Function(_, _, _) => true, // 関数も常にtrue
+            JSValue::Function(_, _, _, _) => true, // 関数も常にtrue
+            JSValue::NativeFunction(_) => true,
         }
     }
 
@@ -85,7 +95,8 @@ impl JSValue {
             JSValue::Number(_) => "number",
             JSValue::String(_) => "string",
             JSValue::Object(_) => "object",
-            JSValue::Function(_, _, _) => "function",
+            JSValue::Function(_, _, _, _) => "function",
+            JSValue::NativeFunction(_) => "function",
         }
     }
 
@@ -107,6 +118,8 @@ impl JSValue {
                 // オブジェクトは参照が同じ場合のみtrue
                 Rc::ptr_eq(a, b)
             }
+            // 関数は同一参照（Bytecode/ネイティブ含む）でのみ true にできるが、
+            // 簡易実装では false とする
             _ => false,
         }
     }
