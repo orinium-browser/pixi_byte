@@ -286,17 +286,21 @@ Object Creation → Heap Allocation → GC Tracking
 
 **目標**: JavaScriptの基本的なオブジェクト指向機能とクロージャのサポート
 #### 2.1 オブジェクトシステム基礎
-- [x] オブジェクト型の実装（JSObject）
-- [x] プロパティアクセス（get/set）
-- [x] プロトタイプチェーン
-- [ ] `Object.create()`, `Object.getPrototypeOf()`
-- [ ] プロパティディスクリプタ（基本）
-- [ ] `hasOwnProperty`, `in` 演算子
+- [x] オブジェクト型の実装（`JSObject`）
+- [x] プロパティアクセス（`get`/`set` の基本）
+- [x] プロトタイプチェーンの基礎（`prototype` フィールドと継承の探索）
+- [x] `Object.create()` / `Object.getPrototypeOf()` のグローバルAPI（builtins） (実装済み: ネイティブ関数として登録され、VM 経由で呼び出し可能)
+- [x] プロパティディスクリプタ（基本構造 `Property` と `define_property`）
+- [x] `hasOwnProperty` 相当の機能（`has_own_property`） (実装済み: `Object.prototype.hasOwnProperty` をネイティブ関数として追加)
+- [x] `Object.create` の第2引数（プロパティディスクリプタ）の最小サポートを実装（value/writable/enumerable/configurable）
+- [x] `Object.prototype.isPrototypeOf` を実装（ネイティブ関数）
+- [x] `Object.prototype.toString` を実装（ネイティブ関数、簡易版）
+- [ ] `in` 演算子のパーサ/VM サポート
 
 #### 2.2 配列
-- [x] 配列の基本実装（JSArray）
+- [x] 配列の基本実装（`JSArray`）
 - [x] インデックスアクセス `arr[0]`（基本構造）
-- [x] `length` プロパティ
+- [x] `length` プロパティ同期（基本）
 - [x] 配列メソッド:
   - [x] `push`, `pop`, `shift`, `unshift`
   - [ ] `slice`, `splice`
@@ -307,12 +311,10 @@ Object Creation → Heap Allocation → GC Tracking
 - [x] 配列リテラル構文 `[1, 2, 3]`
 
 #### 2.3 関数とクロージャ
-- [x] 関数オブジェクト（Function型）
-  - 注: `JSValue::Function` を追加し、関数本体（`BytecodeChunk`）とパラメータ名を保持する基礎を実装しました。
-- [x] 関数スコープとレキシカルスコープ（基礎実装）
-  - 注: `Environment`（レキシカルスコープチェーン）を実装しました。現状は関数呼び出し時に簡易的に引数を新しい VM のグローバルにバインドする実装ですが、関数オブジェクトに生成時の環境（クロージャ環境）を格納して呼び出し時に正しく連結する作業が残っています。
-- [ ] クロージャの実装（変数キャプチャ）
-  - 注: 関数が生成時のレキシカル環境をキャプチャして、後の呼び出しでそれを利用する完全なクロージャは未実装（次の作業項目）。
+- [x] 関数オブジェクト（`JSValue::Function` を含む基本表現）
+- [x] 関数スコープとレキシカルスコープ（`Environment` の基礎実装）
+- [x] クロージャの基礎（関数が生成時の環境を保持する仕組みの素地）
+  - 注: 現在、関数定義と呼び出し、基本的なクロージャ動作は実装されていますが、名前付き関数式や一部の capture ルールの精査・改善が残っています。
 - [ ] 即座実行関数式（IIFE）
 - [ ] アロー関数 `() => {}`
 - [ ] 可変長引数（`arguments` オブジェクト）
@@ -320,35 +322,27 @@ Object Creation → Heap Allocation → GC Tracking
 - [ ] レストパラメータ `...args`
 
 #### 2.4 `this` バインディング
-- [ ] 関数呼び出しでの`this`
-- [ ] メソッド呼び出しでの`this`
-- [ ] `call`, `apply`, `bind`
-- [ ] アロー関数の`this`継承
+- [ ] 呼び出し時の `this` バインディング（関数呼び出し / メソッド呼び出し）
+- [ ] `call`, `apply`, `bind` の組み込み
+- [ ] アロー関数の `this` 継承
 
 #### 2.5 例外処理
-- [ ] `try-catch-finally` 文
+- [ ] `try-catch-finally` 文のパースとVMサポート
 - [ ] `throw` 文
-- [ ] Error オブジェクト
-- [ ] スタックトレース
+- [ ] Error オブジェクトとスタックトレース（基礎）
 
 #### 2.6 組み込みオブジェクト
-- [ ] `Object` グローバルオブジェクト
-- [ ] `Array` コンストラクタ
-- [ ] `String` オブジェクトとメソッド
-  - [ ] `charAt`, `charCodeAt`, `substring`, `substr`, `slice`
-  - [ ] `indexOf`, `lastIndexOf`, `includes`
-  - [ ] `split`, `replace`, `trim`
-  - [ ] `toUpperCase`, `toLowerCase`
+- [ ] `Object` グローバルオブジェクト（各種 util を含む）
+- [ ] `Array` コンストラクタ（標準的挙動の完全実装）
+  - [x] `Array.prototype.push`, `Array.prototype.pop` の最小ネイティブ実装を追加（builtins/array.rs）
+- [ ] `String` オブジェクトとメソッド（主要メソッドは未実装）
 - [ ] `Number` オブジェクトとメソッド
-  - [ ] `toFixed`, `toPrecision`, `toExponential`
-  - [ ] `parseInt`, `parseFloat`
-  - [ ] `isNaN`, `isFinite`
 
 #### 2.7 パーサー拡張
 - [x] オブジェクトリテラル `{ key: value }`
 - [x] メンバーアクセス `obj.prop`, `obj[prop]`
 - [x] 配列リテラル `[1, 2, 3]`
-- [ ] メソッド定義構文
+- [ ] メソッド定義構文（`obj = { method() {} }` 等）
 - [ ] 配列/オブジェクト分割代入
 - [ ] スプレッド構文 `...`
 - [ ] テンプレートリテラル `` `hello ${name}` ``
@@ -357,14 +351,15 @@ Object Creation → Heap Allocation → GC Tracking
 - [x] オブジェクト作成命令
 - [x] プロパティアクセス命令
 - [x] 配列作成命令
-- [x] 関数定義命令（CreateFunction / CallFunction を導入）
-  - 注: `CreateFunction` と `CallFunction` を実装し、関数定義と呼び出しのバイトコード生成・実行を可能にしました。クロージャキャプチャの統合は未着手です。
-- [ ] クロージャキャプチャ
+- [x] 関数定義命令（`CreateFunction` / `CallFunction` の基礎実装）
+  - 注: `CreateFunction` と `CallFunction` による関数生成・呼び出しは動作します。クロージャキャプチャの完全統合や名前付き関数式の取り扱いの微調整は継続中です。
+- [ ] クロージャキャプチャ最適化（環境の軽量化）
 - [ ] 例外ハンドリング命令
 
 **補足（現状まとめ）**:
-- 関数の定義・呼び出し・引数バインディングと、それに伴うパーサー／コンパイラ／VMの基礎は実装済みで、既存のユニットテストはすべて通過しています。
-- 次の優先作業は「関数オブジェクトに生成時の `Environment` を保持してクロージャを正しく動作させること」と「VM内部での呼び出しフレーム管理の整備」です。
+- リポジトリ内では `src/value/jsobject.rs`, `src/value/jsarray.rs`, `src/value/jsvalue.rs`, `src/parser/mod.rs` などが既に実装されており、オブジェクト・配列・関数の基礎が整っています。
+- テストはプロジェクト方針どおり `tests/` 配下に配置されており、主要なユニット／統合テストは現状で成功している状態です。
+- 次の優先作業は `this` バインディング（呼び出し時の振る舞い）、例外処理、そして builtins（`Object.create` 等）の実装です。
 
 ### Phase 3: 最適化と最新仕様
 

@@ -15,7 +15,7 @@ pub struct JSObject {
 /// プロパティディスクリプタ
 #[derive(Debug, Clone)]
 pub struct Property {
-    /// プロパティの値
+    /// プロパティの値（データプロパティ）
     pub value: JSValue,
     /// 列挙可能かどうか
     pub enumerable: bool,
@@ -23,6 +23,10 @@ pub struct Property {
     pub writable: bool,
     /// 設定変更可能かどうか
     pub configurable: bool,
+    /// アクセサの getter（あれば関数オブジェクト）
+    pub getter: Option<JSValue>,
+    /// アクセサの setter（あれば関数オブジェクト）
+    pub setter: Option<JSValue>,
 }
 
 impl Property {
@@ -33,6 +37,8 @@ impl Property {
             enumerable: true,
             writable: true,
             configurable: true,
+            getter: None,
+            setter: None,
         }
     }
 
@@ -43,6 +49,8 @@ impl Property {
             enumerable: true,
             writable: false,
             configurable: false,
+            getter: None,
+            setter: None,
         }
     }
 }

@@ -5,18 +5,297 @@ use std::rc::Rc;
 
 /// シンプルな Object 組み込みの最小実装
 /// グローバルオブジェクトに `Object` を登録し、`create` と `getPrototypeOf` を提供する
+fn object_create(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    if args.is_empty() {
+        return Err(crate::error::JSError::TypeError(
+            "Object.create: missing prototype argument".to_string(),
+        ));
+    }
 
+    let proto = args.remove(0);
+
+    let new_obj_rc = match proto {
+        JSValue::Object(obj_ref) => {
+            let new_obj = JSObject::with_prototype(Some(obj_ref.clone()));
+            Rc::new(RefCell::new(new_obj))
+        }
+        JSValue::Null => Rc::new(RefCell::new(JSObject::with_prototype(None))),
+        _ => {
+            return Err(crate::error::JSError::TypeError(
+                "Object.create: prototype must be an object or null".to_string(),
+            ))
+        }
+    };
+
+    // If a second argument is provided, treat it as property descriptors
+    if !args.is_empty() {
+        let props = args.remove(0);
+        if let JSValue::Object(desc_ref) = props {
+            // iterate enumerable keys of descriptor object
+            for key in desc_ref.borrow().keys() {
+                let desc_val = desc_ref.borrow().get(&key);
+                // descriptor should be an object
+                if let JSValue::Object(dobj_ref) = desc_val {
+                    // extract descriptor fields
+                    let value = dobj_ref.borrow().get("value");
+                    let enumerable = dobj_ref.borrow().get("enumerable").to_boolean();
+                    let writable = dobj_ref.borrow().get("writable").to_boolean();
+                    let configurable = dobj_ref.borrow().get("configurable").to_boolean();
+                    // getter/setter support
+                    let getter = match dobj_ref.borrow().get("get") {
+                        JSValue::Undefined => None,
+                        g => Some(g),
+                    };
+                    let setter = match dobj_ref.borrow().get("set") {
+                        JSValue::Undefined => None,
+                        s => Some(s),
+                    };
+
+                    // construct Property
+                    let prop = crate::value::jsobject::Property {
+                        value,
+                        enumerable,
+                        writable,
+                        configurable,
+                        getter,
+                        setter,
+                    };
+
+                    new_obj_rc.borrow_mut().define_property(key, prop);
+                } else {
+                    // If descriptor is not object, treat it as value shorthand
+                    let prop = crate::value::jsobject::Property::data(desc_val);
+                    new_obj_rc.borrow_mut().define_property(key, prop);
+                }
+            }
+        } else {
+            return Err(crate::error::JSError::TypeError(
+                "Object.create: properties argument must be an object".to_string(),
+            ));
+        }
+    }
+
+    Ok(JSValue::Object(new_obj_rc))
+}
+
+fn object_get_prototype_of(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    // args: [obj]
+    if args.is_empty() {
+        return Err(crate::error::JSError::TypeError(
+            "Object.getPrototypeOf: missing object argument".to_string(),
+        ));
+    }
+
+    let obj = args.remove(0);
+
+    match obj {
+        JSValue::Object(obj_ref) => {
+            if let Some(proto) = obj_ref.borrow().get_prototype() {
+                Ok(JSValue::Object(proto.clone()))
+            } else {
+                Ok(JSValue::Null)
+            }
+        }
+        _ => Err(crate::error::JSError::TypeError(
+            "Object.getPrototypeOf: argument is not an object".to_string(),
+        )),
+    }
+}
+
+/// Object.prototype.hasOwnProperty のネイティブ実装
+fn object_has_own_property(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    if args.is_empty() {
+        return Err(crate::error::JSError::TypeError(
+            "hasOwnProperty: missing receiver".to_string(),
+        ));
+    }
+    let receiver = args.remove(0);
+    if args.is_empty() {
+        return Err(crate::error::JSError::TypeError(
+            "hasOwnProperty: missing property name".to_string(),
+        ));
+    }
+    let prop = args.remove(0);
+    let key = prop.to_string();
+
+    match receiver {
+        JSValue::Object(obj_ref) => Ok(JSValue::Boolean(obj_ref.borrow().has_own_property(&key))),
+        _ => Err(crate::error::JSError::TypeError(
+            "hasOwnProperty: receiver is not an object".to_string(),
+        )),
+    }
+}
+
+/// Object.prototype.isPrototypeOf のネイティブ実装
+fn object_is_prototype_of(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    if args.len() < 2 {
+        return Err(crate::error::JSError::TypeError(
+            "isPrototypeOf: missing arguments".to_string(),
+        ));
+    }
+    let receiver = args.remove(0);
+    let obj = args.remove(0);
+
+    match (receiver, obj) {
+        (JSValue::Object(proto_ref), JSValue::Object(target_ref)) => {
+            let mut current = target_ref.borrow().get_prototype();
+            while let Some(p) = current {
+                if Rc::ptr_eq(&p, &proto_ref) {
+                    return Ok(JSValue::Boolean(true));
+                }
+                current = p.borrow().get_prototype();
+            }
+            Ok(JSValue::Boolean(false))
+        }
+        _ => Err(crate::error::JSError::TypeError(
+            "isPrototypeOf: receiver and argument must be objects".to_string(),
+        )),
+    }
+}
+
+/// Object.prototype.toString のネイティブ実装
+fn object_to_string(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    if args.is_empty() {
+        return Ok(JSValue::String("[object Object]".to_string()));
+    }
+    let receiver = args.remove(0);
+    match receiver {
+        JSValue::Object(_) => Ok(JSValue::String("[object Object]".to_string())),
+        JSValue::Function(_, _, _, _) | JSValue::NativeFunction(_) => Ok(JSValue::String("[object Function]".to_string())),
+        JSValue::String(_) => Ok(JSValue::String("[object String]".to_string())),
+        JSValue::Number(_) => Ok(JSValue::String("[object Number]".to_string())),
+        JSValue::Boolean(_) => Ok(JSValue::String("[object Boolean]".to_string())),
+        JSValue::Null => Ok(JSValue::String("[object Null]".to_string())),
+        JSValue::Undefined => Ok(JSValue::String("[object Undefined]".to_string())),
+    }
+}
+
+/// グローバルオブジェクトに Object 組み込みをインストールする
 pub fn install(global: &Rc<RefCell<JSObject>>) {
-    // 作業: グローバルオブジェクトに `Object` をオブジェクトとしてセット
+    // TODO: グローバルオブジェクトに `Object` をオブジェクトとしてセット
     let mut obj = JSObject::new();
 
-    // `create` と `getPrototypeOf` は名称のみセット（実体は VM/host が理解するプリミティブ）
-    obj.set("create".to_string(), JSValue::String("[native Object.create]".to_string()));
+    // Create Object.prototype and attach methods (e.g., hasOwnProperty)
+    let mut proto = JSObject::new();
+    proto.set("hasOwnProperty".to_string(), JSValue::NativeFunction(object_has_own_property));
+    proto.set("isPrototypeOf".to_string(), JSValue::NativeFunction(object_is_prototype_of));
+    proto.set("toString".to_string(), JSValue::NativeFunction(object_to_string));
+
+    // `create` と `getPrototypeOf` をネイティブ関数として登録
+    obj.set("create".to_string(), JSValue::NativeFunction(object_create));
     obj.set(
         "getPrototypeOf".to_string(),
-        JSValue::String("[native Object.getPrototypeOf]".to_string()),
+        JSValue::NativeFunction(object_get_prototype_of),
     );
+
+    // register defineProperty and getOwnPropertyDescriptor
+    obj.set("defineProperty".to_string(), JSValue::NativeFunction(object_define_property));
+    obj.set(
+        "getOwnPropertyDescriptor".to_string(),
+        JSValue::NativeFunction(object_get_own_property_descriptor),
+    );
+
+    // Set prototype property on constructor-like object
+    obj.set("prototype".to_string(), JSValue::Object(Rc::new(RefCell::new(proto))));
 
     global.borrow_mut().set("Object".to_string(), JSValue::Object(Rc::new(RefCell::new(obj))));
 }
 
+// New: Object.defineProperty(obj, prop, descriptor)
+fn object_define_property(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    if args.len() < 3 {
+        return Err(crate::error::JSError::TypeError(
+            "Object.defineProperty: missing arguments".to_string(),
+        ));
+    }
+    let obj = args.remove(0);
+    let prop_name = args.remove(0);
+    let desc = args.remove(0);
+
+    let key = prop_name.to_string();
+
+    match obj {
+        JSValue::Object(obj_ref) => {
+            if let JSValue::Object(desc_ref) = desc {
+                // build Property
+                let value = desc_ref.borrow().get("value");
+                let enumerable = desc_ref.borrow().get("enumerable").to_boolean();
+                let writable = desc_ref.borrow().get("writable").to_boolean();
+                let configurable = desc_ref.borrow().get("configurable").to_boolean();
+                let getter = match desc_ref.borrow().get("get") {
+                    JSValue::Undefined => None,
+                    g => Some(g),
+                };
+                let setter = match desc_ref.borrow().get("set") {
+                    JSValue::Undefined => None,
+                    s => Some(s),
+                };
+
+                let property = crate::value::jsobject::Property {
+                    value,
+                    enumerable,
+                    writable,
+                    configurable,
+                    getter,
+                    setter,
+                };
+
+                obj_ref.borrow_mut().define_property(key, property);
+                Ok(JSValue::Object(obj_ref.clone()))
+            } else {
+                return Err(crate::error::JSError::TypeError(
+                    "Object.defineProperty: descriptor must be an object".to_string(),
+                ));
+            }
+        }
+        _ => Err(crate::error::JSError::TypeError(
+            "Object.defineProperty: first argument must be an object".to_string(),
+        )),
+    }
+}
+
+// New: Object.getOwnPropertyDescriptor(obj, prop)
+fn object_get_own_property_descriptor(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    if args.len() < 2 {
+        return Err(crate::error::JSError::TypeError(
+            "Object.getOwnPropertyDescriptor: missing arguments".to_string(),
+        ));
+    }
+    let obj = args.remove(0);
+    let prop_name = args.remove(0);
+    let key = prop_name.to_string();
+
+    match obj {
+        JSValue::Object(obj_ref) => {
+            if let Some(prop) = obj_ref.borrow().get_property_descriptor(&key) {
+                // build descriptor object
+                let mut desc = JSObject::new();
+                // if accessor
+                if prop.getter.is_some() || prop.setter.is_some() {
+                    if let Some(getv) = prop.getter {
+                        desc.set("get".to_string(), getv);
+                    } else {
+                        desc.set("get".to_string(), JSValue::Undefined);
+                    }
+                    if let Some(setv) = prop.setter {
+                        desc.set("set".to_string(), setv);
+                    } else {
+                        desc.set("set".to_string(), JSValue::Undefined);
+                    }
+                } else {
+                    desc.set("value".to_string(), prop.value.clone());
+                    desc.set("writable".to_string(), JSValue::Boolean(prop.writable));
+                }
+                desc.set("enumerable".to_string(), JSValue::Boolean(prop.enumerable));
+                desc.set("configurable".to_string(), JSValue::Boolean(prop.configurable));
+
+                Ok(JSValue::Object(Rc::new(RefCell::new(desc))))
+            } else {
+                Ok(JSValue::Undefined)
+            }
+        }
+        _ => Err(crate::error::JSError::TypeError(
+            "Object.getOwnPropertyDescriptor: first argument must be an object".to_string(),
+        )),
+    }
+}
