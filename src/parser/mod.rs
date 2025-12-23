@@ -63,6 +63,7 @@ pub enum Expression {
         args: Vec<Expression>,
     },
     Function {
+        name: Option<String>,
         params: Vec<String>,
         body: Vec<Statement>,
     },
@@ -509,11 +510,46 @@ impl Parser {
             }
             TokenKind::LeftBracket => self.parse_array_literal(),
             TokenKind::LeftBrace => self.parse_object_literal(),
-            _ => Err(JSError::SyntaxError(format!(
-                "Unexpected token: {:?}",
-                token.kind
-            ))),
-        }
+            TokenKind::Function => {
+                // function expression: optional name, params, body
+                self.advance(); // consume 'function'
+
+                // optional name (named function expressions)
+                let mut name: Option<String> = None;
+                if let TokenKind::Identifier(s) = &self.peek().kind {
+                    name = Some(s.clone());
+                    self.advance();
+                }
+
+                // parameters
+                if !self.match_token(&TokenKind::LeftParen) {
+                    return Err(JSError::SyntaxError("Expected '(' after function".to_string()));
+                }
+                let mut params = Vec::new();
+                while !self.check(&TokenKind::RightParen) {
+                    if let TokenKind::Identifier(s) = &self.peek().kind {
+                        params.push(s.clone());
+                        self.advance();
+                    } else {
+                        return Err(JSError::SyntaxError("Expected parameter name".to_string()));
+                    }
+                    if !self.check(&TokenKind::RightParen) && !self.match_token(&TokenKind::Comma) {
+                        return Err(JSError::SyntaxError("Expected ',' in parameter list".to_string()));
+                    }
+                }
+                if !self.match_token(&TokenKind::RightParen) {
+                    return Err(JSError::SyntaxError("Expected ')' after parameters".to_string()));
+                }
+
+                // body
+                let body = self.parse_block()?;
+                Ok(Expression::Function { name, params, body })
+            }
+             _ => Err(JSError::SyntaxError(format!(
+                 "Unexpected token: {:?}",
+                 token.kind
+             ))),
+         }
     }
 
     /// 配列リテラルをパース: [1, 2, 3]
