@@ -11,14 +11,22 @@ pub struct VM {
     stack: Vec<JSValue>,
     /// グローバル環境（レキシカルスコープチェーンのルート）
     pub env: Rc<RefCell<Environment>>,
+    /// グローバルオブジェクト（非モジュールスクリプトの `this` などに利用）
+    pub global_object: Rc<RefCell<crate::value::jsobject::JSObject>>,
 }
 
 impl VM {
     /// 新しいVMインスタンスを作成
     pub fn new() -> Self {
+        // グローバルオブジェクトを作成し、グローバル環境を初期化
+        let global_obj = crate::value::jsobject::JSObject::new();
+        let global_rc = Rc::new(RefCell::new(global_obj));
+        // builtins を初期化してグローバルに組み込みを登録
+        crate::builtins::Builtins::new().init(&global_rc);
         Self {
             stack: Vec::new(),
             env: Rc::new(RefCell::new(Environment::new())),
+            global_object: global_rc,
         }
     }
 
@@ -217,9 +225,9 @@ impl VM {
                     // 定数プールの関数オブジェクト（BytecodeChunk）をそのままプッシュ
                     let func_const = chunk.constants[*idx].clone();
                     match func_const {
-                        JSValue::Function(func_chunk, params, _maybe_env) => {
+                        JSValue::Function(func_chunk, params, _maybe_env, name_opt) => {
                             let captured = Some(self.env.clone());
-                            let func = JSValue::Function(func_chunk, params, captured);
+                            let func = JSValue::Function(func_chunk, params, captured, name_opt.clone());
                             self.stack.push(func);
                         }
                         _other => {
@@ -242,7 +250,7 @@ impl VM {
                     let func = self.pop()?;
 
                     match func {
-                        JSValue::Function(func_chunk, params, captured_env_opt) => {
+                        JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
                             // 新しい環境を作成し、キャプチャされた環境または現在の環境を外側に設定
                             let outer = match captured_env_opt {
                                 Some(env_rc) => env_rc,
@@ -260,8 +268,20 @@ impl VM {
                                 }
                             }
 
-                            // 基本的な `this` バインディングをセット（現時点では undefined）
-                            new_env.borrow().define("this".to_string(), JSValue::Undefined);
+                            // named function expression の場合、関数名は関数オブジェクト内でのみ見えるため
+                            // 新しい環境の内部に関数名を定義する
+                            if let Some(name) = name_opt.clone() {
+                                // 関数オブジェクト自体を参照可能にする
+                                // ここでは CreateFunction で作った関数オブジェクトがスタック上にあるため、
+                                // 名前解決で参照されるべきオブジェクトは呼び出し時点の func 変数です。
+                                new_env.borrow().define(name, JSValue::Undefined);
+                            }
+
+                            // 基本的な `this` バインディングをセット（非メソッド呼び出しではグローバルオブジェクト）
+                            new_env.borrow().define(
+                                "this".to_string(),
+                                JSValue::Object(self.global_object.clone()),
+                            );
 
                             // スタックと環境を切り替えて同一VMで関数を実行
                             let old_env = self.env.clone();
@@ -276,11 +296,16 @@ impl VM {
 
                             self.stack.push(res);
                         }
-                        _ => {
-                            return Err(JSError::TypeError(
-                                "CallFunction: not a function".to_string(),
-                            ));
+                        JSValue::NativeFunction(native_fn) => {
+                            // For native functions, we pass the VM and args. Treat as simple call: no this handling here.
+                            let result = native_fn(self, args)?;
+                            self.stack.push(result);
                         }
+                         _ => {
+                             return Err(JSError::TypeError(
+                                 "CallFunction: not a function".to_string(),
+                             ));
+                         }
                     }
                 }
                 Opcode::CallMethod(arg_count) => {
@@ -299,11 +324,12 @@ impl VM {
                     // property を文字列化してプロパティアクセス
                     let key_str = property.to_string();
 
+
                     match object.clone() {
                         JSValue::Object(obj_ref) => {
                             let method = obj_ref.borrow().get(&key_str);
                             match method {
-                                JSValue::Function(func_chunk, params, captured_env_opt) => {
+                                JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
                                     // outer は関数生成時のキャプチャまたは現在の env
                                     let outer = match captured_env_opt {
                                         Some(env_rc) => env_rc,
@@ -323,6 +349,11 @@ impl VM {
                                     // this を receiver にセット
                                     new_env.borrow().define("this".to_string(), object.clone());
 
+                                    // named function expression の場合は名前を環境に定義
+                                    if let Some(name) = name_opt.clone() {
+                                        new_env.borrow().define(name, JSValue::Undefined);
+                                    }
+
                                     // 実行
                                     let old_env = self.env.clone();
                                     let old_stack = std::mem::replace(&mut self.stack, Vec::new());
@@ -335,11 +366,19 @@ impl VM {
 
                                     self.stack.push(res);
                                 }
-                                _ => {
-                                    return Err(JSError::TypeError(
-                                        "CallMethod: property is not a function".to_string(),
-                                    ));
+                                JSValue::NativeFunction(native_fn) => {
+                                    // For methods, inject receiver as first arg
+                                    let mut call_args = Vec::new();
+                                    call_args.push(object.clone());
+                                    call_args.extend(args.into_iter());
+                                    let res = native_fn(self, call_args)?;
+                                    self.stack.push(res);
                                 }
+                                 _ => {
+                                     return Err(JSError::TypeError(
+                                         "CallMethod: property is not a function".to_string(),
+                                     ));
+                                 }
                             }
                         }
                         _ => {
