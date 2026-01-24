@@ -6,7 +6,6 @@ use std::fmt;
 use std::rc::Rc;
 
 /// JavaScript の値型
-#[derive(Debug, Clone)]
 pub enum JSValue {
     Undefined,
     Null,
@@ -20,7 +19,7 @@ pub enum JSValue {
         Option<Rc<RefCell<Environment>>>,
         Option<String>,
     ),
-    /// ネイティブ（Rust側）で実装された関数を表す。関数ポインタを保持。
+    /// ネイティブ（Rust側）で実装された関数を表す。関数ポインタを使用してテスト側のクロージャ/関数リテラルを直接渡せるようにする。
     NativeFunction(fn(&mut crate::vm::VM, Vec<JSValue>) -> crate::error::JSResult<JSValue>),
     // TODO: Symbol, BigInt 等は後のフェーズで実装
 }
@@ -151,6 +150,42 @@ impl JSValue {
 impl PartialEq for JSValue {
     fn eq(&self, other: &Self) -> bool {
         self.strict_equals(other)
+    }
+}
+
+// 手動で Debug と Clone を実装
+impl fmt::Debug for JSValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            JSValue::Undefined => write!(f, "Undefined"),
+            JSValue::Null => write!(f, "Null"),
+            JSValue::Boolean(b) => write!(f, "Boolean({})", b),
+            JSValue::Number(n) => write!(f, "Number({})", n),
+            JSValue::String(s) => write!(f, "String(\"{}\")", s),
+            JSValue::Object(_) => write!(f, "Object(...)"),
+            JSValue::Function(_, _, _, _) => write!(f, "Function(...)"),
+            JSValue::NativeFunction(_) => write!(f, "NativeFunction(...)"),
+        }
+    }
+}
+
+impl Clone for JSValue {
+    fn clone(&self) -> Self {
+        match self {
+            JSValue::Undefined => JSValue::Undefined,
+            JSValue::Null => JSValue::Null,
+            JSValue::Boolean(b) => JSValue::Boolean(*b),
+            JSValue::Number(n) => JSValue::Number(*n),
+            JSValue::String(s) => JSValue::String(s.clone()),
+            JSValue::Object(o) => JSValue::Object(o.clone()),
+            JSValue::Function(chunk, params, env_opt, name_opt) => JSValue::Function(
+                chunk.clone(),
+                params.clone(),
+                env_opt.clone(),
+                name_opt.clone(),
+            ),
+            JSValue::NativeFunction(f) => JSValue::NativeFunction(*f),
+        }
     }
 }
 

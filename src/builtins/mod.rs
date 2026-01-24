@@ -3,6 +3,7 @@
 
 pub mod object;
 pub mod array;
+pub mod function;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -20,6 +21,8 @@ impl Builtins {
         self::object::install(global);
         // Array 関連の組み込みを登録
         self::array::install(global);
+        // Function 関連の組み込みを登録
+        self::function::install(global);
     }
 }
 

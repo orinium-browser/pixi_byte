@@ -8,7 +8,7 @@ use std::rc::Rc;
 /// 仮想マシン
 pub struct VM {
     /// オペランドスタック
-    stack: Vec<JSValue>,
+    pub(crate) stack: Vec<JSValue>,
     /// グローバル環境（レキシカルスコープチェーンのルート）
     pub env: Rc<RefCell<Environment>>,
     /// グローバルオブジェクト（非モジュールスクリプトの `this` などに利用）
@@ -165,6 +165,53 @@ impl VM {
                     match obj {
                         JSValue::Object(ref obj_ref) => {
                             let key_str = key.to_string();
+
+                            // Try to get property descriptor on the object itself first
+                            if let Some(prop) = obj_ref.borrow().get_property_descriptor(&key_str) {
+                                // If accessor getter exists, call it
+                                if let Some(getter_val) = prop.getter.clone() {
+                                    match getter_val {
+                                        JSValue::NativeFunction(native_fn) => {
+                                            // call native getter with receiver as first arg
+                                            let result = native_fn(self, vec![JSValue::Object(obj_ref.clone())])?;
+                                            self.stack.push(result);
+                                        }
+                                        JSValue::Function(func_chunk, _params, captured_env_opt, _) => {
+                                            // call JS getter as method with receiver as this and no args
+                                            let outer = match captured_env_opt {
+                                                Some(env_rc) => env_rc,
+                                                None => self.env.clone(),
+                                            };
+                                            let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
+
+                                            // bind this
+                                            new_env.borrow().define("this".to_string(), JSValue::Object(obj_ref.clone()));
+
+                                            let old_env = self.env.clone();
+                                            let old_stack = std::mem::replace(&mut self.stack, Vec::new());
+                                            self.env = new_env;
+
+                                            let res = self.execute(func_chunk)?;
+
+                                            let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
+                                            self.env = old_env;
+
+                                            self.stack.push(res);
+                                        }
+                                        _ => {
+                                            // getter not callable
+                                            self.stack.push(JSValue::Undefined);
+                                        }
+                                    }
+                                    continue; // processed getter
+                                }
+
+                                // No getter: return data value
+                                self.stack.push(prop.value.clone());
+                                continue;
+                            }
+
+                            // Not an own property: use prototype chain lookup via get (existing behavior)
                             let value = obj_ref.borrow().get(&key_str);
                             self.stack.push(value);
                         }
@@ -182,8 +229,62 @@ impl VM {
                     match obj {
                         JSValue::Object(ref obj_ref) => {
                             let key_str = key.to_string();
+
+                            // Obtain property descriptor in a short scope so RefCell borrow ends
+                            let maybe_prop = {
+                                let borrowed = obj_ref.borrow();
+                                borrowed.get_property_descriptor(&key_str)
+                            };
+
+                            // If there is an own property with a setter, call it
+                            if let Some(prop) = maybe_prop {
+                                if let Some(setter_val) = prop.setter.clone() {
+                                    match setter_val {
+                                        JSValue::NativeFunction(native_fn) => {
+                                            // call native setter with receiver and value
+                                            let _res = native_fn(self, vec![JSValue::Object(obj_ref.clone()), value.clone()])?;
+                                            // setters usually return undefined; we push the object as per prior behavior
+                                            self.stack.push(JSValue::Object(obj_ref.clone()));
+                                        }
+                                        JSValue::Function(func_chunk, params, captured_env_opt, _) => {
+                                            // call JS setter with receiver as this and value as first param
+                                            let outer = match captured_env_opt {
+                                                Some(env_rc) => env_rc,
+                                                None => self.env.clone(),
+                                            };
+                                            let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
+
+                                            // bind parameter (if exists)
+                                            if params.len() > 0 {
+                                                new_env.borrow().define(params[0].clone(), value.clone());
+                                            }
+
+                                            // bind this
+                                            new_env.borrow().define("this".to_string(), JSValue::Object(obj_ref.clone()));
+
+                                            let old_env = self.env.clone();
+                                            let old_stack = std::mem::replace(&mut self.stack, Vec::new());
+                                            self.env = new_env;
+
+                                            let _ = self.execute(func_chunk)?;
+
+                                            let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
+                                            self.env = old_env;
+
+                                            self.stack.push(JSValue::Object(obj_ref.clone()));
+                                        }
+                                        _ => {
+                                            return Err(JSError::TypeError("SetProperty: setter is not callable".to_string()));
+                                        }
+                                    }
+                                    continue;
+                                }
+                            }
+
+                            // No setter: perform normal set
+                            let key_str = key.to_string();
                             obj_ref.borrow_mut().set(key_str, value.clone());
-                            self.stack.push(obj.clone()); // オブジェクトを返す
+                            self.stack.push(JSValue::Object(obj_ref.clone()));
                         }
                         _ => {
                             return Err(JSError::TypeError(

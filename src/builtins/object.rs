@@ -36,32 +36,8 @@ fn object_create(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::erro
                 let desc_val = desc_ref.borrow().get(&key);
                 // descriptor should be an object
                 if let JSValue::Object(dobj_ref) = desc_val {
-                    // extract descriptor fields
-                    let value = dobj_ref.borrow().get("value");
-                    let enumerable = dobj_ref.borrow().get("enumerable").to_boolean();
-                    let writable = dobj_ref.borrow().get("writable").to_boolean();
-                    let configurable = dobj_ref.borrow().get("configurable").to_boolean();
-                    // getter/setter support
-                    let getter = match dobj_ref.borrow().get("get") {
-                        JSValue::Undefined => None,
-                        g => Some(g),
-                    };
-                    let setter = match dobj_ref.borrow().get("set") {
-                        JSValue::Undefined => None,
-                        s => Some(s),
-                    };
-
-                    // construct Property
-                    let prop = crate::value::jsobject::Property {
-                        value,
-                        enumerable,
-                        writable,
-                        configurable,
-                        getter,
-                        setter,
-                    };
-
-                    new_obj_rc.borrow_mut().define_property(key, prop);
+                    // Use define_property_descriptor to respect defaults/partial descriptors
+                    new_obj_rc.borrow_mut().define_property_descriptor(key, dobj_ref.clone());
                 } else {
                     // If descriptor is not object, treat it as value shorthand
                     let prop = crate::value::jsobject::Property::data(desc_val);
@@ -98,6 +74,52 @@ fn object_get_prototype_of(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> c
         }
         _ => Err(crate::error::JSError::TypeError(
             "Object.getPrototypeOf: argument is not an object".to_string(),
+        )),
+    }
+}
+
+// Accessor for Object.prototype.__proto__ (getter)
+fn object_proto_get(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    if args.is_empty() {
+        return Ok(JSValue::Undefined);
+    }
+    let receiver = args.remove(0);
+    match receiver {
+        JSValue::Object(obj_ref) => {
+            if let Some(proto) = obj_ref.borrow().get_prototype() {
+                Ok(JSValue::Object(proto))
+            } else {
+                Ok(JSValue::Null)
+            }
+        }
+        _ => Ok(JSValue::Undefined),
+    }
+}
+
+// Accessor setter for Object.prototype.__proto__ (setter)
+fn object_proto_set(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    if args.is_empty() {
+        return Ok(JSValue::Undefined);
+    }
+    let receiver = args.remove(0);
+    let new_proto = if !args.is_empty() { args.remove(0) } else { JSValue::Undefined };
+
+    match receiver {
+        JSValue::Object(obj_ref) => match new_proto {
+            JSValue::Object(o) => {
+                obj_ref.borrow_mut().set_prototype(Some(o));
+                Ok(JSValue::Undefined)
+            }
+            JSValue::Null => {
+                obj_ref.borrow_mut().set_prototype(None);
+                Ok(JSValue::Undefined)
+            }
+            _ => Err(crate::error::JSError::TypeError(
+                "__proto__ setter: value must be an object or null".to_string(),
+            )),
+        },
+        _ => Err(crate::error::JSError::TypeError(
+            "__proto__ setter: receiver is not an object".to_string(),
         )),
     }
 }
@@ -181,6 +203,17 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     proto.set("isPrototypeOf".to_string(), JSValue::NativeFunction(object_is_prototype_of));
     proto.set("toString".to_string(), JSValue::NativeFunction(object_to_string));
 
+    // Define __proto__ accessor on Object.prototype
+    let proto_accessor = crate::value::jsobject::Property {
+        value: JSValue::Undefined,
+        enumerable: false,
+        writable: false,
+        configurable: true,
+        getter: Some(JSValue::NativeFunction(object_proto_get)),
+        setter: Some(JSValue::NativeFunction(object_proto_set)),
+    };
+    proto.define_property("__proto__".to_string(), proto_accessor);
+
     // `create` と `getPrototypeOf` をネイティブ関数として登録
     obj.set("create".to_string(), JSValue::NativeFunction(object_create));
     obj.set(
@@ -217,30 +250,8 @@ fn object_define_property(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> cr
     match obj {
         JSValue::Object(obj_ref) => {
             if let JSValue::Object(desc_ref) = desc {
-                // build Property
-                let value = desc_ref.borrow().get("value");
-                let enumerable = desc_ref.borrow().get("enumerable").to_boolean();
-                let writable = desc_ref.borrow().get("writable").to_boolean();
-                let configurable = desc_ref.borrow().get("configurable").to_boolean();
-                let getter = match desc_ref.borrow().get("get") {
-                    JSValue::Undefined => None,
-                    g => Some(g),
-                };
-                let setter = match desc_ref.borrow().get("set") {
-                    JSValue::Undefined => None,
-                    s => Some(s),
-                };
-
-                let property = crate::value::jsobject::Property {
-                    value,
-                    enumerable,
-                    writable,
-                    configurable,
-                    getter,
-                    setter,
-                };
-
-                obj_ref.borrow_mut().define_property(key, property);
+                // use define_property_descriptor to apply descriptor semantics
+                obj_ref.borrow_mut().define_property_descriptor(key, desc_ref.clone());
                 Ok(JSValue::Object(obj_ref.clone()))
             } else {
                 return Err(crate::error::JSError::TypeError(

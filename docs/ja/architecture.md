@@ -289,12 +289,14 @@ Object Creation → Heap Allocation → GC Tracking
 - [x] オブジェクト型の実装（`JSObject`）
 - [x] プロパティアクセス（`get`/`set` の基本）
 - [x] プロトタイプチェーンの基礎（`prototype` フィールドと継承の探索）
-- [x] `Object.create()` / `Object.getPrototypeOf()` のグローバルAPI（builtins） (実装済み: ネイティブ関数として登録され、VM 経由で呼び出し可能)
+- [x] `Object.create()` / `Object.getPrototypeOf()` のグローバルAPI（builtins） (実装済み: ネイティブ関数として登録され、VM 経由で呼び出し可能) — 実装日: 2026-01-24, テスト: `tests/object_tests.rs`, `tests/object_accessor_tests.rs`
 - [x] プロパティディスクリプタ（基本構造 `Property` と `define_property`）
 - [x] `hasOwnProperty` 相当の機能（`has_own_property`） (実装済み: `Object.prototype.hasOwnProperty` をネイティブ関数として追加)
 - [x] `Object.create` の第2引数（プロパティディスクリプタ）の最小サポートを実装（value/writable/enumerable/configurable）
 - [x] `Object.prototype.isPrototypeOf` を実装（ネイティブ関数）
 - [x] `Object.prototype.toString` を実装（ネイティブ関数、簡易版）
+- [x] `Object.prototype.__proto__` アクセサ（getter/setter）を実装し、`Object.prototype` にアクセサとして登録
+- [x] `Object.defineProperty` と `Object.getOwnPropertyDescriptor` をネイティブ関数として実装・登録
 - [ ] `in` 演算子のパーサ/VM サポート
 
 #### 2.2 配列
@@ -324,7 +326,9 @@ Object Creation → Heap Allocation → GC Tracking
 #### 2.4 `this` バインディング
 - [ ] 呼び出し時の `this` バインディング（関数呼び出し / メソッド呼び出し）
 - [ ] `call`, `apply`, `bind` の組み込み
-- [ ] アロー関数の `this` 継承
+
+- [x] `call`, `apply` の組み込み（ネイティブ関数として実装し、VM 経由で JS バイトコード関数を呼べるように対応）
+- [ ] `bind` の実装（未対応）
 
 #### 2.5 例外処理
 - [ ] `try-catch-finally` 文のパースとVMサポート
@@ -361,33 +365,73 @@ Object Creation → Heap Allocation → GC Tracking
 - テストはプロジェクト方針どおり `tests/` 配下に配置されており、主要なユニット／統合テストは現状で成功している状態です。
 - 次の優先作業は `this` バインディング（呼び出し時の振る舞い）、例外処理、そして builtins（`Object.create` 等）の実装です。
 
-### Phase 3: 最適化と最新仕様
+### Phase2 進捗更新と優先度付き実行計画
+以下は Phase2（ECMAScript コア機能）について、現在の進捗と今後の優先実装計画です。
 
-- [ ] Hidden Classes（Shape-based optimization）
-- [ ] インライン化
-- [ ] クラス構文（ES2015+）
-- [ ] async/await
-- [ ] Promise
-- [ ] モジュールシステム（import/export）
-- [ ] Symbol, BigInt
-- [ ] Map, Set, WeakMap, WeakSet
-- [ ] Proxy, Reflect
+概要: Phase1 は完了済みのため、Phase2 は ECMAScript のコア機能（オブジェクトモデル、`this` セマンティクス、プロパティ記述子、型変換など）を中心に実装します。短期（1週間）で高優先度を安定させ、中期（1か月）で中/低優先度を完了する計画です。
 
-### Phase 4: JITコンパイラ
+#### 優先度: 高
+- 作業A: プロパティ記述子の完全実装と `Object.defineProperty` / `Object.getOwnPropertyDescriptor` のサポート
+  - 目的: データ/アクセサ記述子（value/writable/get/set/configurable/enumerable）を仕様どおり扱う
+  - 見積: 中（4-16h）
+  - 主要修正候補ファイル: `builtins/object.rs`, `src/value/jsobject.rs`, `vm/mod.rs`, `gc/mod.rs`
+  - テスト（追加予定、`tests/` 配下）: `tests/object_descriptor_tests.rs` — `define_property_data_descriptor`, `define_property_accessor_descriptor`, `get_own_property_descriptor_matches_define`, `define_non_configurable_delete_fails`
 
-- [ ] JITコンパイラ設計
-- [ ] ホットパス検出
-- [ ] ベースラインJIT
-- [ ] 最適化JIT
-- [ ] デオプティマイゼーション
-- [ ] インライン化、型推論
+- 作業B: アクセサ（getter/setter）の実装と呼び出し時の `this` ハンドリング
+  - 目的: アクセサが正しい `this` を受け取り、副作用・戻り値が反映される
+  - 見積: 中（4-16h）
+  - 主要修正候補ファイル: `builtins/object.rs`, `builtins/function.rs`, `src/value/jsobject.rs`, `vm/mod.rs`, `runtime/mod.rs`
+  - テスト: `tests/object_accessor_tests.rs` — `getter_receives_this`, `setter_updates_internal_state`, `accessor_descriptor_enumeration`
 
-### Phase 5: 高度な最適化
+- 作業C: `this` バインディング規則の実装（通常呼び出し / メソッド呼び出し / construct / call/apply/bind）
+  - 目的: strict と non-strict を含めた ECMAScript の呼び出しセマンティクスの整合
+  - 見積: 大（>16h）
+  - 主要修正候補ファイル: `builtins/function.rs`, `vm/mod.rs`, `compiler/mod.rs`, `runtime/mod.rs`
+  - テスト: `tests/function_this_tests.rs` — `plain_call_non_strict_this_global`, `method_call_this_object`, `construct_new_this`, `call_apply_bind_behavior`
 
-- [ ] 世代別GC
-- [ ] 並行/インクリメンタルGC
-- [ ] SIMD最適化
-- [ ] WebAssembly相互運用
+#### 優先度: 中
+- 作業D: `delete` 演算子と `configurable` の扱い、`Object.preventExtensions` / `Object.freeze` / `Object.seal`
+  - 見積: 中（4-16h）
+  - 主要ファイル候補: `src/vm/mod.rs`, `src/value/jsobject.rs`, `builtins/object.rs`
+  - テスト: `tests/object_mutation_tests.rs` — `delete_non_configurable_fails`, `prevent_extensions_prevents_add`, `freeze_prevents_write`
+
+- 作業E: `instanceof` / `isPrototypeOf` / `Object.getPrototypeOf` とプロトタイプチェーン整合性
+  - 見積: 小〜中（状況次第）
+  - 主要ファイル候補: `builtins/object.rs`, `src/value/jsobject.rs`, `vm/mod.rs`
+  - テスト: `tests/prototype_tests.rs` — `instanceof_with_function_prototype`, `is_prototype_of_true_false`, `getPrototypeOf_returns_correct_proto`
+
+- 作業F: ToPrimitive / ToString / ToNumber の基本的な型変換ルール実装
+  - 見積: 中（4-16h）
+  - 主要ファイル候補: `src/value/jsvalue.rs`, `src/value/jsobject.rs`, `runtime/mod.rs`
+  - テスト: `tests/conversion_tests.rs` — `to_primitive_object_with_valueOf`, `to_string_number_conversion`, `addition_uses_to_primitive`
+
+#### 優先度: 低
+- 作業G: `Object.prototype.toString`, `hasOwnProperty`, `propertyIsEnumerable` 等ヘルパ関数の整備
+  - 見積: 小（<4h）
+  - 主要ファイル候補: `builtins/object.rs`, `src/value/jsvalue.rs`
+  - テスト: `tests/object_proto_helpers_tests.rs` — `toString_tag_object_array`, `hasOwnProperty_true_false`, `propertyIsEnumerable_behaviour`
+
+- 作業H: 配列・オブジェクト列挙順、`for..in` と `Object.keys` 等の仕様準拠
+  - 見積: 中（4-16h）
+  - 主要ファイル候補: `builtins/array.rs`, `builtins/object.rs`, `src/value/jsarray.rs`, `src/value/jsobject.rs`
+  - テスト: `tests/enumeration_tests.rs` — `for_in_enumeration_order`, `object_keys_excludes_non_enumerable`, `getOwnPropertyNames_includes_non_enumerable`
+
+- 作業I: `Function.prototype.bind` の完全実装（部分適用と `new` の相互作用）
+  - 見積: 中（4-16h）
+  - 主要ファイル候補: `builtins/function.rs`, `vm/mod.rs`, `compiler/mod.rs`
+  - テスト: `tests/function_bind_tests.rs` — `bind_preserves_this_and_args`, `bound_function_new_behavior`, `bound_length_name_handling`
+
+#### マイルストーン
+- 短期（1週間）: 高優先度項目（A〜C）の実装着手と主要ユニットテスト追加。`tests/` に高優先度テスト群を追加し、ローカルでパスする状態を目指す。
+- 中期（1か月）: 中/低優先度（D〜I）を実装完了。全 `tests/` が通ることと、GC/VM に絡む回帰バグの修正。
+
+#### リスク / 注意点
+- GC とプロパティ/関数のライフサイクルの整合性: アクセサや関数がオブジェクトに保存される場合の参照管理に注意。
+- `this` バインディングの落とし穴: strict と non-strict の違い、`call`/`apply`/`bind`、`new` の処理順に注意。
+- 既存挙動の破壊回避: プロパティ属性のデフォルトや生成時の挙動を変えると回帰を招くため段階的に適用する。
+- テストポリシー: すべての追加テストは `tests/` 配下に作成すること（既存のプロジェクト方針に合致）。
+
+> このセクションは Plan エージェント（自動生成）に基づく計画の反映です。今後、各作業を実装完了したら該当チェックボックスをこのドキュメントに付けていきます。
 
 ## パフォーマンス目標
 

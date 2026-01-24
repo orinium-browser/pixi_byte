@@ -249,7 +249,7 @@ fn test_define_property_and_get_own_property_descriptor() {
         }
 
         // accessor property: { get: function() { return 42 }, set: function(v) { } }
-        let mut getter_fn_obj = pixi_byte::value::jsobject::JSObject::new();
+        let _accessor_desc = pixi_byte::value::jsobject::JSObject::new();
         // represent getter as NativeFunction
         let getter_native = JSValue::NativeFunction(|_vm, _args| Ok(JSValue::Number(42.0)));
         let getter_val = getter_native.clone();
@@ -283,5 +283,64 @@ fn test_define_property_and_get_own_property_descriptor() {
 
     } else {
         panic!("Object constructor not found");
+    }
+}
+
+#[test]
+fn test_function_call_apply() {
+    let mut vm = VM::new();
+    let global = vm.global_object.clone();
+
+    // prepare a native function to act as callable
+    let native_fn = JSValue::NativeFunction(|_vm, args| {
+        // return thisArg as string for testing
+        if !args.is_empty() {
+            let this_arg = &args[0];
+            return Ok(this_arg.clone());
+        }
+        Ok(JSValue::Undefined)
+    });
+
+    // put function into a dummy container object so we can call via prototype.call
+    let mut fn_holder = pixi_byte::value::jsobject::JSObject::new();
+    fn_holder.set("fn".to_string(), native_fn.clone());
+    let fn_holder_rc = std::rc::Rc::new(std::cell::RefCell::new(fn_holder));
+    let _fn_holder_val = JSValue::Object(fn_holder_rc.clone());
+
+    // retrieve Function.prototype.call
+    let function_ctor = global.borrow().get("Function");
+    if let JSValue::Object(functor) = function_ctor {
+        if let JSValue::Object(proto) = functor.borrow().get("prototype") {
+            if let JSValue::NativeFunction(call_fn) = proto.borrow().get("call") {
+                // invoke call: call(fn, thisArg, ...args)
+                let this_arg = JSValue::String("hello".to_string());
+                let res = call_fn(&mut vm, vec![native_fn.clone(), this_arg.clone()]).unwrap();
+                match res {
+                    JSValue::String(s) => assert_eq!(s, "hello"),
+                    _ => panic!("Function.prototype.call returned unexpected value"),
+                }
+            } else {
+                panic!("call not found");
+            }
+
+            if let JSValue::NativeFunction(apply_fn) = proto.borrow().get("apply") {
+                // create args array
+                let mut arr = pixi_byte::value::jsarray::JSArray::new();
+                arr.push(JSValue::String("world".to_string()));
+                let arr_val = arr.to_object();
+                let res2 = apply_fn(&mut vm, vec![native_fn.clone(), JSValue::String("world".to_string()), arr_val]).unwrap();
+                match res2 {
+                    JSValue::String(s) => assert_eq!(s, "world"),
+                    _ => panic!("Function.prototype.apply returned unexpected value"),
+                }
+            } else {
+                panic!("apply not found");
+            }
+
+        } else {
+            panic!("Function.prototype missing");
+        }
+    } else {
+        panic!("Function constructor missing");
     }
 }

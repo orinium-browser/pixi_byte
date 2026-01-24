@@ -159,6 +159,102 @@ impl JSObject {
         self.properties.borrow_mut().insert(key, property);
     }
 
+    /// 新しい: プロパティディスクリプタのオブジェクトから定義を行う
+    /// この実装は ECMAScript の簡易的な振る舞いを模倣します:
+    /// - 指定されている属性のみを適用し、未指定の属性は既存プロパティから継承、存在しない場合はデフォルト値を使用します
+    pub fn define_property_descriptor(&mut self, key: String, desc_obj: Rc<RefCell<JSObject>>) {
+        // check existing property
+        let existing = self.properties.borrow().get(&key).cloned();
+
+        // helper to check whether descriptor has own property
+        let has = |name: &str| desc_obj.borrow().has_own_property(name);
+
+        // Determine if accessor descriptor
+        let is_accessor = has("get") || has("set");
+
+        if is_accessor {
+            // Accessor descriptor
+            let getter = if has("get") {
+                let g = desc_obj.borrow().get("get");
+                match g {
+                    JSValue::Undefined => None,
+                    v => Some(v),
+                }
+            } else {
+                existing.as_ref().and_then(|p| p.getter.clone())
+            };
+
+            let setter = if has("set") {
+                let s = desc_obj.borrow().get("set");
+                match s {
+                    JSValue::Undefined => None,
+                    v => Some(v),
+                }
+            } else {
+                existing.as_ref().and_then(|p| p.setter.clone())
+            };
+
+            let enumerable = if has("enumerable") {
+                desc_obj.borrow().get("enumerable").to_boolean()
+            } else {
+                existing.as_ref().map(|p| p.enumerable).unwrap_or(false)
+            };
+
+            let configurable = if has("configurable") {
+                desc_obj.borrow().get("configurable").to_boolean()
+            } else {
+                existing.as_ref().map(|p| p.configurable).unwrap_or(false)
+            };
+
+            let property = Property {
+                value: JSValue::Undefined,
+                enumerable,
+                writable: false,
+                configurable,
+                getter,
+                setter,
+            };
+
+            self.properties.borrow_mut().insert(key, property);
+        } else {
+            // Data descriptor
+            let value = if has("value") {
+                desc_obj.borrow().get("value")
+            } else {
+                existing.as_ref().map(|p| p.value.clone()).unwrap_or(JSValue::Undefined)
+            };
+
+            let writable = if has("writable") {
+                desc_obj.borrow().get("writable").to_boolean()
+            } else {
+                existing.as_ref().map(|p| p.writable).unwrap_or(false)
+            };
+
+            let enumerable = if has("enumerable") {
+                desc_obj.borrow().get("enumerable").to_boolean()
+            } else {
+                existing.as_ref().map(|p| p.enumerable).unwrap_or(false)
+            };
+
+            let configurable = if has("configurable") {
+                desc_obj.borrow().get("configurable").to_boolean()
+            } else {
+                existing.as_ref().map(|p| p.configurable).unwrap_or(false)
+            };
+
+            let property = Property {
+                value,
+                enumerable,
+                writable,
+                configurable,
+                getter: None,
+                setter: None,
+            };
+
+            self.properties.borrow_mut().insert(key, property);
+        }
+    }
+
     /// プロパティディスクリプタを取得
     pub fn get_property_descriptor(&self, key: &str) -> Option<Property> {
         self.properties.borrow().get(key).cloned()
