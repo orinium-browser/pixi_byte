@@ -293,11 +293,15 @@ Object Creation → Heap Allocation → GC Tracking
 - [x] プロパティディスクリプタ（基本構造 `Property` と `define_property`）
 - [x] `hasOwnProperty` 相当の機能（`has_own_property`） (実装済み: `Object.prototype.hasOwnProperty` をネイティブ関数として追加)
 - [x] `Object.create` の第2引数（プロパティディスクリプタ）の最小サポートを実装（value/writable/enumerable/configurable）
+- [x] `Object.preventExtensions` / `Object.isExtensible` を実装・登録（テスト: `tests/object_mutation_tests.rs`）
+- [x] `Object.seal` / `Object.freeze` を簡易実装・登録（テスト: `tests/object_mutation_tests.rs`）
+- [x] `Object.prototype.propertyIsEnumerable` を実装（テスト: `tests/object_proto_helpers_tests.rs` を追加予定/簡易テストは `tests/object_accessor_tests.rs` 等で補完）
 - [x] `Object.prototype.isPrototypeOf` を実装（ネイティブ関数）
 - [x] `Object.prototype.toString` を実装（ネイティブ関数、簡易版）
 - [x] `Object.prototype.__proto__` アクセサ（getter/setter）を実装し、`Object.prototype` にアクセサとして登録
 - [x] `Object.defineProperty` と `Object.getOwnPropertyDescriptor` をネイティブ関数として実装・登録
-- [x] `Object.setPrototypeOf` をネイティブ関数として実装・登録（実装日: 2026-01-24, テスト: `tests/object_set_prototype_tests.rs`）
+- [x] `Object.setPrototypeOf` をネイティブ関数として実装・登録（実装日: 2026-01-24, テスト: `tests/object_set_prototype_tests.rs`） — 循環チェック実装済
++ - [x] コードベースにドキュメントコメント（`//!`, `///`）を追加、`NativeFunctionType` を再エクスポート（`crate::NativeFunctionType`）し、開発者向けドキュメント `docs/DEVELOPER.md` を追加
 
 #### 2.2 配列
 - [x] 配列の基本実装（`JSArray`）
@@ -363,6 +367,8 @@ Object Creation → Heap Allocation → GC Tracking
 **補足（現状まとめ）**:
 - リポジトリ内では `src/value/jsobject.rs`, `src/value/jsarray.rs`, `src/value/jsvalue.rs`, `src/parser/mod.rs` などが既に実装されており、オブジェクト・配列・関数の基礎が整っています。
 - テストはプロジェクト方針どおり `tests/` 配下に配置されており、主要なユニット／統合テストは現状で成功している状態です。
+- 開発者向けドキュメント `docs/DEVELOPER.md` を追加しました（テスト方針、NativeFunction 型の説明、開発フローを記載）。
+- コード内にドキュメントコメント（`//!`, `///`）を追加し、`NativeFunctionType` を `crate::NativeFunctionType` として再エクスポートしました。
 - 次の優先作業は `this` バインディング（呼び出し時の振る舞い）、例外処理、そして builtins（`Object.create` 等）の実装です。
 
 ### Phase2 進捗更新と優先度付き実行計画

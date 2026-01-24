@@ -14,6 +14,8 @@ pub struct JSObject {
     properties: Rc<RefCell<FxHashMap<String, Property>>>,
     /// プロトタイプチェーン（__proto__）
     prototype: Option<Rc<RefCell<JSObject>>>,
+    /// オブジェクトが拡張可能か（Object.preventExtensions/Seal/Freeze に影響）
+    extensible: bool,
 }
 
 /// プロパティディスクリプタ
@@ -65,6 +67,7 @@ impl JSObject {
         Self {
             properties: Rc::new(RefCell::new(FxHashMap::default())),
             prototype: None,
+            extensible: true,
         }
     }
 
@@ -73,6 +76,7 @@ impl JSObject {
         Self {
             properties: Rc::new(RefCell::new(FxHashMap::default())),
             prototype,
+            extensible: true,
         }
     }
 
@@ -102,7 +106,11 @@ impl JSObject {
             return true;
         }
 
-        // 新しいプロパティを追加
+        // 新しいプロパティの追加は extensible を尊重
+        if !self.extensible {
+            return false;
+        }
+
         self.properties
             .borrow_mut()
             .insert(key, Property::data(value));
@@ -136,6 +144,16 @@ impl JSObject {
         }
 
         self.properties.borrow_mut().remove(key).is_some()
+    }
+
+    /// オブジェクトの拡張を禁止する
+    pub fn prevent_extensions(&mut self) {
+        self.extensible = false;
+    }
+
+    /// 現在拡張可能かどうかを返す
+    pub fn is_extensible(&self) -> bool {
+        self.extensible
     }
 
     /// プロトタイプを取得します（クローンを返します）。
