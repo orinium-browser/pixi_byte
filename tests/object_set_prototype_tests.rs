@@ -97,3 +97,56 @@ fn test_set_prototype_of_errors() {
         panic!("Object constructor missing");
     }
 }
+
+#[test]
+fn test_set_prototype_of_cycle_self() {
+    let mut vm = VM::new();
+    let global = vm.global_object.clone();
+
+    let target = pixi_byte::value::jsobject::JSObject::new();
+    let target_rc = std::rc::Rc::new(std::cell::RefCell::new(target));
+    let target_val = JSValue::Object(target_rc.clone());
+
+    let obj_global = global.borrow().get("Object");
+    if let JSValue::Object(obj_ref) = obj_global {
+        if let JSValue::NativeFunction(setp) = obj_ref.borrow().get("setPrototypeOf") {
+            // attempt to set prototype to self should error
+            let res_err = setp(&mut vm, vec![target_val.clone(), target_val.clone()]);
+            assert!(res_err.is_err());
+        } else {
+            panic!("setPrototypeOf not found");
+        }
+    } else {
+        panic!("Object constructor missing");
+    }
+}
+
+#[test]
+fn test_set_prototype_of_cycle_two_objects() {
+    let mut vm = VM::new();
+    let global = vm.global_object.clone();
+
+    // create two objects A and B
+    let a = pixi_byte::value::jsobject::JSObject::new();
+    let a_rc = std::rc::Rc::new(std::cell::RefCell::new(a));
+    let a_val = JSValue::Object(a_rc.clone());
+
+    let b = pixi_byte::value::jsobject::JSObject::new();
+    let b_rc = std::rc::Rc::new(std::cell::RefCell::new(b));
+    let b_val = JSValue::Object(b_rc.clone());
+
+    let obj_global = global.borrow().get("Object");
+    if let JSValue::Object(obj_ref) = obj_global {
+        if let JSValue::NativeFunction(setp) = obj_ref.borrow().get("setPrototypeOf") {
+            // set A.prototype = B
+            let _ = setp(&mut vm, vec![a_val.clone(), b_val.clone()]).unwrap();
+            // now attempting to set B.prototype = A should error (creates cycle)
+            let res_err = setp(&mut vm, vec![b_val.clone(), a_val.clone()]);
+            assert!(res_err.is_err());
+        } else {
+            panic!("setPrototypeOf not found");
+        }
+    } else {
+        panic!("Object constructor missing");
+    }
+}

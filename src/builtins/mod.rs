@@ -1,5 +1,7 @@
-// Built-in Objects & Functions - ECMAScript標準の組み込み機能
-// Phase 2 でいくつかの最小実装を追加
+//! Builtins module
+//!
+//! This module registers ECMAScript built-in objects into the global object at VM startup.
+//! Each built-in has an `install` function which receives the global object.
 
 pub mod object;
 pub mod array;

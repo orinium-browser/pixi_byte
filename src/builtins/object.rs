@@ -115,6 +115,17 @@ fn object_proto_set(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::e
     match receiver {
         JSValue::Object(obj_ref) => match new_proto {
             JSValue::Object(o) => {
+                // Prevent prototype cycles: ensure `obj_ref` is not in the prototype chain of `o`
+                let mut current = Some(o.clone());
+                while let Some(p) = current {
+                    if Rc::ptr_eq(&p, &obj_ref) {
+                        return Err(crate::error::JSError::TypeError(
+                            "__proto__ setter: setting prototype would create a cycle".to_string(),
+                        ));
+                    }
+                    current = p.borrow().get_prototype();
+                }
+
                 obj_ref.borrow_mut().set_prototype(Some(o));
                 Ok(JSValue::Undefined)
             }
@@ -146,6 +157,17 @@ fn object_set_prototype_of(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> c
     match obj {
         JSValue::Object(obj_ref) => match proto {
             JSValue::Object(o) => {
+                // Prevent prototype cycles: ensure obj_ref is not reachable from o
+                let mut current = Some(o.clone());
+                while let Some(p) = current {
+                    if Rc::ptr_eq(&p, &obj_ref) {
+                        return Err(crate::error::JSError::TypeError(
+                            "Object.setPrototypeOf: setting prototype would create a cycle".to_string(),
+                        ));
+                    }
+                    current = p.borrow().get_prototype();
+                }
+
                 obj_ref.borrow_mut().set_prototype(Some(o));
                 Ok(JSValue::Object(obj_ref.clone()))
             }

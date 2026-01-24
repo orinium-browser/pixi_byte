@@ -10,6 +10,8 @@ pub mod vm;
 
 pub use error::{JSError, JSResult};
 pub use value::JSValue;
+// Re-export native function type for convenience in tests and builtins
+pub use value::jsvalue::NativeFunctionType;
 
 // テストで使用するための再エクスポート
 pub use compiler::{Compiler, Opcode};
