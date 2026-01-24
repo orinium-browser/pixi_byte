@@ -244,7 +244,7 @@ fn object_to_string(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::e
     let receiver = args.remove(0);
     match receiver {
         JSValue::Object(_) => Ok(JSValue::String("[object Object]".to_string())),
-        JSValue::Function(_, _, _, _) | JSValue::NativeFunction(_) => Ok(JSValue::String("[object Function]".to_string())),
+        JSValue::Function(_, _, _, _) | JSValue::NativeFunction(_) | JSValue::BoundFunction(_) => Ok(JSValue::String("[object Function]".to_string())),
         JSValue::String(_) => Ok(JSValue::String("[object String]".to_string())),
         JSValue::Number(_) => Ok(JSValue::String("[object Number]".to_string())),
         JSValue::Boolean(_) => Ok(JSValue::String("[object Boolean]".to_string())),

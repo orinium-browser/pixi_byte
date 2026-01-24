@@ -42,7 +42,17 @@ pub enum JSValue {
     ),
     /// ネイティブ（Rust側）で実装された関数を表す。テストなどでクロージャを渡すために使用する。
     NativeFunction(NativeFunctionType),
+    /// Bound function created by Function.prototype.bind
+    BoundFunction(Box<BoundFunctionData>),
     // TODO: Symbol, BigInt 等は後のフェーズで実装
+}
+
+/// Internal representation for bound functions
+#[derive(Debug, Clone)]
+pub struct BoundFunctionData {
+    pub target: Box<JSValue>,
+    pub bound_this: JSValue,
+    pub bound_args: Vec<JSValue>,
 }
 
 impl JSValue {
@@ -71,6 +81,7 @@ impl JSValue {
             JSValue::Object(_) => "[object Object]".to_string(),
             JSValue::Function(_, _, _, _) => "[function]".to_string(),
             JSValue::NativeFunction(_) => "[native function]".to_string(),
+            JSValue::BoundFunction(_) => "[bound function]".to_string(),
         }
     }
 
@@ -92,6 +103,7 @@ impl JSValue {
             JSValue::Object(_) => f64::NAN,      // オブジェクトはNaN（簡易）
             JSValue::Function(_, _, _, _) => f64::NAN,
             JSValue::NativeFunction(_) => f64::NAN,
+            JSValue::BoundFunction(data) => data.target.to_number(),
         }
     }
 
@@ -105,6 +117,7 @@ impl JSValue {
             JSValue::Object(_) => true,      // オブジェクトは常にtrue
             JSValue::Function(_, _, _, _) => true,
             JSValue::NativeFunction(_) => true,
+            JSValue::BoundFunction(_) => true,
         }
     }
 
@@ -119,6 +132,7 @@ impl JSValue {
             JSValue::Object(_) => "object",
             JSValue::Function(_, _, _, _) => "function",
             JSValue::NativeFunction(_) => "function",
+            JSValue::BoundFunction(_) => "function",
         }
     }
 
@@ -187,6 +201,7 @@ impl fmt::Debug for JSValue {
             JSValue::Object(_) => write!(f, "Object(...)"),
             JSValue::Function(_, _, _, _) => write!(f, "Function(...)"),
             JSValue::NativeFunction(_) => write!(f, "NativeFunction(...)"),
+            JSValue::BoundFunction(_) => write!(f, "BoundFunction(...)"),
         }
     }
 }
@@ -207,6 +222,7 @@ impl Clone for JSValue {
                 name_opt.clone(),
             ),
             JSValue::NativeFunction(f) => JSValue::NativeFunction(*f),
+            JSValue::BoundFunction(b) => JSValue::BoundFunction(Box::new((**b).clone())),
         }
     }
 }

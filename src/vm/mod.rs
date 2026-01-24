@@ -357,6 +357,60 @@ impl VM {
                     let func = self.pop()?;
 
                     match func {
+                        // BoundFunction: unwrap and invoke target with bound_this and bound_args
+                        JSValue::BoundFunction(boxed) => {
+                            let target = (*boxed).target.clone();
+                            let bound_this = (*boxed).bound_this.clone();
+                            let mut combined_args = (*boxed).bound_args.clone();
+                            combined_args.extend(args);
+
+                            match *target {
+                                JSValue::NativeFunction(native_fn) => {
+                                    let mut call_vec = Vec::new();
+                                    call_vec.push(bound_this);
+                                    call_vec.extend(combined_args.into_iter());
+                                    let result = native_fn(self, call_vec)?;
+                                    self.stack.push(result);
+                                }
+                                JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
+                                    let outer = match captured_env_opt {
+                                        Some(env_rc) => env_rc,
+                                        None => self.env.clone(),
+                                    };
+                                    let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
+
+                                    for (i, arg) in combined_args.into_iter().enumerate() {
+                                        if i < params.len() {
+                                            new_env.borrow().define(params[i].clone(), arg);
+                                        } else {
+                                            new_env.borrow().define(format!("arg{}", i), arg);
+                                        }
+                                    }
+
+                                    if let Some(name) = name_opt.clone() {
+                                        new_env.borrow().define(name, JSValue::Undefined);
+                                    }
+
+                                    new_env.borrow().define("this".to_string(), bound_this);
+
+                                    let old_env = self.env.clone();
+                                    let old_stack = std::mem::replace(&mut self.stack, Vec::new());
+                                    self.env = new_env;
+
+                                    let res = self.execute(func_chunk)?;
+
+                                    let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
+                                    self.env = old_env;
+
+                                    self.stack.push(res);
+                                }
+                                _ => {
+                                    return Err(JSError::TypeError(
+                                        "CallFunction: bound target is not callable".to_string(),
+                                    ));
+                                }
+                            }
+                        }
                         JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
                             // 新しい環境を作成し、キャプチャされた環境または現在の環境を外側に設定
                             let outer = match captured_env_opt {

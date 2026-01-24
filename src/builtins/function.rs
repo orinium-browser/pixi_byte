@@ -2,6 +2,7 @@ use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
 use std::cell::RefCell;
 use std::rc::Rc;
+use crate::value::jsvalue::BoundFunctionData;
 
 // Native functions: function.call / function.apply
 
@@ -151,6 +152,40 @@ fn function_apply(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::erro
     }
 }
 
+fn function_bind(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    // args: [func, thisArg, ...boundArgs]
+    if args.is_empty() {
+        return Err(crate::error::JSError::TypeError("Function.prototype.bind: missing function receiver".to_string()));
+    }
+    let func = args.remove(0);
+    let this_arg = if !args.is_empty() { args.remove(0) } else { JSValue::Undefined };
+    let bound_args = args; // remaining
+
+    match func {
+        JSValue::BoundFunction(boxed) => {
+            // If already bound, preserve original target and bound_this, concatenate args
+            let mut new_args = (*boxed).bound_args.clone();
+            new_args.extend(bound_args);
+            let bf = BoundFunctionData {
+                target: (*boxed).target.clone(),
+                bound_this: (*boxed).bound_this.clone(),
+                bound_args: new_args,
+            };
+            Ok(JSValue::BoundFunction(Box::new(bf)))
+        }
+        JSValue::Function(_, _, _, _) | JSValue::NativeFunction(_) => {
+            // create bound function wrapper
+            let bf = BoundFunctionData {
+                target: Box::new(func.clone()),
+                bound_this: this_arg,
+                bound_args,
+            };
+            Ok(JSValue::BoundFunction(Box::new(bf)))
+        }
+        _ => Err(crate::error::JSError::TypeError("Function.prototype.bind: receiver is not a function".to_string())),
+    }
+}
+
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     // Create Function constructor-like object (minimal)
     let mut fn_ctor = JSObject::new();
@@ -158,6 +193,7 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut proto = JSObject::new();
     proto.set("call".to_string(), JSValue::NativeFunction(function_call));
     proto.set("apply".to_string(), JSValue::NativeFunction(function_apply));
+    proto.set("bind".to_string(), JSValue::NativeFunction(function_bind));
     fn_ctor.set("prototype".to_string(), JSValue::Object(Rc::new(RefCell::new(proto))));
 
     global.borrow_mut().set("Function".to_string(), JSValue::Object(Rc::new(RefCell::new(fn_ctor))));
