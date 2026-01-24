@@ -124,6 +124,37 @@ fn object_proto_set(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::e
     }
 }
 
+// Object.setPrototypeOf(obj, proto)
+fn object_set_prototype_of(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    if args.len() < 2 {
+        return Err(crate::error::JSError::TypeError(
+            "Object.setPrototypeOf: missing arguments".to_string(),
+        ));
+    }
+
+    let obj = args.remove(0);
+    let proto = args.remove(0);
+
+    match obj {
+        JSValue::Object(obj_ref) => match proto {
+            JSValue::Object(o) => {
+                obj_ref.borrow_mut().set_prototype(Some(o));
+                Ok(JSValue::Object(obj_ref.clone()))
+            }
+            JSValue::Null => {
+                obj_ref.borrow_mut().set_prototype(None);
+                Ok(JSValue::Object(obj_ref.clone()))
+            }
+            _ => Err(crate::error::JSError::TypeError(
+                "Object.setPrototypeOf: prototype must be an object or null".to_string(),
+            )),
+        },
+        _ => Err(crate::error::JSError::TypeError(
+            "Object.setPrototypeOf: first argument must be an object".to_string(),
+        )),
+    }
+}
+
 /// Object.prototype.hasOwnProperty のネイティブ実装
 fn object_has_own_property(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     if args.is_empty() {
@@ -220,6 +251,8 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         "getPrototypeOf".to_string(),
         JSValue::NativeFunction(object_get_prototype_of),
     );
+    // register setPrototypeOf
+    obj.set("setPrototypeOf".to_string(), JSValue::NativeFunction(object_set_prototype_of));
 
     // register defineProperty and getOwnPropertyDescriptor
     obj.set("defineProperty".to_string(), JSValue::NativeFunction(object_define_property));

@@ -297,7 +297,7 @@ Object Creation → Heap Allocation → GC Tracking
 - [x] `Object.prototype.toString` を実装（ネイティブ関数、簡易版）
 - [x] `Object.prototype.__proto__` アクセサ（getter/setter）を実装し、`Object.prototype` にアクセサとして登録
 - [x] `Object.defineProperty` と `Object.getOwnPropertyDescriptor` をネイティブ関数として実装・登録
-- [ ] `in` 演算子のパーサ/VM サポート
+- [x] `Object.setPrototypeOf` をネイティブ関数として実装・登録（実装日: 2026-01-24, テスト: `tests/object_set_prototype_tests.rs`）
 
 #### 2.2 配列
 - [x] 配列の基本実装（`JSArray`）
