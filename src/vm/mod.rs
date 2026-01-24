@@ -1,3 +1,9 @@
+//! Bytecode Virtual Machine (VM)
+//!
+//! シンプルなスタックベースのバイトコードインタープリタです。
+//! - スタック (Vec<JSValue>) を使用
+//! - 関数呼び出し時はスタック/環境を切り替える
+
 use crate::compiler::{BytecodeChunk, Opcode};
 use crate::error::{JSError, JSResult};
 use crate::runtime::Environment;
@@ -16,7 +22,7 @@ pub struct VM {
 }
 
 impl VM {
-    /// 新しいVMインスタンスを作成
+    /// 新しい VM インスタンスを作成します。
     pub fn new() -> Self {
         // グローバルオブジェクトを作成し、グローバル環境を初期化
         let global_obj = crate::value::jsobject::JSObject::new();

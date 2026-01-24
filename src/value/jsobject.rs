@@ -1,3 +1,7 @@
+//! JavaScript オブジェクト表現
+//!
+//! `JSObject` はプロパティマップとプロトタイプチェーンを管理します。
+
 use super::JSValue;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -15,7 +19,7 @@ pub struct JSObject {
 /// プロパティディスクリプタ
 #[derive(Debug, Clone)]
 pub struct Property {
-    /// プロパティの値（データプロパティ）
+    /// データプロパティの値
     pub value: JSValue,
     /// 列挙可能かどうか
     pub enumerable: bool,
@@ -56,7 +60,7 @@ impl Property {
 }
 
 impl JSObject {
-    /// 新しい空のJSオブジェクトを作成
+    /// 新しい空の JSObject を作成します。
     pub fn new() -> Self {
         Self {
             properties: Rc::new(RefCell::new(FxHashMap::default())),
@@ -64,7 +68,7 @@ impl JSObject {
         }
     }
 
-    /// プロトタイプを指定してオブジェクトを作成
+    /// プロトタイプを指定してオブジェクトを作成します。
     pub fn with_prototype(prototype: Option<Rc<RefCell<JSObject>>>) -> Self {
         Self {
             properties: Rc::new(RefCell::new(FxHashMap::default())),
@@ -72,7 +76,7 @@ impl JSObject {
         }
     }
 
-    /// プロパティを取得
+    /// 指定したキーのプロパティを取得します。プロトタイプチェーンを辿ります。
     pub fn get(&self, key: &str) -> JSValue {
         // 自身のプロパティを検索
         if let Some(prop) = self.properties.borrow().get(key) {
@@ -87,7 +91,7 @@ impl JSObject {
         JSValue::Undefined
     }
 
-    /// プロパティを設定
+    /// 指定したキーに値を設定します。既存のデータプロパティが writable でない場合は false を返します。
     pub fn set(&mut self, key: String, value: JSValue) -> bool {
         // 既存のプロパティを確認
         if let Some(prop) = self.properties.borrow_mut().get_mut(&key) {
@@ -105,12 +109,12 @@ impl JSObject {
         true
     }
 
-    /// プロパティが存在するか確認（自身のプロパティのみ）
+    /// 自身のプロパティのみを確認します。
     pub fn has_own_property(&self, key: &str) -> bool {
         self.properties.borrow().contains_key(key)
     }
 
-    /// プロパティが存在するか確認（プロトタイプチェーン含む）
+    /// プロパティが存在するか（プロトタイプチェーン含む）
     pub fn has_property(&self, key: &str) -> bool {
         if self.has_own_property(key) {
             return true;
@@ -123,7 +127,7 @@ impl JSObject {
         false
     }
 
-    /// プロパティを削除
+    /// プロパティを削除します。non-configurable の場合は削除に失敗します。
     pub fn delete(&mut self, key: &str) -> bool {
         if let Some(prop) = self.properties.borrow().get(key)
             && !prop.configurable
@@ -134,17 +138,17 @@ impl JSObject {
         self.properties.borrow_mut().remove(key).is_some()
     }
 
-    /// プロトタイプを取得
+    /// プロトタイプを取得します（クローンを返します）。
     pub fn get_prototype(&self) -> Option<Rc<RefCell<JSObject>>> {
         self.prototype.clone()
     }
 
-    /// プロトタイプを設定
+    /// プロトタイプを設定します。注意: 循環チェックは行いません。
     pub fn set_prototype(&mut self, prototype: Option<Rc<RefCell<JSObject>>>) {
         self.prototype = prototype;
     }
 
-    /// 全てのプロパティキーを取得（列挙可能なもののみ）
+    /// 列挙可能なプロパティキーを取得します。
     pub fn keys(&self) -> Vec<String> {
         self.properties
             .borrow()
@@ -154,14 +158,15 @@ impl JSObject {
             .collect()
     }
 
-    /// プロパティディスクリプタを定義
+    /// 指定されたプロパティディスクリプタでプロパティを定義します。
+    ///
+    /// ディスクリプタは部分的に指定されることがあり、未指定属性は既存のプロパティから継承されます。
     pub fn define_property(&mut self, key: String, property: Property) {
         self.properties.borrow_mut().insert(key, property);
     }
 
-    /// 新しい: プロパティディスクリプタのオブジェクトから定義を行う
-    /// この実装は ECMAScript の簡易的な振る舞いを模倣します:
-    /// - 指定されている属性のみを適用し、未指定の属性は既存プロパティから継承、存在しない場合はデフォルト値を使用します
+    /// 指定された descriptor object からプロパティ定義を行います。
+    /// 簡易 ECMAScript 互換の振る舞いを模倣します。
     pub fn define_property_descriptor(&mut self, key: String, desc_obj: Rc<RefCell<JSObject>>) {
         // check existing property
         let existing = self.properties.borrow().get(&key).cloned();
@@ -255,7 +260,7 @@ impl JSObject {
         }
     }
 
-    /// プロパティディスクリプタを取得
+    /// プロパティディスクリプタを取得します（own property のみ）。
     pub fn get_property_descriptor(&self, key: &str) -> Option<Property> {
         self.properties.borrow().get(key).cloned()
     }

@@ -138,4 +138,3 @@ fn accessor_descriptor_enumeration() {
     let keys = target_rc.borrow().keys();
     assert!(keys.contains(&"a".to_string()));
 }
-

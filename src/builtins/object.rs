@@ -1,10 +1,16 @@
+//! Minimal Object builtin implementation
+//!
+//! Provides `Object` constructor-like object with methods such as `create`, `getPrototypeOf`,
+//! `setPrototypeOf`, and helpers like `defineProperty` and `getOwnPropertyDescriptor`.
+
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// シンプルな Object 組み込みの最小実装
-/// グローバルオブジェクトに `Object` を登録し、`create` と `getPrototypeOf` を提供する
+/// Object.create(proto[, properties])
+/// - `proto` must be object or null
+/// - If second arg present, it is treated as property descriptor object
 fn object_create(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     if args.is_empty() {
         return Err(crate::error::JSError::TypeError(
@@ -54,6 +60,8 @@ fn object_create(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::erro
     Ok(JSValue::Object(new_obj_rc))
 }
 
+/// Object.getPrototypeOf(obj)
+/// - returns the prototype object or null
 fn object_get_prototype_of(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     // args: [obj]
     if args.is_empty() {
@@ -78,7 +86,7 @@ fn object_get_prototype_of(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> c
     }
 }
 
-// Accessor for Object.prototype.__proto__ (getter)
+/// getter for Object.prototype.__proto__
 fn object_proto_get(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     if args.is_empty() {
         return Ok(JSValue::Undefined);
@@ -96,7 +104,7 @@ fn object_proto_get(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::e
     }
 }
 
-// Accessor setter for Object.prototype.__proto__ (setter)
+/// setter for Object.prototype.__proto__
 fn object_proto_set(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     if args.is_empty() {
         return Ok(JSValue::Undefined);
@@ -124,7 +132,7 @@ fn object_proto_set(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::e
     }
 }
 
-// Object.setPrototypeOf(obj, proto)
+/// Object.setPrototypeOf(obj, proto)
 fn object_set_prototype_of(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     if args.len() < 2 {
         return Err(crate::error::JSError::TypeError(
