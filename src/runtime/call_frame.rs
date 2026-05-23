@@ -9,9 +9,9 @@ pub struct CallFrame {
 }
 
 impl CallFrame {
-    pub fn new(this: JSValue) -> Self {
+    pub fn new(env: Environment, this: JSValue) -> Self {
         CallFrame {
-            env: Rc::new(RefCell::new(Environment::new())),
+            env: Rc::new(RefCell::new(env)),
             this,
         }
     }

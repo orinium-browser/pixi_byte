@@ -36,12 +36,7 @@ impl VM {
         // builtins を初期化してグローバルに組み込みを登録
         crate::builtins::Builtins::new().init(&global_rc);
 
-        let global_env = Rc::new(RefCell::new(crate::runtime::Environment::new()));
-
-        let global_frame = CallFrame {
-            env: global_env,
-            this: JSValue::Object(global_rc.clone()),
-        };
+        let global_frame = CallFrame::new(Environment::new(), JSValue::Object(global_rc.clone()));
 
         Self {
             stack: Vec::new(),
@@ -391,12 +386,12 @@ impl VM {
 
     fn with_call_frame(
         &mut self,
-        env: Rc<RefCell<Environment>>,
+        env: Environment,
         this: JSValue,
         func: BytecodeChunk,
     ) -> JSResult<JSValue> {
         let old_stack = std::mem::take(&mut self.stack);
-        self.frames.push(CallFrame { env, this });
+        self.frames.push(CallFrame::new(env, this));
 
         let result = self.execute(func);
 
@@ -462,10 +457,10 @@ impl VM {
         params: Vec<String>,
         args: Vec<JSValue>,
         name: Option<String>,
-    ) -> Rc<RefCell<Environment>> {
+    ) -> Environment {
         let outer = captured_env.unwrap_or_else(|| self.current_env());
 
-        let env = Rc::new(RefCell::new(Environment::with_outer(outer)));
+        let env = Environment::with_outer(outer);
 
         for (i, arg) in args.into_iter().enumerate() {
             let key = params
@@ -473,11 +468,11 @@ impl VM {
                 .cloned()
                 .unwrap_or_else(|| format!("arg{}", i));
 
-            env.borrow().define(key, arg);
+            env.define(key, arg);
         }
 
         if let Some(name) = name {
-            env.borrow().define(name, func);
+            env.define(name, func);
         }
 
         env
