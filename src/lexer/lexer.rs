@@ -392,10 +392,11 @@ impl Lexer {
     /// 行コメントのスキップ
     fn skip_line_comment(&mut self) {
         while let Some(ch) = self.peek() {
+            self.advance();
             if ch == '\n' {
+                self.skip_whitespace();
                 break;
             }
-            self.advance();
         }
     }
 
@@ -409,6 +410,7 @@ impl Lexer {
             if ch == '*' && self.peek_ahead(1) == Some('/') {
                 self.advance();
                 self.advance();
+                self.skip_whitespace();
                 return Ok(());
             }
             self.advance();
