@@ -18,6 +18,20 @@ pub use compiler::{Compiler, Opcode};
 pub use lexer::{Lexer, TokenKind};
 pub use parser::Parser;
 
+pub struct EvalOptions {
+    pub dump_ast: bool,
+    pub dump_bytecode: bool,
+}
+
+impl Default for EvalOptions {
+    fn default() -> Self {
+        Self {
+            dump_ast: false,
+            dump_bytecode: false,
+        }
+    }
+}
+
 /// メインインターフェース
 pub struct JSEngine {
     /// 仮想マシンインスタンス
@@ -31,10 +45,30 @@ impl JSEngine {
     }
 
     /// JavaScriptコードを評価
-    pub fn eval(&mut self, source: &str) -> JSResult<JSValue> {
+    pub fn eval_with_options(&mut self, source: &str, options: &EvalOptions) -> JSResult<JSValue> {
         let ast = parser::Parser::new(Lexer::new(source))?.parse()?;
+
+        if options.dump_ast {
+            println!("=== AST ===");
+            println!("{:#?}", ast);
+        }
+
         let bytecode = compiler::Compiler::new().compile(ast)?;
+
+        if options.dump_bytecode {
+            println!("=== BYTECODE ===");
+
+            for (i, op) in bytecode.code.iter().enumerate() {
+                println!("{:04}: {:?}", i, op);
+            }
+        }
+
         self.vm.execute(bytecode)
+    }
+
+    /// JavaScriptコードを評価
+    pub fn eval(&mut self, source: &str) -> JSResult<JSValue> {
+        self.eval_with_options(source, &EvalOptions::default())
     }
 }
 
