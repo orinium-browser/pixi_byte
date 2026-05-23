@@ -12,6 +12,8 @@ fn main() {
 
     let mut engine = JSEngine::new();
 
+    install(engine.global_mut());
+
     match engine.eval_with_options(&source, &eval_options) {
         Ok(v) => println!("=> {}", v),
         Err(e) => eprintln!("Error: {e}"),
