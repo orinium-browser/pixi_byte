@@ -166,10 +166,8 @@ fn function_apply(
             }
 
             // Extra args
-            for i in params.len()..call_args_vec.len() {
-                new_env
-                    .borrow()
-                    .define(format!("arg{}", i), call_args_vec[i].clone());
+            for (i, value) in call_args_vec.iter().enumerate().skip(params.len()) {
+                new_env.borrow().define(format!("arg{}", i), value.clone());
             }
 
             // Named function expression handling
