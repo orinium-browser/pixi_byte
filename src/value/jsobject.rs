@@ -179,8 +179,22 @@ impl JSObject {
     /// 指定されたプロパティディスクリプタでプロパティを定義します。
     ///
     /// ディスクリプタは部分的に指定されることがあり、未指定属性は既存のプロパティから継承されます。
-    pub fn define_property(&mut self, key: String, property: Property) {
+    pub fn define_property(&mut self, key: String, property: Property) -> bool {
+        // New properties cannot be added
+        if !self.extensible && !self.has_own_property(&key) {
+            return false;
+        }
+
+        // Non-configurable property cannot be redefined
+        if let Some(old) = self.properties.borrow().get(&key) {
+            if !old.configurable {
+                return false;
+            }
+        }
+
         self.properties.borrow_mut().insert(key, property);
+
+        true
     }
 
     /// 指定された descriptor object からプロパティ定義を行います。
