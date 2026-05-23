@@ -52,6 +52,7 @@ pub enum Expression {
         left: Box<Expression>,
         right: Box<Expression>,
     },
+    This,
     ArrayLiteral(Vec<Expression>),
     ObjectLiteral(Vec<(String, Expression)>),
     MemberAccess {
@@ -419,6 +420,10 @@ impl Parser {
             TokenKind::Undefined => {
                 self.advance()?;
                 Ok(Expression::Literal(Literal::Undefined))
+            }
+            TokenKind::This => {
+                self.advance()?;
+                Ok(Expression::This)
             }
             TokenKind::Identifier(s) => {
                 let s = s.clone();
