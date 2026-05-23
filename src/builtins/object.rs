@@ -3,6 +3,7 @@
 //! Provides `Object` constructor-like object with methods such as `create`, `getPrototypeOf`,
 //! `setPrototypeOf`, and helpers like `defineProperty` and `getOwnPropertyDescriptor`.
 
+use crate::error::JSError;
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
 use std::cell::RefCell;
@@ -16,7 +17,7 @@ fn object_create(
     mut args: Vec<JSValue>,
 ) -> crate::error::JSResult<JSValue> {
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "Object.create: missing prototype argument".to_string(),
         ));
     }
@@ -30,7 +31,7 @@ fn object_create(
         }
         JSValue::Null => Rc::new(RefCell::new(JSObject::with_prototype(None))),
         _ => {
-            return Err(crate::error::JSError::TypeError(
+            return Err(JSError::TypeError(
                 "Object.create: prototype must be an object or null".to_string(),
             ));
         }
@@ -56,7 +57,7 @@ fn object_create(
                 }
             }
         } else {
-            return Err(crate::error::JSError::TypeError(
+            return Err(JSError::TypeError(
                 "Object.create: properties argument must be an object".to_string(),
             ));
         }
@@ -73,7 +74,7 @@ fn object_get_prototype_of(
 ) -> crate::error::JSResult<JSValue> {
     // args: [obj]
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "Object.getPrototypeOf: missing object argument".to_string(),
         ));
     }
@@ -88,7 +89,7 @@ fn object_get_prototype_of(
                 Ok(JSValue::Null)
             }
         }
-        _ => Err(crate::error::JSError::TypeError(
+        _ => Err(JSError::TypeError(
             "Object.getPrototypeOf: argument is not an object".to_string(),
         )),
     }
@@ -137,7 +138,7 @@ fn object_proto_set(
                 let mut current = Some(o.clone());
                 while let Some(p) = current {
                     if Rc::ptr_eq(&p, &obj_ref) {
-                        return Err(crate::error::JSError::TypeError(
+                        return Err(JSError::TypeError(
                             "__proto__ setter: setting prototype would create a cycle".to_string(),
                         ));
                     }
@@ -151,11 +152,11 @@ fn object_proto_set(
                 obj_ref.borrow_mut().set_prototype(None);
                 Ok(JSValue::Undefined)
             }
-            _ => Err(crate::error::JSError::TypeError(
+            _ => Err(JSError::TypeError(
                 "__proto__ setter: value must be an object or null".to_string(),
             )),
         },
-        _ => Err(crate::error::JSError::TypeError(
+        _ => Err(JSError::TypeError(
             "__proto__ setter: receiver is not an object".to_string(),
         )),
     }
@@ -167,7 +168,7 @@ fn object_set_prototype_of(
     mut args: Vec<JSValue>,
 ) -> crate::error::JSResult<JSValue> {
     if args.len() < 2 {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "Object.setPrototypeOf: missing arguments".to_string(),
         ));
     }
@@ -182,7 +183,7 @@ fn object_set_prototype_of(
                 let mut current = Some(o.clone());
                 while let Some(p) = current {
                     if Rc::ptr_eq(&p, &obj_ref) {
-                        return Err(crate::error::JSError::TypeError(
+                        return Err(JSError::TypeError(
                             "Object.setPrototypeOf: setting prototype would create a cycle"
                                 .to_string(),
                         ));
@@ -197,11 +198,11 @@ fn object_set_prototype_of(
                 obj_ref.borrow_mut().set_prototype(None);
                 Ok(JSValue::Object(obj_ref.clone()))
             }
-            _ => Err(crate::error::JSError::TypeError(
+            _ => Err(JSError::TypeError(
                 "Object.setPrototypeOf: prototype must be an object or null".to_string(),
             )),
         },
-        _ => Err(crate::error::JSError::TypeError(
+        _ => Err(JSError::TypeError(
             "Object.setPrototypeOf: first argument must be an object".to_string(),
         )),
     }
@@ -213,13 +214,13 @@ fn object_has_own_property(
     mut args: Vec<JSValue>,
 ) -> crate::error::JSResult<JSValue> {
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "hasOwnProperty: missing receiver".to_string(),
         ));
     }
     let receiver = args.remove(0);
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "hasOwnProperty: missing property name".to_string(),
         ));
     }
@@ -228,7 +229,7 @@ fn object_has_own_property(
 
     match receiver {
         JSValue::Object(obj_ref) => Ok(JSValue::Boolean(obj_ref.borrow().has_own_property(&key))),
-        _ => Err(crate::error::JSError::TypeError(
+        _ => Err(JSError::TypeError(
             "hasOwnProperty: receiver is not an object".to_string(),
         )),
     }
@@ -240,7 +241,7 @@ fn object_is_prototype_of(
     mut args: Vec<JSValue>,
 ) -> crate::error::JSResult<JSValue> {
     if args.len() < 2 {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "isPrototypeOf: missing arguments".to_string(),
         ));
     }
@@ -258,7 +259,7 @@ fn object_is_prototype_of(
             }
             Ok(JSValue::Boolean(false))
         }
-        _ => Err(crate::error::JSError::TypeError(
+        _ => Err(JSError::TypeError(
             "isPrototypeOf: receiver and argument must be objects".to_string(),
         )),
     }
@@ -292,7 +293,7 @@ fn object_define_property(
     mut args: Vec<JSValue>,
 ) -> crate::error::JSResult<JSValue> {
     if args.len() < 3 {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "Object.defineProperty: missing arguments".to_string(),
         ));
     }
@@ -311,12 +312,12 @@ fn object_define_property(
                     .define_property_descriptor(key, desc_ref.clone());
                 Ok(JSValue::Object(obj_ref.clone()))
             } else {
-                Err(crate::error::JSError::TypeError(
+                Err(JSError::TypeError(
                     "Object.defineProperty: descriptor must be an object".to_string(),
                 ))
             }
         }
-        _ => Err(crate::error::JSError::TypeError(
+        _ => Err(JSError::TypeError(
             "Object.defineProperty: first argument must be an object".to_string(),
         )),
     }
@@ -328,7 +329,7 @@ fn object_prevent_extensions(
     mut args: Vec<JSValue>,
 ) -> crate::error::JSResult<JSValue> {
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "Object.preventExtensions: missing object".to_string(),
         ));
     }
@@ -338,7 +339,7 @@ fn object_prevent_extensions(
             obj_ref.borrow_mut().prevent_extensions();
             Ok(JSValue::Object(obj_ref.clone()))
         }
-        _ => Err(crate::error::JSError::TypeError(
+        _ => Err(JSError::TypeError(
             "Object.preventExtensions: argument must be an object".to_string(),
         )),
     }
@@ -350,14 +351,14 @@ fn object_is_extensible(
     mut args: Vec<JSValue>,
 ) -> crate::error::JSResult<JSValue> {
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "Object.isExtensible: missing object".to_string(),
         ));
     }
     let obj = args.remove(0);
     match obj {
         JSValue::Object(obj_ref) => Ok(JSValue::Boolean(obj_ref.borrow().is_extensible())),
-        _ => Err(crate::error::JSError::TypeError(
+        _ => Err(JSError::TypeError(
             "Object.isExtensible: argument must be an object".to_string(),
         )),
     }
@@ -366,7 +367,7 @@ fn object_is_extensible(
 /// Object.seal(obj): make all properties non-configurable and prevent extensions
 fn object_seal(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "Object.seal: missing object".to_string(),
         ));
     }
@@ -385,7 +386,7 @@ fn object_seal(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error:
             props.prevent_extensions();
             Ok(JSValue::Object(obj_ref.clone()))
         }
-        _ => Err(crate::error::JSError::TypeError(
+        _ => Err(JSError::TypeError(
             "Object.seal: argument must be an object".to_string(),
         )),
     }
@@ -397,7 +398,7 @@ fn object_freeze(
     mut args: Vec<JSValue>,
 ) -> crate::error::JSResult<JSValue> {
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "Object.freeze: missing object".to_string(),
         ));
     }
@@ -417,7 +418,7 @@ fn object_freeze(
             props.prevent_extensions();
             Ok(JSValue::Object(obj_ref.clone()))
         }
-        _ => Err(crate::error::JSError::TypeError(
+        _ => Err(JSError::TypeError(
             "Object.freeze: argument must be an object".to_string(),
         )),
     }
@@ -429,7 +430,7 @@ fn object_get_own_property_descriptor(
     mut args: Vec<JSValue>,
 ) -> crate::error::JSResult<JSValue> {
     if args.len() < 2 {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "Object.getOwnPropertyDescriptor: missing arguments".to_string(),
         ));
     }
@@ -469,7 +470,7 @@ fn object_get_own_property_descriptor(
                 Ok(JSValue::Undefined)
             }
         }
-        _ => Err(crate::error::JSError::TypeError(
+        _ => Err(JSError::TypeError(
             "Object.getOwnPropertyDescriptor: first argument must be an object".to_string(),
         )),
     }
@@ -481,13 +482,13 @@ fn object_property_is_enumerable(
     mut args: Vec<JSValue>,
 ) -> crate::error::JSResult<JSValue> {
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "propertyIsEnumerable: missing receiver".to_string(),
         ));
     }
     let receiver = args.remove(0);
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError(
+        return Err(JSError::TypeError(
             "propertyIsEnumerable: missing property name".to_string(),
         ));
     }
@@ -502,7 +503,7 @@ fn object_property_is_enumerable(
                 Ok(JSValue::Boolean(false))
             }
         }
-        _ => Err(crate::error::JSError::TypeError(
+        _ => Err(JSError::TypeError(
             "propertyIsEnumerable: receiver is not an object".to_string(),
         )),
     }
