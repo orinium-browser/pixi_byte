@@ -21,6 +21,12 @@ pub struct VM {
     pub global_object: Rc<RefCell<crate::value::jsobject::JSObject>>,
 }
 
+enum ControlFlow {
+    Continue,
+    Jump(usize),
+    Return(JSValue),
+}
+
 pub struct CallFrame {
     pub env: Rc<RefCell<Environment>>,
     pub this: JSValue,
@@ -58,7 +64,6 @@ impl VM {
         }
     }
 
-    /// バイトコードを実行（トップレベルはグローバル環境を使用）
     pub fn execute(&mut self, chunk: BytecodeChunk) -> JSResult<JSValue> {
         let mut pc = 0; // プログラムカウンタ
 
@@ -66,237 +71,172 @@ impl VM {
             let opcode = &chunk.code[pc];
             pc += 1;
 
-            match opcode {
-                Opcode::LoadConst(idx) => {
-                    let value = chunk.constants[*idx].clone();
-                    self.stack.push(value);
+            match self.execute_opcode(opcode, &chunk)? {
+                ControlFlow::Continue => {}
+
+                ControlFlow::Jump(target) => {
+                    pc = target;
                 }
-                Opcode::LoadVar(name) => {
-                    let value = self
-                        .current_env()
-                        .borrow()
-                        .get(name)
-                        .unwrap_or(JSValue::Undefined);
-                    self.stack.push(value);
+
+                ControlFlow::Return(value) => {
+                    return Ok(value);
                 }
-                Opcode::StoreVar(name) => {
-                    if let Some(value) = self.stack.pop() {
-                        // 既存のスコープチェーンに存在すれば set、なければ現在の env に define
-                        if !self.current_env().borrow().set(name, value.clone()) {
-                            self.current_env().borrow().define(name.clone(), value);
-                        }
-                    } else {
-                        return Err(JSError::InternalError("Stack underflow".to_string()));
+            }
+        }
+
+        Ok(self.stack.pop().unwrap_or(JSValue::Undefined))
+    }
+
+    /// バイトコードを実行（トップレベルはグローバル環境を使用）
+    fn execute_opcode(&mut self, opcode: &Opcode, chunk: &BytecodeChunk) -> JSResult<ControlFlow> {
+        match opcode {
+            Opcode::LoadConst(idx) => {
+                let value = chunk.constants[*idx].clone();
+                self.stack.push(value);
+            }
+            Opcode::LoadVar(name) => {
+                let value = self
+                    .current_env()
+                    .borrow()
+                    .get(name)
+                    .unwrap_or(JSValue::Undefined);
+                self.stack.push(value);
+            }
+            Opcode::StoreVar(name) => {
+                if let Some(value) = self.stack.pop() {
+                    // 既存のスコープチェーンに存在すれば set、なければ現在の env に define
+                    if !self.current_env().borrow().set(name, value.clone()) {
+                        self.current_env().borrow().define(name.clone(), value);
                     }
+                } else {
+                    return Err(JSError::InternalError("Stack underflow".to_string()));
                 }
-                Opcode::Pop => {
-                    self.stack.pop();
-                }
+            }
+            Opcode::Pop => {
+                self.stack.pop();
+            }
 
-                Opcode::LoadThis => {
-                    let value = self.current_frame().this.clone();
-                    self.stack.push(value);
-                }
+            Opcode::LoadThis => {
+                let value = self.current_frame().this.clone();
+                self.stack.push(value);
+            }
 
-                // 算術演算
-                Opcode::Add => self.binary_op(|a, b| {
-                    // JavaScriptの加算は文字列連結も含む
-                    match (&a, &b) {
-                        (JSValue::String(s1), JSValue::String(s2)) => {
-                            JSValue::String(format!("{}{}", s1, s2))
-                        }
-                        (JSValue::String(s), _) => JSValue::String(format!("{}{}", s, b)),
-                        (_, JSValue::String(s)) => JSValue::String(format!("{}{}", a, s)),
-                        _ => JSValue::Number(a.to_number() + b.to_number()),
+            // 算術演算
+            Opcode::Add => self.binary_op(|a, b| {
+                // JavaScriptの加算は文字列連結も含む
+                match (&a, &b) {
+                    (JSValue::String(s1), JSValue::String(s2)) => {
+                        JSValue::String(format!("{}{}", s1, s2))
                     }
-                })?,
-                Opcode::Sub => self.binary_numeric_op(|a, b| a - b)?,
-                Opcode::Mul => self.binary_numeric_op(|a, b| a * b)?,
-                Opcode::Div => self.binary_numeric_op(|a, b| a / b)?,
-                Opcode::Mod => self.binary_numeric_op(|a, b| a % b)?,
-                Opcode::Power => self.binary_numeric_op(|a, b| a.powf(b))?,
-
-                // 単項演算
-                Opcode::Neg => {
-                    let value = self.pop()?;
-                    self.stack.push(JSValue::Number(-value.to_number()));
+                    (JSValue::String(s), _) => JSValue::String(format!("{}{}", s, b)),
+                    (_, JSValue::String(s)) => JSValue::String(format!("{}{}", a, s)),
+                    _ => JSValue::Number(a.to_number() + b.to_number()),
                 }
-                Opcode::Not => {
-                    let value = self.pop()?;
-                    self.stack.push(JSValue::Boolean(!value.to_boolean()));
+            })?,
+            Opcode::Sub => self.binary_numeric_op(|a, b| a - b)?,
+            Opcode::Mul => self.binary_numeric_op(|a, b| a * b)?,
+            Opcode::Div => self.binary_numeric_op(|a, b| a / b)?,
+            Opcode::Mod => self.binary_numeric_op(|a, b| a % b)?,
+            Opcode::Power => self.binary_numeric_op(|a, b| a.powf(b))?,
+
+            // 単項演算
+            Opcode::Neg => {
+                let value = self.pop()?;
+                self.stack.push(JSValue::Number(-value.to_number()));
+            }
+            Opcode::Not => {
+                let value = self.pop()?;
+                self.stack.push(JSValue::Boolean(!value.to_boolean()));
+            }
+            Opcode::BitNot => {
+                let value = self.pop()?;
+                let n = value.to_number() as i32;
+                self.stack.push(JSValue::Number((!n) as f64));
+            }
+
+            // 比較演算
+            Opcode::Eq => self.comparison_op(|a, b| a.abstract_equals(b))?,
+            Opcode::NotEq => self.comparison_op(|a, b| !a.abstract_equals(b))?,
+            Opcode::StrictEq => self.comparison_op(|a, b| a.strict_equals(b))?,
+            Opcode::StrictNotEq => self.comparison_op(|a, b| !a.strict_equals(b))?,
+            Opcode::Lt => self.numeric_comparison_op(|a, b| a < b)?,
+            Opcode::Gt => self.numeric_comparison_op(|a, b| a > b)?,
+            Opcode::LtEq => self.numeric_comparison_op(|a, b| a <= b)?,
+            Opcode::GtEq => self.numeric_comparison_op(|a, b| a >= b)?,
+
+            // 論理演算
+            Opcode::And => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                // JavaScriptの && は短絡評価で、最初の falsy な値か最後の値を返す
+                if !a.to_boolean() {
+                    self.stack.push(a);
+                } else {
+                    self.stack.push(b);
                 }
-                Opcode::BitNot => {
-                    let value = self.pop()?;
-                    let n = value.to_number() as i32;
-                    self.stack.push(JSValue::Number((!n) as f64));
+            }
+            Opcode::Or => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                // JavaScriptの || は短絡評価で、最初の truthy な値か最後の値を返す
+                if a.to_boolean() {
+                    self.stack.push(a);
+                } else {
+                    self.stack.push(b);
                 }
+            }
 
-                // 比較演算
-                Opcode::Eq => self.comparison_op(|a, b| a.abstract_equals(b))?,
-                Opcode::NotEq => self.comparison_op(|a, b| !a.abstract_equals(b))?,
-                Opcode::StrictEq => self.comparison_op(|a, b| a.strict_equals(b))?,
-                Opcode::StrictNotEq => self.comparison_op(|a, b| !a.strict_equals(b))?,
-                Opcode::Lt => self.numeric_comparison_op(|a, b| a < b)?,
-                Opcode::Gt => self.numeric_comparison_op(|a, b| a > b)?,
-                Opcode::LtEq => self.numeric_comparison_op(|a, b| a <= b)?,
-                Opcode::GtEq => self.numeric_comparison_op(|a, b| a >= b)?,
+            // ビット演算
+            Opcode::BitAnd => self.bitwise_op(|a, b| a & b)?,
+            Opcode::BitOr => self.bitwise_op(|a, b| a | b)?,
+            Opcode::BitXor => self.bitwise_op(|a, b| a ^ b)?,
+            Opcode::LeftShift => self.bitwise_op(|a, b| a << (b & 0x1f))?,
+            Opcode::RightShift => self.bitwise_op(|a, b| a >> (b & 0x1f))?,
+            Opcode::UnsignedRightShift => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let a_u32 = a.to_number() as u32;
+                let b_u32 = b.to_number() as u32;
+                self.stack
+                    .push(JSValue::Number((a_u32 >> (b_u32 & 0x1f)) as f64));
+            }
 
-                // 論理演算
-                Opcode::And => {
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    // JavaScriptの && は短絡評価で、最初の falsy な値か最後の値を返す
-                    if !a.to_boolean() {
-                        self.stack.push(a);
-                    } else {
-                        self.stack.push(b);
-                    }
-                }
-                Opcode::Or => {
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    // JavaScriptの || は短絡評価で、最初の truthy な値か最後の値を返す
-                    if a.to_boolean() {
-                        self.stack.push(a);
-                    } else {
-                        self.stack.push(b);
-                    }
-                }
+            // 配列・オブジェクト操作
+            Opcode::NewArray(_size) => {
+                use crate::value::JSArray;
+                let arr = JSArray::new();
+                self.stack.push(arr.to_object());
+            }
+            Opcode::NewObject => {
+                use crate::value::JSObject;
+                use std::cell::RefCell;
+                use std::rc::Rc;
+                let obj = JSObject::new();
+                self.stack.push(JSValue::Object(Rc::new(RefCell::new(obj))));
+            }
+            Opcode::GetProperty => {
+                let key = self.pop()?;
+                let obj = self.pop()?;
 
-                // ビット演算
-                Opcode::BitAnd => self.bitwise_op(|a, b| a & b)?,
-                Opcode::BitOr => self.bitwise_op(|a, b| a | b)?,
-                Opcode::BitXor => self.bitwise_op(|a, b| a ^ b)?,
-                Opcode::LeftShift => self.bitwise_op(|a, b| a << (b & 0x1f))?,
-                Opcode::RightShift => self.bitwise_op(|a, b| a >> (b & 0x1f))?,
-                Opcode::UnsignedRightShift => {
-                    let b = self.pop()?;
-                    let a = self.pop()?;
-                    let a_u32 = a.to_number() as u32;
-                    let b_u32 = b.to_number() as u32;
-                    self.stack
-                        .push(JSValue::Number((a_u32 >> (b_u32 & 0x1f)) as f64));
-                }
+                match obj {
+                    JSValue::Object(ref obj_ref) => {
+                        let key_str = key.to_string();
 
-                // 配列・オブジェクト操作
-                Opcode::NewArray(_size) => {
-                    use crate::value::JSArray;
-                    let arr = JSArray::new();
-                    self.stack.push(arr.to_object());
-                }
-                Opcode::NewObject => {
-                    use crate::value::JSObject;
-                    use std::cell::RefCell;
-                    use std::rc::Rc;
-                    let obj = JSObject::new();
-                    self.stack.push(JSValue::Object(Rc::new(RefCell::new(obj))));
-                }
-                Opcode::GetProperty => {
-                    let key = self.pop()?;
-                    let obj = self.pop()?;
-
-                    match obj {
-                        JSValue::Object(ref obj_ref) => {
-                            let key_str = key.to_string();
-
-                            // Try to get property descriptor on the object itself first
-                            if let Some(prop) = obj_ref.borrow().get_property_descriptor(&key_str) {
-                                // If accessor getter exists, call it
-                                if let Some(getter_val) = prop.getter.clone() {
-                                    match getter_val {
-                                        JSValue::NativeFunction(native_fn) => {
-                                            // call native getter with receiver as first arg
-                                            let result = native_fn(
-                                                self,
-                                                vec![JSValue::Object(obj_ref.clone())],
-                                            )?;
-                                            self.stack.push(result);
-                                        }
-                                        JSValue::Function(
-                                            func_chunk,
-                                            _params,
-                                            captured_env_opt,
-                                            _,
-                                        ) => {
-                                            // call JS getter as method with receiver as this and no args
-                                            let outer = match captured_env_opt {
-                                                Some(env_rc) => env_rc,
-                                                None => self.current_env(),
-                                            };
-                                            let new_env = Rc::new(RefCell::new(
-                                                Environment::with_outer(outer),
-                                            ));
-
-                                            let old_stack = std::mem::take(&mut self.stack);
-
-                                            self.frames.push(CallFrame {
-                                                env: new_env,
-                                                this: JSValue::Object(obj_ref.clone()),
-                                            });
-
-                                            let res = self.execute(func_chunk)?;
-
-                                            let _inner_stack =
-                                                std::mem::replace(&mut self.stack, old_stack);
-
-                                            self.frames.pop();
-
-                                            self.stack.push(res);
-                                        }
-                                        _ => {
-                                            // getter not callable
-                                            self.stack.push(JSValue::Undefined);
-                                        }
-                                    }
-                                    continue; // processed getter
-                                }
-
-                                // No getter: return data value
-                                self.stack.push(prop.value.clone());
-                                continue;
-                            }
-
-                            // Not an own property: use prototype chain lookup via get (existing behavior)
-                            let value = obj_ref.borrow().get(&key_str);
-                            self.stack.push(value);
-                        }
-                        _ => {
-                            // プリミティブ値のプロパティアクセスは後で実装
-                            self.stack.push(JSValue::Undefined);
-                        }
-                    }
-                }
-                Opcode::SetProperty => {
-                    let value = self.pop()?;
-                    let key = self.pop()?;
-                    let obj = self.pop()?;
-
-                    match obj {
-                        JSValue::Object(ref obj_ref) => {
-                            let key_str = key.to_string();
-
-                            // Obtain property descriptor in a short scope so RefCell borrow ends
-                            let maybe_prop = {
-                                let borrowed = obj_ref.borrow();
-                                borrowed.get_property_descriptor(&key_str)
-                            };
-
-                            // If there is an own property with a setter, call it
-                            if let Some(prop) = maybe_prop
-                                && let Some(setter_val) = prop.setter.clone()
-                            {
-                                match setter_val {
+                        // Try to get property descriptor on the object itself first
+                        if let Some(prop) = obj_ref.borrow().get_property_descriptor(&key_str) {
+                            // If accessor getter exists, call it
+                            if let Some(getter_val) = prop.getter.clone() {
+                                match getter_val {
                                     JSValue::NativeFunction(native_fn) => {
-                                        // call native setter with receiver and value
-                                        let _res = native_fn(
+                                        // call native getter with receiver as first arg
+                                        let result = native_fn(
                                             self,
-                                            vec![JSValue::Object(obj_ref.clone()), value.clone()],
+                                            vec![JSValue::Object(obj_ref.clone())],
                                         )?;
-                                        // setters usually return undefined; we push the object as per prior behavior
-                                        self.stack.push(JSValue::Object(obj_ref.clone()));
+                                        self.stack.push(result);
                                     }
-                                    JSValue::Function(func_chunk, params, captured_env_opt, _) => {
-                                        // call JS setter with receiver as this and value as first param
+                                    JSValue::Function(func_chunk, _params, captured_env_opt, _) => {
+                                        // call JS getter as method with receiver as this and no args
                                         let outer = match captured_env_opt {
                                             Some(env_rc) => env_rc,
                                             None => self.current_env(),
@@ -304,344 +244,401 @@ impl VM {
                                         let new_env =
                                             Rc::new(RefCell::new(Environment::with_outer(outer)));
 
-                                        // bind parameter (if exists)
-                                        if !params.is_empty() {
-                                            new_env
-                                                .borrow()
-                                                .define(params[0].clone(), value.clone());
-                                        }
-
                                         let old_stack = std::mem::take(&mut self.stack);
+
                                         self.frames.push(CallFrame {
                                             env: new_env,
                                             this: JSValue::Object(obj_ref.clone()),
                                         });
 
-                                        let _ = self.execute(func_chunk)?;
+                                        let res = self.execute(func_chunk)?;
 
                                         let _inner_stack =
                                             std::mem::replace(&mut self.stack, old_stack);
 
                                         self.frames.pop();
 
-                                        self.stack.push(JSValue::Object(obj_ref.clone()));
+                                        self.stack.push(res);
                                     }
                                     _ => {
-                                        return Err(JSError::TypeError(
-                                            "SetProperty: setter is not callable".to_string(),
-                                        ));
+                                        // getter not callable
+                                        self.stack.push(JSValue::Undefined);
                                     }
                                 }
-                                continue;
+                                return Ok(ControlFlow::Continue); // processed getter
                             }
 
-                            // No setter: perform normal set
-                            let key_str = key.to_string();
-                            obj_ref.borrow_mut().set(key_str, value.clone());
-                            self.stack.push(JSValue::Object(obj_ref.clone()));
+                            // No getter: return data value
+                            self.stack.push(prop.value.clone());
+                            return Ok(ControlFlow::Continue);
                         }
-                        _ => {
-                            return Err(JSError::TypeError(
-                                "Cannot set property on non-object".to_string(),
-                            ));
-                        }
+
+                        // Not an own property: use prototype chain lookup via get (existing behavior)
+                        let value = obj_ref.borrow().get(&key_str);
+                        self.stack.push(value);
+                    }
+                    _ => {
+                        // プリミティブ値のプロパティアクセスは後で実装
+                        self.stack.push(JSValue::Undefined);
                     }
                 }
-                Opcode::ArrayPush => {
-                    // スタック: [array, value, index]
-                    let index = self.pop()?;
-                    let value = self.pop()?;
+            }
+            Opcode::SetProperty => {
+                let value = self.pop()?;
+                let key = self.pop()?;
+                let obj = self.pop()?;
 
-                    // 配列はスタックの一番下にあるが、ポップしない
-                    if let Some(JSValue::Object(obj_ref)) = self.stack.last() {
-                        let idx_num = index.to_number() as usize;
-                        let key_str = idx_num.to_string();
-                        obj_ref.borrow_mut().set(key_str, value);
-                    } else {
-                        return Err(JSError::TypeError("ArrayPush: not an object".to_string()));
-                    }
-                }
-                Opcode::ObjectSetProperty => {
-                    // スタック: [object, value, key]
-                    let key = self.pop()?;
-                    let value = self.pop()?;
-
-                    // オブジェクトはスタックの一番下にあるが、ポップしない
-                    if let Some(JSValue::Object(obj_ref)) = self.stack.last() {
+                match obj {
+                    JSValue::Object(ref obj_ref) => {
                         let key_str = key.to_string();
-                        obj_ref.borrow_mut().set(key_str, value);
-                    } else {
+
+                        // Obtain property descriptor in a short scope so RefCell borrow ends
+                        let maybe_prop = {
+                            let borrowed = obj_ref.borrow();
+                            borrowed.get_property_descriptor(&key_str)
+                        };
+
+                        // If there is an own property with a setter, call it
+                        if let Some(prop) = maybe_prop
+                            && let Some(setter_val) = prop.setter.clone()
+                        {
+                            match setter_val {
+                                JSValue::NativeFunction(native_fn) => {
+                                    // call native setter with receiver and value
+                                    let _res = native_fn(
+                                        self,
+                                        vec![JSValue::Object(obj_ref.clone()), value.clone()],
+                                    )?;
+                                    // setters usually return undefined; we push the object as per prior behavior
+                                    self.stack.push(JSValue::Object(obj_ref.clone()));
+                                }
+                                JSValue::Function(func_chunk, params, captured_env_opt, _) => {
+                                    // call JS setter with receiver as this and value as first param
+                                    let outer = match captured_env_opt {
+                                        Some(env_rc) => env_rc,
+                                        None => self.current_env(),
+                                    };
+                                    let new_env =
+                                        Rc::new(RefCell::new(Environment::with_outer(outer)));
+
+                                    // bind parameter (if exists)
+                                    if !params.is_empty() {
+                                        new_env.borrow().define(params[0].clone(), value.clone());
+                                    }
+
+                                    let old_stack = std::mem::take(&mut self.stack);
+                                    self.frames.push(CallFrame {
+                                        env: new_env,
+                                        this: JSValue::Object(obj_ref.clone()),
+                                    });
+
+                                    let _ = self.execute(func_chunk)?;
+
+                                    let _inner_stack =
+                                        std::mem::replace(&mut self.stack, old_stack);
+
+                                    self.frames.pop();
+
+                                    self.stack.push(JSValue::Object(obj_ref.clone()));
+                                }
+                                _ => {
+                                    return Err(JSError::TypeError(
+                                        "SetProperty: setter is not callable".to_string(),
+                                    ));
+                                }
+                            }
+                            return Ok(ControlFlow::Continue);
+                        }
+
+                        // No setter: perform normal set
+                        let key_str = key.to_string();
+                        obj_ref.borrow_mut().set(key_str, value.clone());
+                        self.stack.push(JSValue::Object(obj_ref.clone()));
+                    }
+                    _ => {
                         return Err(JSError::TypeError(
-                            "ObjectSetProperty: not an object".to_string(),
+                            "Cannot set property on non-object".to_string(),
                         ));
                     }
                 }
-                Opcode::CreateFunction(idx) => {
-                    // 定数プールの関数オブジェクト（BytecodeChunk）をそのままプッシュ
-                    let func_const = chunk.constants[*idx].clone();
-                    match func_const {
-                        JSValue::Function(func_chunk, params, _maybe_env, name_opt) => {
-                            let captured = Some(self.current_env());
-                            let func =
-                                JSValue::Function(func_chunk, params, captured, name_opt.clone());
-                            self.stack.push(func);
-                        }
-                        _other => {
-                            // 不正な定数タイプ
-                            return Err(JSError::TypeError(
-                                "CreateFunction: constant is not a function".to_string(),
-                            ));
-                        }
+            }
+            Opcode::ArrayPush => {
+                // スタック: [array, value, index]
+                let index = self.pop()?;
+                let value = self.pop()?;
+
+                // 配列はスタックの一番下にあるが、ポップしない
+                if let Some(JSValue::Object(obj_ref)) = self.stack.last() {
+                    let idx_num = index.to_number() as usize;
+                    let key_str = idx_num.to_string();
+                    obj_ref.borrow_mut().set(key_str, value);
+                } else {
+                    return Err(JSError::TypeError("ArrayPush: not an object".to_string()));
+                }
+            }
+            Opcode::ObjectSetProperty => {
+                // スタック: [object, value, key]
+                let key = self.pop()?;
+                let value = self.pop()?;
+
+                // オブジェクトはスタックの一番下にあるが、ポップしない
+                if let Some(JSValue::Object(obj_ref)) = self.stack.last() {
+                    let key_str = key.to_string();
+                    obj_ref.borrow_mut().set(key_str, value);
+                } else {
+                    return Err(JSError::TypeError(
+                        "ObjectSetProperty: not an object".to_string(),
+                    ));
+                }
+            }
+            Opcode::CreateFunction(idx) => {
+                // 定数プールの関数オブジェクト（BytecodeChunk）をそのままプッシュ
+                let func_const = chunk.constants[*idx].clone();
+                match func_const {
+                    JSValue::Function(func_chunk, params, _maybe_env, name_opt) => {
+                        let captured = Some(self.current_env());
+                        let func =
+                            JSValue::Function(func_chunk, params, captured, name_opt.clone());
+                        self.stack.push(func);
+                    }
+                    _other => {
+                        // 不正な定数タイプ
+                        return Err(JSError::TypeError(
+                            "CreateFunction: constant is not a function".to_string(),
+                        ));
                     }
                 }
-                Opcode::CallFunction(arg_count) => {
-                    // スタック: [..., arg1, arg2, ..., func]
-                    let mut args = Vec::new();
-                    for _ in 0..*arg_count {
-                        args.push(self.pop()?);
-                    }
-                    // argsは逆順なので反転
-                    args.reverse();
+            }
+            Opcode::CallFunction(arg_count) => {
+                // スタック: [..., arg1, arg2, ..., func]
+                let mut args = Vec::new();
+                for _ in 0..*arg_count {
+                    args.push(self.pop()?);
+                }
+                // argsは逆順なので反転
+                args.reverse();
 
-                    let func = self.pop()?;
+                let func = self.pop()?;
 
-                    match func {
-                        // BoundFunction: unwrap and invoke target with bound_this and bound_args
-                        JSValue::BoundFunction(boxed) => {
-                            let target = boxed.target.clone();
-                            let bound_this = boxed.bound_this.clone();
-                            let mut combined_args = boxed.bound_args.clone();
-                            combined_args.extend(args);
+                match func {
+                    // BoundFunction: unwrap and invoke target with bound_this and bound_args
+                    JSValue::BoundFunction(boxed) => {
+                        let target = boxed.target.clone();
+                        let bound_this = boxed.bound_this.clone();
+                        let mut combined_args = boxed.bound_args.clone();
+                        combined_args.extend(args);
 
-                            match *target {
-                                JSValue::NativeFunction(native_fn) => {
-                                    let mut call_vec = Vec::new();
-                                    call_vec.push(bound_this);
-                                    call_vec.extend(combined_args);
-                                    let result = native_fn(self, call_vec)?;
-                                    self.stack.push(result);
-                                }
-                                JSValue::Function(
-                                    func_chunk,
-                                    params,
-                                    captured_env_opt,
-                                    name_opt,
-                                ) => {
-                                    let outer = match captured_env_opt {
-                                        Some(env_rc) => env_rc,
-                                        None => self.current_env(),
-                                    };
-                                    let new_env =
-                                        Rc::new(RefCell::new(Environment::with_outer(outer)));
+                        match *target {
+                            JSValue::NativeFunction(native_fn) => {
+                                let mut call_vec = Vec::new();
+                                call_vec.push(bound_this);
+                                call_vec.extend(combined_args);
+                                let result = native_fn(self, call_vec)?;
+                                self.stack.push(result);
+                            }
+                            JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
+                                let outer = match captured_env_opt {
+                                    Some(env_rc) => env_rc,
+                                    None => self.current_env(),
+                                };
+                                let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
 
-                                    for (i, arg) in combined_args.into_iter().enumerate() {
-                                        if i < params.len() {
-                                            new_env.borrow().define(params[i].clone(), arg);
-                                        } else {
-                                            new_env.borrow().define(format!("arg{}", i), arg);
-                                        }
+                                for (i, arg) in combined_args.into_iter().enumerate() {
+                                    if i < params.len() {
+                                        new_env.borrow().define(params[i].clone(), arg);
+                                    } else {
+                                        new_env.borrow().define(format!("arg{}", i), arg);
                                     }
-
-                                    if let Some(name) = name_opt.clone() {
-                                        new_env.borrow().define(name, JSValue::Undefined);
-                                    }
-
-                                    let old_stack = std::mem::take(&mut self.stack);
-                                    self.frames.push(CallFrame {
-                                        env: new_env,
-                                        this: bound_this,
-                                    });
-
-                                    let res = self.execute(func_chunk)?;
-
-                                    let _inner_stack =
-                                        std::mem::replace(&mut self.stack, old_stack);
-
-                                    self.frames.pop();
-
-                                    self.stack.push(res);
                                 }
-                                _ => {
-                                    return Err(JSError::TypeError(
-                                        "CallFunction: bound target is not callable".to_string(),
-                                    ));
+
+                                if let Some(name) = name_opt.clone() {
+                                    new_env.borrow().define(name, JSValue::Undefined);
                                 }
+
+                                let old_stack = std::mem::take(&mut self.stack);
+                                self.frames.push(CallFrame {
+                                    env: new_env,
+                                    this: bound_this,
+                                });
+
+                                let res = self.execute(func_chunk)?;
+
+                                let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
+
+                                self.frames.pop();
+
+                                self.stack.push(res);
+                            }
+                            _ => {
+                                return Err(JSError::TypeError(
+                                    "CallFunction: bound target is not callable".to_string(),
+                                ));
                             }
                         }
-                        JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
-                            // 新しい環境を作成し、キャプチャされた環境または現在の環境を外側に設定
-                            let outer = match captured_env_opt {
-                                Some(env_rc) => env_rc,
-                                None => self.current_env(),
-                            };
-                            let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
+                    }
+                    JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
+                        // 新しい環境を作成し、キャプチャされた環境または現在の環境を外側に設定
+                        let outer = match captured_env_opt {
+                            Some(env_rc) => env_rc,
+                            None => self.current_env(),
+                        };
+                        let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
 
-                            // パラメータ名があれば、それに対応して引数をセット
-                            for (i, arg) in args.into_iter().enumerate() {
-                                if i < params.len() {
-                                    new_env.borrow().define(params[i].clone(), arg);
-                                } else {
-                                    // 余分な引数は argN としても格納
-                                    new_env.borrow().define(format!("arg{}", i), arg);
-                                }
+                        // パラメータ名があれば、それに対応して引数をセット
+                        for (i, arg) in args.into_iter().enumerate() {
+                            if i < params.len() {
+                                new_env.borrow().define(params[i].clone(), arg);
+                            } else {
+                                // 余分な引数は argN としても格納
+                                new_env.borrow().define(format!("arg{}", i), arg);
                             }
-
-                            // named function expression の場合、関数名は関数オブジェクト内でのみ見えるため
-                            // 新しい環境の内部に関数名を定義する
-                            if let Some(name) = name_opt.clone() {
-                                // 関数オブジェクト自体を参照可能にする
-                                // ここでは CreateFunction で作った関数オブジェクトがスタック上にあるため、
-                                // 名前解決で参照されるべきオブジェクトは呼び出し時点の func 変数です。
-                                new_env.borrow().define(name, JSValue::Undefined);
-                            }
-
-                            let old_stack = std::mem::take(&mut self.stack);
-                            self.frames.push(CallFrame {
-                                env: new_env,
-                                this: JSValue::Object(self.global_object.clone()),
-                            });
-
-                            let res = self.execute(func_chunk)?;
-
-                            let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
-
-                            self.frames.pop();
-
-                            self.stack.push(res);
                         }
-                        JSValue::NativeFunction(native_fn) => {
-                            // For native functions, we pass the VM and args. Treat as simple call: no this handling here.
-                            let result = native_fn(self, args)?;
-                            self.stack.push(result);
+
+                        // named function expression の場合、関数名は関数オブジェクト内でのみ見えるため
+                        // 新しい環境の内部に関数名を定義する
+                        if let Some(name) = name_opt.clone() {
+                            // 関数オブジェクト自体を参照可能にする
+                            // ここでは CreateFunction で作った関数オブジェクトがスタック上にあるため、
+                            // 名前解決で参照されるべきオブジェクトは呼び出し時点の func 変数です。
+                            new_env.borrow().define(name, JSValue::Undefined);
                         }
-                        _ => {
-                            return Err(JSError::TypeError(
-                                "CallFunction: not a function".to_string(),
-                            ));
-                        }
+
+                        let old_stack = std::mem::take(&mut self.stack);
+                        self.frames.push(CallFrame {
+                            env: new_env,
+                            this: JSValue::Object(self.global_object.clone()),
+                        });
+
+                        let res = self.execute(func_chunk)?;
+
+                        let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
+
+                        self.frames.pop();
+
+                        self.stack.push(res);
+                    }
+                    JSValue::NativeFunction(native_fn) => {
+                        // For native functions, we pass the VM and args. Treat as simple call: no this handling here.
+                        let result = native_fn(self, args)?;
+                        self.stack.push(result);
+                    }
+                    _ => {
+                        return Err(JSError::TypeError(
+                            "CallFunction: not a function".to_string(),
+                        ));
                     }
                 }
-                Opcode::CallMethod(arg_count) => {
-                    // スタック: ..., object, property, arg1, arg2, ..., argN
-                    // まず引数を取り出す
-                    let mut args = Vec::new();
-                    for _ in 0..*arg_count {
-                        args.push(self.pop()?);
-                    }
-                    args.reverse();
+            }
+            Opcode::CallMethod(arg_count) => {
+                // スタック: ..., object, property, arg1, arg2, ..., argN
+                // まず引数を取り出す
+                let mut args = Vec::new();
+                for _ in 0..*arg_count {
+                    args.push(self.pop()?);
+                }
+                args.reverse();
 
-                    // 次に property と object を取り出す
-                    let property = self.pop()?;
-                    let object = self.pop()?;
+                // 次に property と object を取り出す
+                let property = self.pop()?;
+                let object = self.pop()?;
 
-                    // property を文字列化してプロパティアクセス
-                    let key_str = property.to_string();
+                // property を文字列化してプロパティアクセス
+                let key_str = property.to_string();
 
-                    match object.clone() {
-                        JSValue::Object(obj_ref) => {
-                            let method = obj_ref.borrow().get(&key_str);
-                            match method {
-                                JSValue::Function(
-                                    func_chunk,
-                                    params,
-                                    captured_env_opt,
-                                    name_opt,
-                                ) => {
-                                    // outer は関数生成時のキャプチャまたは現在の env
-                                    let outer = match captured_env_opt {
-                                        Some(env_rc) => env_rc,
-                                        None => self.current_env(),
-                                    };
-                                    let new_env =
-                                        Rc::new(RefCell::new(Environment::with_outer(outer)));
+                match object.clone() {
+                    JSValue::Object(obj_ref) => {
+                        let method = obj_ref.borrow().get(&key_str);
+                        match method {
+                            JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
+                                // outer は関数生成時のキャプチャまたは現在の env
+                                let outer = match captured_env_opt {
+                                    Some(env_rc) => env_rc,
+                                    None => self.current_env(),
+                                };
+                                let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
 
-                                    // パラメータをバインド
-                                    for (i, arg) in args.into_iter().enumerate() {
-                                        if i < params.len() {
-                                            new_env.borrow().define(params[i].clone(), arg);
-                                        } else {
-                                            new_env.borrow().define(format!("arg{}", i), arg);
-                                        }
+                                // パラメータをバインド
+                                for (i, arg) in args.into_iter().enumerate() {
+                                    if i < params.len() {
+                                        new_env.borrow().define(params[i].clone(), arg);
+                                    } else {
+                                        new_env.borrow().define(format!("arg{}", i), arg);
                                     }
-
-                                    // named function expression の場合は名前を環境に定義
-                                    if let Some(name) = name_opt.clone() {
-                                        new_env.borrow().define(name, JSValue::Undefined);
-                                    }
-
-                                    // 実行
-                                    let old_stack = std::mem::take(&mut self.stack);
-                                    self.frames.push(CallFrame {
-                                        env: new_env,
-                                        this: object,
-                                    });
-
-                                    let res = self.execute(func_chunk)?;
-
-                                    let _inner_stack =
-                                        std::mem::replace(&mut self.stack, old_stack);
-
-                                    self.frames.pop();
-
-                                    self.stack.push(res);
                                 }
-                                JSValue::NativeFunction(native_fn) => {
-                                    // For methods, inject receiver as first arg
-                                    let mut call_args = Vec::new();
-                                    call_args.push(object.clone());
-                                    call_args.extend(args);
-                                    let res = native_fn(self, call_args)?;
-                                    self.stack.push(res);
+
+                                // named function expression の場合は名前を環境に定義
+                                if let Some(name) = name_opt.clone() {
+                                    new_env.borrow().define(name, JSValue::Undefined);
                                 }
-                                _ => {
-                                    return Err(JSError::TypeError(
-                                        "CallMethod: property is not a function".to_string(),
-                                    ));
-                                }
+
+                                // 実行
+                                let old_stack = std::mem::take(&mut self.stack);
+                                self.frames.push(CallFrame {
+                                    env: new_env,
+                                    this: object,
+                                });
+
+                                let res = self.execute(func_chunk)?;
+
+                                let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
+
+                                self.frames.pop();
+
+                                self.stack.push(res);
+                            }
+                            JSValue::NativeFunction(native_fn) => {
+                                // For methods, inject receiver as first arg
+                                let mut call_args = Vec::new();
+                                call_args.push(object.clone());
+                                call_args.extend(args);
+                                let res = native_fn(self, call_args)?;
+                                self.stack.push(res);
+                            }
+                            _ => {
+                                return Err(JSError::TypeError(
+                                    "CallMethod: property is not a function".to_string(),
+                                ));
                             }
                         }
-                        _ => {
-                            return Err(JSError::TypeError(
-                                "CallMethod: receiver is not an object".to_string(),
-                            ));
-                        }
+                    }
+                    _ => {
+                        return Err(JSError::TypeError(
+                            "CallMethod: receiver is not an object".to_string(),
+                        ));
                     }
                 }
+            }
 
-                // その他
-                Opcode::Typeof => {
-                    let value = self.pop()?;
-                    self.stack
-                        .push(JSValue::String(value.type_of().to_string()));
-                }
-                Opcode::Void => {
-                    self.pop()?;
-                    self.stack.push(JSValue::Undefined);
-                }
+            // その他
+            Opcode::Typeof => {
+                let value = self.pop()?;
+                self.stack
+                    .push(JSValue::String(value.type_of().to_string()));
+            }
+            Opcode::Void => {
+                self.pop()?;
+                self.stack.push(JSValue::Undefined);
+            }
 
-                // 制御フロー
-                Opcode::Jump(offset) => {
-                    pc = *offset;
+            // 制御フロー
+            Opcode::Jump(offset) => {
+                return Ok(ControlFlow::Jump(*offset));
+            }
+            Opcode::JumpIfFalse(offset) => {
+                let condition = self.pop()?;
+                if !condition.to_boolean() {
+                    return Ok(ControlFlow::Jump(*offset));
+                } else {
+                    return Ok(ControlFlow::Continue);
                 }
-                Opcode::JumpIfFalse(offset) => {
-                    let condition = self.pop()?;
-                    if !condition.to_boolean() {
-                        pc = *offset;
-                    }
-                }
-                Opcode::Return => {
-                    let value = self.pop()?;
-                    return Ok(value);
-                }
+            }
+            Opcode::Return => {
+                let value = self.pop()?;
+                return Ok(ControlFlow::Return(value));
             }
         }
 
-        // プログラム終了時、スタックに値があればそれを返す
-        if let Some(value) = self.stack.pop() {
-            Ok(value)
-        } else {
-            Ok(JSValue::Undefined)
-        }
+        Ok(ControlFlow::Continue)
     }
 
     /// 現在の CallFrame を返す
