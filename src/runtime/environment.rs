@@ -6,14 +6,16 @@ use std::rc::Rc;
 /// 環境レコード（レキシカルスコープチェーン）
 #[derive(Debug, Clone)]
 pub struct Environment {
-    pub bindings: Rc<RefCell<FxHashMap<String, JSValue>>>,
-    pub outer: Option<Rc<RefCell<Environment>>>,
+    bindings: Rc<RefCell<FxHashMap<String, JSValue>>>,
+    object_env: Option<Rc<RefCell<crate::value::JSObject>>>,
+    outer: Option<Rc<RefCell<Environment>>>,
 }
 
 impl Environment {
     pub fn new() -> Self {
         Self {
             bindings: Rc::new(RefCell::new(FxHashMap::default())),
+            object_env: None,
             outer: None,
         }
     }
@@ -21,7 +23,16 @@ impl Environment {
     pub fn with_outer(outer: Rc<RefCell<Environment>>) -> Self {
         Self {
             bindings: Rc::new(RefCell::new(FxHashMap::default())),
+            object_env: None,
             outer: Some(outer),
+        }
+    }
+
+    pub fn with_object_env(object_env: Rc<RefCell<crate::value::JSObject>>) -> Self {
+        Self {
+            bindings: Rc::new(RefCell::new(FxHashMap::default())),
+            object_env: Some(object_env),
+            outer: None,
         }
     }
 
@@ -46,6 +57,9 @@ impl Environment {
         }
         if let Some(ref outer) = self.outer {
             return outer.borrow().get(name);
+        }
+        if let Some(ref object) = self.object_env {
+            return Some(object.borrow().get(name));
         }
         None
     }

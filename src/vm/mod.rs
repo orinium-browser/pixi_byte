@@ -36,7 +36,10 @@ impl VM {
         // builtins を初期化してグローバルに組み込みを登録
         crate::builtins::Builtins::new().init(&global_rc);
 
-        let global_frame = CallFrame::new(Environment::new(), JSValue::Object(global_rc.clone()));
+        let global_frame = CallFrame::new(
+            Environment::with_object_env(global_rc.clone()),
+            JSValue::Object(global_rc.clone()),
+        );
 
         Self {
             stack: Vec::new(),
