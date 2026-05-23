@@ -449,7 +449,9 @@ impl VM {
                 self.with_call_frame(env, this, chunk)
             }
 
-            _ => Err(JSError::TypeError("not a function".into())),
+            _ => Err(JSError::TypeError(
+                format!("{} is not callable", callee.to_console_string()).into(),
+            )),
         }
     }
 
