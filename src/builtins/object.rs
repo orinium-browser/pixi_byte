@@ -367,7 +367,7 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     );
 }
 
-// New: Object.defineProperty(obj, prop, descriptor)
+/// Object.defineProperty(obj, prop, descriptor)
 fn object_define_property(
     _vm: &mut crate::vm::VM,
     mut args: Vec<JSValue>,
@@ -403,7 +403,7 @@ fn object_define_property(
     }
 }
 
-// Object.preventExtensions(obj)
+/// Object.preventExtensions(obj)
 fn object_prevent_extensions(
     _vm: &mut crate::vm::VM,
     mut args: Vec<JSValue>,
@@ -504,7 +504,7 @@ fn object_freeze(
     }
 }
 
-// New: Object.getOwnPropertyDescriptor(obj, prop)
+/// Object.getOwnPropertyDescriptor(obj, prop)
 fn object_get_own_property_descriptor(
     _vm: &mut crate::vm::VM,
     mut args: Vec<JSValue>,
