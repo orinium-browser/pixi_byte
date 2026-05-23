@@ -256,11 +256,7 @@ impl Parser {
         // bp: Binding Power
         let mut left = self.parse_unary()?;
 
-        loop {
-            let Some((bp, op)) = precedence(&self.current().kind) else {
-                break;
-            };
-
+        while let Some((bp, op)) = precedence(&self.current().kind) {
             if bp < min_bp {
                 break;
             }
