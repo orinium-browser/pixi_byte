@@ -6,7 +6,7 @@
 
 use crate::compiler::{BytecodeChunk, Opcode};
 use crate::error::{JSError, JSResult};
-use crate::runtime::Environment;
+use crate::runtime::{CallFrame, Environment};
 use crate::value::JSValue;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -25,20 +25,6 @@ enum ControlFlow {
     Continue,
     Jump(usize),
     Return(JSValue),
-}
-
-pub struct CallFrame {
-    pub env: Rc<RefCell<Environment>>,
-    pub this: JSValue,
-}
-
-impl CallFrame {
-    pub fn new(this: JSValue) -> Self {
-        CallFrame {
-            env: Rc::new(RefCell::new(Environment::new())),
-            this,
-        }
-    }
 }
 
 impl VM {

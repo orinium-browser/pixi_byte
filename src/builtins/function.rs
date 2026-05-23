@@ -1,7 +1,7 @@
+use crate::runtime::CallFrame;
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
 use crate::value::jsvalue::BoundFunctionData;
-use crate::vm::CallFrame;
 use std::cell::RefCell;
 use std::rc::Rc;
 
