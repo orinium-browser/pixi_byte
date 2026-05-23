@@ -89,3 +89,22 @@ fn test_tokenize_identifiers() {
     assert!(matches!(tokens[2].kind, TokenKind::Identifier(ref s) if s == "_test"));
     assert!(matches!(tokens[3].kind, TokenKind::Identifier(ref s) if s == "$value"));
 }
+
+#[test]
+fn test_single_line_comment() {
+    let lexer = Lexer::new(
+        r#"
+        // this is a comment
+        let a = 1;
+    "#,
+    );
+
+    let tokens = lexer.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
+
+    assert!(matches!(tokens[0].kind, TokenKind::Let));
+    assert!(matches!(tokens[1].kind, TokenKind::Identifier(ref s) if s == "a"));
+    assert!(matches!(tokens[2].kind, TokenKind::Eq));
+    assert!(
+        matches!(tokens[3].kind, TokenKind::NumberLiteral(ref n) if n.parse::<i32>().unwrap() == 1)
+    );
+}
