@@ -227,21 +227,19 @@ impl VM {
                                                 Environment::with_outer(outer),
                                             ));
 
-                                            // bind this
-                                            new_env.borrow().define(
-                                                "this".to_string(),
-                                                JSValue::Object(obj_ref.clone()),
-                                            );
-
-                                            let old_env = self.current_env();
                                             let old_stack = std::mem::take(&mut self.stack);
-                                            self.current_frame_mut().env = new_env;
+
+                                            self.frames.push(CallFrame {
+                                                env: new_env,
+                                                this: JSValue::Object(obj_ref.clone()),
+                                            });
 
                                             let res = self.execute(func_chunk)?;
 
                                             let _inner_stack =
                                                 std::mem::replace(&mut self.stack, old_stack);
-                                            self.current_frame_mut().env = old_env;
+
+                                            self.frames.pop();
 
                                             self.stack.push(res);
                                         }
@@ -313,21 +311,18 @@ impl VM {
                                                 .define(params[0].clone(), value.clone());
                                         }
 
-                                        // bind this
-                                        new_env.borrow().define(
-                                            "this".to_string(),
-                                            JSValue::Object(obj_ref.clone()),
-                                        );
-
-                                        let old_env = self.current_env();
                                         let old_stack = std::mem::take(&mut self.stack);
-                                        self.current_frame_mut().env = new_env;
+                                        self.frames.push(CallFrame {
+                                            env: new_env,
+                                            this: JSValue::Object(obj_ref.clone()),
+                                        });
 
                                         let _ = self.execute(func_chunk)?;
 
                                         let _inner_stack =
                                             std::mem::replace(&mut self.stack, old_stack);
-                                        self.current_frame_mut().env = old_env;
+
+                                        self.frames.pop();
 
                                         self.stack.push(JSValue::Object(obj_ref.clone()));
                                     }
@@ -451,17 +446,18 @@ impl VM {
                                         new_env.borrow().define(name, JSValue::Undefined);
                                     }
 
-                                    self.current_frame_mut().this = bound_this;
-
-                                    let old_env = self.current_env();
                                     let old_stack = std::mem::take(&mut self.stack);
-                                    self.current_frame_mut().env = new_env;
+                                    self.frames.push(CallFrame {
+                                        env: new_env,
+                                        this: bound_this,
+                                    });
 
                                     let res = self.execute(func_chunk)?;
 
                                     let _inner_stack =
                                         std::mem::replace(&mut self.stack, old_stack);
-                                    self.current_frame_mut().env = old_env;
+
+                                    self.frames.pop();
 
                                     self.stack.push(res);
                                 }
@@ -499,22 +495,17 @@ impl VM {
                                 new_env.borrow().define(name, JSValue::Undefined);
                             }
 
-                            // 基本的な `this` バインディングをセット（非メソッド呼び出しではグローバルオブジェクト）
-                            new_env.borrow().define(
-                                "this".to_string(),
-                                JSValue::Object(self.global_object.clone()),
-                            );
-
-                            // スタックと環境を切り替えて同一VMで関数を実行
-                            let old_env = self.current_env();
                             let old_stack = std::mem::take(&mut self.stack);
-                            self.current_frame_mut().env = new_env;
+                            self.frames.push(CallFrame {
+                                env: new_env,
+                                this: JSValue::Object(self.global_object.clone()),
+                            });
 
                             let res = self.execute(func_chunk)?;
 
-                            // 関数実行後、内部スタックを破棄して呼び出し元のスタックを復元
                             let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
-                            self.current_frame_mut().env = old_env;
+
+                            self.frames.pop();
 
                             self.stack.push(res);
                         }
@@ -573,24 +564,24 @@ impl VM {
                                         }
                                     }
 
-                                    // this を receiver にセット
-                                    new_env.borrow().define("this".to_string(), object.clone());
-
                                     // named function expression の場合は名前を環境に定義
                                     if let Some(name) = name_opt.clone() {
                                         new_env.borrow().define(name, JSValue::Undefined);
                                     }
 
                                     // 実行
-                                    let old_env = self.current_env();
                                     let old_stack = std::mem::take(&mut self.stack);
-                                    self.current_frame_mut().env = new_env;
+                                    self.frames.push(CallFrame {
+                                        env: new_env,
+                                        this: object,
+                                    });
 
                                     let res = self.execute(func_chunk)?;
 
                                     let _inner_stack =
                                         std::mem::replace(&mut self.stack, old_stack);
-                                    self.current_frame_mut().env = old_env;
+
+                                    self.frames.pop();
 
                                     self.stack.push(res);
                                 }
@@ -656,10 +647,6 @@ impl VM {
     /// 現在の CallFrame を返す
     fn current_frame(&self) -> &CallFrame {
         self.frames.last().expect("no call frame")
-    }
-
-    fn current_frame_mut(&mut self) -> &mut CallFrame {
-        self.frames.last_mut().expect("no call frame")
     }
 
     /// 現在の Environment を返す

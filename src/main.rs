@@ -7,8 +7,19 @@ fn main() {
     let mut engine = JSEngine::new();
 
     let test_code = r"
-        function add(a,b) {this; return a+b}
-        add(1,2)
+        const a = {
+            x: 1,
+            get: function () {
+                return this.x;
+            }
+        };
+
+        const b = {
+            x: 2,
+            get: a.get
+        };
+
+        b.get();
     ";
 
     match engine.eval(test_code) {
