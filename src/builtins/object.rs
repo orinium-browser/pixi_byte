@@ -510,7 +510,6 @@ fn object_property_is_enumerable(
 
 /// グローバルオブジェクトに Object 組み込みをインストールする
 pub fn install(global: &Rc<RefCell<JSObject>>) {
-    // TODO: グローバルオブジェクトに `Object` をオブジェクトとしてセット
     let mut obj = JSObject::new();
 
     // Create Object.prototype and attach methods (e.g., hasOwnProperty)
