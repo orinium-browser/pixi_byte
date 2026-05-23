@@ -6,12 +6,5 @@
 </div>
 A Simple and Fast JavaScript Engine for OriniumBrowser
 
-## 特徴
-- **最新ECMAScript対応**: 最新のJavaScript仕様をサポート
-- **高速実行**: バイトコードVM + 将来のJIT最適化
-- **シンプルな設計**: 読みやすく保守しやすいコードベース
-- **ブラウザ統合**: OriniumBrowserとのシームレスな統合
-- **Rust製**: メモリ安全性とパフォーマンスを両立
-
 ## ライセンス
 PixiByteはApache License 2.0の下でライセンスされています。詳細は[LICENSE](./LICENSE)ファイルをご覧ください。

@@ -7,12 +7,5 @@
 
 A Simple and Fast JavaScript Engine for OriniumBrowser
 
-## Features
-- **Latest ECMAScript support**: Implements the latest JavaScript specifications
-- **Fast execution**: Bytecode VM with future JIT optimizations
-- **Simple design**: Readable and maintainable codebase
-- **Browser integration**: Seamless integration with OriniumBrowser
-- **Written in Rust**: Balances memory safety and performance
-
 ## License
 PixiByte is licensed under the Apache License 2.0. See the [LICENSE](./LICENSE) file for details.
