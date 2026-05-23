@@ -70,6 +70,12 @@ impl JSEngine {
     pub fn eval(&mut self, source: &str) -> JSResult<JSValue> {
         self.eval_with_options(source, &EvalOptions::default())
     }
+
+    pub fn global_mut(
+        &mut self,
+    ) -> &mut std::rc::Rc<std::cell::RefCell<crate::value::jsobject::JSObject>> {
+        &mut self.vm.global_object
+    }
 }
 
 impl Default for JSEngine {
