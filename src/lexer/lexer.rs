@@ -41,7 +41,15 @@ impl Iterator for Lexer {
         if self.is_at_end() {
             None
         } else {
-            Some(self.next_token())
+            let token_result = self.next_token();
+            if token_result
+                .as_ref()
+                .is_ok_and(|token| token.kind == TokenKind::Eof)
+            {
+                None
+            } else {
+                Some(token_result)
+            }
         }
     }
 }
@@ -49,6 +57,10 @@ impl Iterator for Lexer {
 impl Lexer {
     /// 次のトークンを取得
     fn next_token(&mut self) -> JSResult<Token> {
+        if self.is_at_end() {
+            return Ok(self.eof_token());
+        }
+
         let start = self.position;
         let start_line = self.line;
         let start_column = self.column;
