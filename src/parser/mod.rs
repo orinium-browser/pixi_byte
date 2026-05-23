@@ -1,3 +1,5 @@
+mod impl_dump;
+
 use crate::Lexer;
 use crate::error::{JSError, JSResult};
 use crate::lexer::{Token, TokenKind};

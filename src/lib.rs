@@ -50,7 +50,7 @@ impl JSEngine {
 
         if options.dump_ast {
             println!("=== AST ===");
-            println!("{:#?}", ast);
+            ast.dump();
         }
 
         let bytecode = compiler::Compiler::new().compile(ast)?;
