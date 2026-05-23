@@ -1,10 +1,9 @@
+//! 組み込み Array objectの 実装
+
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
 use std::cell::RefCell;
 use std::rc::Rc;
-
-/// シンプルな Array 組み込みの最小実装
-/// グローバルオブジェクトに `Array` を登録し、`prototype.push` と `prototype.pop` を提供する
 
 // NativeFunction シグネチャ: fn(&mut VM, Vec<JSValue>) -> JSResult<JSValue>
 
