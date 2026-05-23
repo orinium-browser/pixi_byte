@@ -24,26 +24,29 @@ impl Lexer {
         }
     }
 
-    /// ソースコードを字句解析してトークン列を生成
-    pub fn tokenize(&mut self) -> JSResult<Vec<Token>> {
-        let mut tokens = Vec::new();
-
-        loop {
-            self.skip_whitespace();
-
-            if self.is_at_end() {
-                let span = self.current_span();
-                tokens.push(Token::new(TokenKind::Eof, span));
-                break;
-            }
-
-            let token = self.next_token()?;
-            tokens.push(token);
-        }
-
-        Ok(tokens)
+    pub fn iter(self) -> Self {
+        self
     }
 
+    pub fn eof_token(&self) -> Token {
+        Token::new(TokenKind::Eof, self.current_span())
+    }
+}
+
+impl Iterator for Lexer {
+    type Item = JSResult<Token>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.skip_whitespace();
+
+        if self.is_at_end() {
+            None
+        } else {
+            Some(self.next_token())
+        }
+    }
+}
+
+impl Lexer {
     /// 次のトークンを取得
     fn next_token(&mut self) -> JSResult<Token> {
         let start = self.position;
@@ -266,10 +269,10 @@ impl Lexer {
 
         let text: String = self.source[start..self.position].iter().collect();
         if text.parse::<f64>().is_err() {
-            return Err(JSError::SyntaxError(format!(
-                "Invalid number literal: {}",
-                text
-            )));
+            return Err(JSError::SyntaxError(
+                format!("Invalid number literal: {}", text),
+                Span::new(start, self.position, start_line, start_column),
+            ));
         }
 
         let span = Span::new(start, self.position, start_line, start_column);
@@ -305,6 +308,7 @@ impl Lexer {
             } else if ch == '\n' {
                 return Err(JSError::SyntaxError(
                     "Unterminated string literal".to_string(),
+                    Span::new(start, self.position, start_line, start_column),
                 ));
             } else {
                 value.push(ch);
@@ -397,6 +401,10 @@ impl Lexer {
 
     /// ブロックコメントのスキップ
     fn skip_block_comment(&mut self) -> JSResult<()> {
+        let start = self.position - 1;
+        let start_line = self.line;
+        let start_column = self.column - 1;
+
         while let Some(ch) = self.peek() {
             if ch == '*' && self.peek_ahead(1) == Some('/') {
                 self.advance();
@@ -405,8 +413,10 @@ impl Lexer {
             }
             self.advance();
         }
+
         Err(JSError::SyntaxError(
             "Unterminated block comment".to_string(),
+            Span::new(start, self.position, start_line, start_column),
         ))
     }
 
