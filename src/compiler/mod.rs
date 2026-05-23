@@ -363,11 +363,7 @@ impl Compiler {
                 } = *callee
                 {
                     self.compile_expression(*object)?;
-                    if computed {
-                        self.compile_expression(*property)?;
-                    } else {
-                        self.compile_expression(*property)?;
-                    }
+                    self.compile_expression(*property)?;
 
                     // 引数をコンパイル
                     for arg in &args {
