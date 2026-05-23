@@ -285,6 +285,14 @@ impl JSObject {
     pub fn get_property_descriptor(&self, key: &str) -> Option<Property> {
         self.properties.borrow().get(key).cloned()
     }
+
+    pub fn dump_properties(&self) {
+        let props = self.properties.borrow();
+
+        for (key, value) in props.iter() {
+            println!("{key}: {value:?}");
+        }
+    }
 }
 
 impl Default for JSObject {
