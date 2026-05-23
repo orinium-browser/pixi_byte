@@ -1,3 +1,4 @@
+use crate::Lexer;
 use crate::error::{JSError, JSResult};
 use crate::lexer::{Token, TokenKind};
 
@@ -121,14 +122,30 @@ pub enum UnaryOp {
 
 /// パーサー
 pub struct Parser {
-    tokens: Vec<Token>,
-    current: usize,
+    lexer: Lexer,
+
+    current: Token,
+    next: Token,
 }
 
 impl Parser {
     /// 新しいパーサーを生成
-    pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, current: 0 }
+    pub fn new(mut lexer: Lexer) -> JSResult<Self> {
+        let current = lexer
+            .next()
+            .transpose()?
+            .unwrap_or_else(|| lexer.eof_token());
+
+        let next = lexer
+            .next()
+            .transpose()?
+            .unwrap_or_else(|| lexer.eof_token());
+
+        Ok(Self {
+            lexer,
+            current,
+            next,
+        })
     }
 
     /// トークン列をパースしてASTを生成
@@ -144,7 +161,7 @@ impl Parser {
 
     /// 文をパース
     fn parse_statement(&mut self) -> JSResult<Statement> {
-        match &self.peek().kind {
+        match &self.current().kind {
             TokenKind::Var => self.parse_var_declaration(VarKind::Var),
             TokenKind::Let => self.parse_var_declaration(VarKind::Let),
             TokenKind::Const => self.parse_var_declaration(VarKind::Const),
@@ -152,7 +169,7 @@ impl Parser {
             TokenKind::Function => self.parse_function_declaration(),
             _ => {
                 let expr = self.parse_expression()?;
-                self.consume_semicolon();
+                self.consume_semicolon()?;
                 Ok(Statement::Expression(expr))
             }
         }
@@ -160,54 +177,59 @@ impl Parser {
 
     /// ブロックをパースして文のベクタを返す
     fn parse_block(&mut self) -> JSResult<Vec<Statement>> {
-        if !self.match_token(&TokenKind::LeftBrace) {
-            return Err(JSError::SyntaxError("Expected '{'".to_string()));
-        }
+        self.expect(&TokenKind::LeftBrace, "Expected '{'")?;
+
         let mut body = Vec::new();
+
         while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
             body.push(self.parse_statement()?);
         }
-        if !self.match_token(&TokenKind::RightBrace) {
-            return Err(JSError::SyntaxError("Expected '}'".to_string()));
-        }
+
+        self.expect(&TokenKind::RightBrace, "Expected '}'")?;
+
         Ok(body)
     }
 
     /// 関数宣言をパース: function name(params) { body }
     fn parse_function_declaration(&mut self) -> JSResult<Statement> {
-        self.advance(); // consume 'function'
-        let name = if let TokenKind::Identifier(s) = &self.peek().kind {
-            let s = s.clone();
-            self.advance();
-            s
+        let (name, params, body) = self.parse_function(true)?;
+
+        Ok(Statement::FunctionDeclaration {
+            name: name.unwrap(),
+            params,
+            body,
+        })
+    }
+
+    fn parse_function(
+        &mut self,
+        require_name: bool,
+    ) -> JSResult<(Option<String>, Vec<String>, Vec<Statement>)> {
+        self.expect(&TokenKind::Function, "Expected function")?;
+
+        let name = if require_name || matches!(&self.current().kind, TokenKind::Identifier(_)) {
+            Some(self.expect_identifier("Expected function name")?)
         } else {
-            return Err(JSError::SyntaxError("Expected function name".to_string()));
+            None
         };
 
-        // parameters
-        if !self.match_token(&TokenKind::LeftParen) {
-            return Err(JSError::SyntaxError("Expected '('".to_string()));
-        }
+        self.expect(&TokenKind::LeftParen, "Expected '('")?;
+
         let mut params = Vec::new();
+
         while !self.check(&TokenKind::RightParen) {
-            if let TokenKind::Identifier(s) = &self.peek().kind {
-                params.push(s.clone());
-                self.advance();
-            } else {
-                return Err(JSError::SyntaxError("Expected parameter name".to_string()));
+            params.push(self.expect_identifier("Expected parameter name")?);
+
+            if !self.check(&TokenKind::RightParen) {
+                self.expect(&TokenKind::Comma, "Expected ','")?;
             }
-            if !self.check(&TokenKind::RightParen) && !self.match_token(&TokenKind::Comma) {
-                return Err(JSError::SyntaxError(
-                    "Expected ',' in parameter list".to_string(),
-                ));
-            }
-        }
-        if !self.match_token(&TokenKind::RightParen) {
-            return Err(JSError::SyntaxError("Expected ')'".to_string()));
         }
 
+        self.expect(&TokenKind::RightParen, "Expected ')'")?;
+
         let body = self.parse_block()?;
-        Ok(Statement::FunctionDeclaration { name, params, body })
+
+        Ok((name, params, body))
     }
 
     /// 式をパース
@@ -215,170 +237,38 @@ impl Parser {
         self.parse_assignment()
     }
 
-    /// 代入式をパース（右結合）
     fn parse_assignment(&mut self) -> JSResult<Expression> {
-        let left = self.parse_logical_or()?;
-        if self.match_token(&TokenKind::Eq) {
-            let right = self.parse_assignment()?;
+        let left = self.parse_expression_bp(0)?;
+
+        if self.eat(&TokenKind::Eq)? {
+            let right = self.parse_assignment()?; // right-associative
+
             return Ok(Expression::Assignment {
                 left: Box::new(left),
                 right: Box::new(right),
             });
         }
-        Ok(left)
-    }
-
-    /// 変数宣言をパース
-    fn parse_var_declaration(&mut self, kind: VarKind) -> JSResult<Statement> {
-        // consume keyword
-        self.advance();
-        // identifier
-        let name = if let TokenKind::Identifier(s) = &self.peek().kind {
-            let s = s.clone();
-            self.advance();
-            s
-        } else {
-            return Err(JSError::SyntaxError("Expected variable name".to_string()));
-        };
-
-        let mut init = None;
-        if self.match_token(&TokenKind::Eq) {
-            init = Some(self.parse_expression()?);
-        }
-        self.consume_semicolon();
-        Ok(Statement::VariableDeclaration { kind, name, init })
-    }
-
-    /// return 文をパース
-    fn parse_return_statement(&mut self) -> JSResult<Statement> {
-        self.advance(); // consume 'return'
-        if self.check(&TokenKind::Semicolon)
-            || self.check(&TokenKind::Eof)
-            || self.check(&TokenKind::RightBrace)
-        {
-            self.consume_semicolon();
-            return Ok(Statement::Return(None));
-        }
-        let expr = self.parse_expression()?;
-        self.consume_semicolon();
-        Ok(Statement::Return(Some(expr)))
-    }
-
-    /// 論理和式をパース
-    fn parse_logical_or(&mut self) -> JSResult<Expression> {
-        let mut left = self.parse_logical_and()?;
-
-        while self.match_token(&TokenKind::Or) {
-            let right = self.parse_logical_and()?;
-            left = Expression::Binary {
-                op: BinaryOp::Or,
-                left: Box::new(left),
-                right: Box::new(right),
-            };
-        }
 
         Ok(left)
     }
 
-    /// 論理積式をパース
-    fn parse_logical_and(&mut self) -> JSResult<Expression> {
-        let mut left = self.parse_equality()?;
-
-        while self.match_token(&TokenKind::And) {
-            let right = self.parse_equality()?;
-            left = Expression::Binary {
-                op: BinaryOp::And,
-                left: Box::new(left),
-                right: Box::new(right),
-            };
-        }
-
-        Ok(left)
-    }
-
-    /// 等価式をパース
-    fn parse_equality(&mut self) -> JSResult<Expression> {
-        let mut left = self.parse_comparison()?;
-
-        loop {
-            let op = match &self.peek().kind {
-                TokenKind::EqEq => BinaryOp::Eq,
-                TokenKind::NotEq => BinaryOp::NotEq,
-                TokenKind::EqEqEq => BinaryOp::StrictEq,
-                TokenKind::NotEqEq => BinaryOp::StrictNotEq,
-                _ => break,
-            };
-            self.advance();
-            let right = self.parse_comparison()?;
-            left = Expression::Binary {
-                op,
-                left: Box::new(left),
-                right: Box::new(right),
-            };
-        }
-
-        Ok(left)
-    }
-
-    /// 比較をパース
-    fn parse_comparison(&mut self) -> JSResult<Expression> {
-        let mut left = self.parse_term()?;
-
-        loop {
-            let op = match &self.peek().kind {
-                TokenKind::Lt => BinaryOp::Lt,
-                TokenKind::Gt => BinaryOp::Gt,
-                TokenKind::LtEq => BinaryOp::LtEq,
-                TokenKind::GtEq => BinaryOp::GtEq,
-                _ => break,
-            };
-            self.advance();
-            let right = self.parse_term()?;
-            left = Expression::Binary {
-                op,
-                left: Box::new(left),
-                right: Box::new(right),
-            };
-        }
-
-        Ok(left)
-    }
-
-    /// 加減乗除のパース
-    fn parse_term(&mut self) -> JSResult<Expression> {
-        let mut left = self.parse_factor()?;
-
-        loop {
-            let op = match &self.peek().kind {
-                TokenKind::Plus => BinaryOp::Add,
-                TokenKind::Minus => BinaryOp::Sub,
-                _ => break,
-            };
-            self.advance();
-            let right = self.parse_factor()?;
-            left = Expression::Binary {
-                op,
-                left: Box::new(left),
-                right: Box::new(right),
-            };
-        }
-
-        Ok(left)
-    }
-
-    /// 乗算式をパース
-    fn parse_factor(&mut self) -> JSResult<Expression> {
+    fn parse_expression_bp(&mut self, min_bp: u8) -> JSResult<Expression> {
+        // bp: Binding Power
         let mut left = self.parse_unary()?;
 
         loop {
-            let op = match &self.peek().kind {
-                TokenKind::Star => BinaryOp::Mul,
-                TokenKind::Slash => BinaryOp::Div,
-                TokenKind::Percent => BinaryOp::Mod,
-                _ => break,
+            let Some((bp, op)) = precedence(&self.current().kind) else {
+                break;
             };
-            self.advance();
-            let right = self.parse_unary()?;
+
+            if bp < min_bp {
+                break;
+            }
+
+            self.advance()?;
+
+            let right = self.parse_expression_bp(bp + 1)?;
+
             left = Expression::Binary {
                 op,
                 left: Box::new(left),
@@ -389,9 +279,8 @@ impl Parser {
         Ok(left)
     }
 
-    /// 単項式をパース
     fn parse_unary(&mut self) -> JSResult<Expression> {
-        let op = match &self.peek().kind {
+        let op = match &self.current().kind {
             TokenKind::Plus => UnaryOp::Plus,
             TokenKind::Minus => UnaryOp::Minus,
             TokenKind::Not => UnaryOp::Not,
@@ -401,12 +290,51 @@ impl Parser {
             TokenKind::Delete => UnaryOp::Delete,
             _ => return self.parse_postfix(),
         };
-        self.advance();
-        let arg = self.parse_unary()?;
+
+        self.advance()?;
+
         Ok(Expression::Unary {
             op,
-            arg: Box::new(arg),
+            arg: Box::new(self.parse_unary()?),
         })
+    }
+
+    /// 変数宣言をパース
+    fn parse_var_declaration(&mut self, kind: VarKind) -> JSResult<Statement> {
+        self.advance()?; // var/let/const
+
+        let name = self.expect_identifier("Expected variable name")?;
+
+        let init = if self.eat(&TokenKind::Eq)? {
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
+        self.consume_semicolon()?;
+
+        Ok(Statement::VariableDeclaration { kind, name, init })
+    }
+
+    fn parse_function_expression(&mut self) -> JSResult<Expression> {
+        let (name, params, body) = self.parse_function(false)?;
+
+        Ok(Expression::Function { name, params, body })
+    }
+
+    /// return 文をパース
+    fn parse_return_statement(&mut self) -> JSResult<Statement> {
+        self.advance()?; // consume 'return'
+        if self.check(&TokenKind::Semicolon)
+            || self.check(&TokenKind::Eof)
+            || self.check(&TokenKind::RightBrace)
+        {
+            self.consume_semicolon()?;
+            return Ok(Statement::Return(None));
+        }
+        let expr = self.parse_expression()?;
+        self.consume_semicolon()?;
+        Ok(Statement::Return(Some(expr)))
     }
 
     /// 後置式をパース（メンバーアクセス等）
@@ -414,278 +342,287 @@ impl Parser {
         let mut expr = self.parse_primary()?;
 
         loop {
-            match &self.peek().kind {
-                TokenKind::Dot => {
-                    self.advance();
-                    let property = match &self.peek().kind {
-                        TokenKind::Identifier(s) => {
-                            let s = s.clone();
-                            self.advance();
-                            Expression::Literal(Literal::String(s))
-                        }
-                        _ => {
-                            return Err(JSError::SyntaxError(
-                                "Expected property name after '.'".to_string(),
-                            ));
-                        }
-                    };
-                    expr = Expression::MemberAccess {
-                        object: Box::new(expr),
-                        property: Box::new(property),
-                        computed: false,
-                    };
-                }
-                TokenKind::LeftBracket => {
-                    self.advance();
-                    let property = self.parse_expression()?;
-                    if !self.match_token(&TokenKind::RightBracket) {
-                        return Err(JSError::SyntaxError("Expected ']'".to_string()));
-                    }
-                    expr = Expression::MemberAccess {
-                        object: Box::new(expr),
-                        property: Box::new(property),
-                        computed: true,
-                    };
-                }
-                TokenKind::LeftParen => {
-                    self.advance();
-                    let args = self.parse_call_arguments()?;
-                    if !self.match_token(&TokenKind::RightParen) {
-                        return Err(JSError::SyntaxError("Expected ')'".to_string()));
-                    }
-                    expr = Expression::Call {
-                        callee: Box::new(expr),
-                        args,
-                    };
-                }
-                _ => break,
+            if self.eat(&TokenKind::Dot)? {
+                let property = self.expect_identifier("Expected property name")?;
+
+                expr = Expression::MemberAccess {
+                    object: Box::new(expr),
+                    property: Box::new(Expression::Literal(Literal::String(property))),
+                    computed: false,
+                };
+            } else if self.eat(&TokenKind::LeftBracket)? {
+                let property = self.parse_expression()?;
+
+                self.expect(&TokenKind::RightBracket, "Expected '}'")?;
+
+                expr = Expression::MemberAccess {
+                    object: Box::new(expr),
+                    property: Box::new(property),
+                    computed: true,
+                };
+            } else if self.eat(&TokenKind::LeftParen)? {
+                let args = self.parse_arguments()?;
+
+                self.expect(&TokenKind::RightParen, "Expected ')'")?;
+
+                expr = Expression::Call {
+                    callee: Box::new(expr),
+                    args,
+                };
+            } else {
+                break;
             }
         }
 
         Ok(expr)
     }
 
-    /// 基本式をパース
-    fn parse_primary(&mut self) -> JSResult<Expression> {
-        let token = self.peek().clone();
-
-        match &token.kind {
-            TokenKind::NumberLiteral(n) => {
-                self.advance();
-                Ok(Expression::Literal(Literal::Number((*n).parse().unwrap())))
-            }
-            TokenKind::String(s) => {
-                let s = s.clone();
-                self.advance();
-                Ok(Expression::Literal(Literal::String(s)))
-            }
-            TokenKind::True => {
-                self.advance();
-                Ok(Expression::Literal(Literal::Boolean(true)))
-            }
-            TokenKind::False => {
-                self.advance();
-                Ok(Expression::Literal(Literal::Boolean(false)))
-            }
-            TokenKind::Null => {
-                self.advance();
-                Ok(Expression::Literal(Literal::Null))
-            }
-            TokenKind::Undefined => {
-                self.advance();
-                Ok(Expression::Literal(Literal::Undefined))
-            }
-            TokenKind::Identifier(s) => {
-                let s = s.clone();
-                self.advance();
-                Ok(Expression::Identifier(s))
-            }
-            TokenKind::LeftParen => {
-                self.advance();
-                let expr = self.parse_expression()?;
-                if !self.match_token(&TokenKind::RightParen) {
-                    return Err(JSError::SyntaxError("Expected ')'".to_string()));
-                }
-                Ok(expr)
-            }
-            TokenKind::LeftBracket => self.parse_array_literal(),
-            TokenKind::LeftBrace => self.parse_object_literal(),
-            TokenKind::Function => {
-                // function expression: optional name, params, body
-                self.advance(); // consume 'function'
-
-                // optional name (named function expressions)
-                let mut name: Option<String> = None;
-                if let TokenKind::Identifier(s) = &self.peek().kind {
-                    name = Some(s.clone());
-                    self.advance();
-                }
-
-                // parameters
-                if !self.match_token(&TokenKind::LeftParen) {
-                    return Err(JSError::SyntaxError("Expected '(' after function".to_string()));
-                }
-                let mut params = Vec::new();
-                while !self.check(&TokenKind::RightParen) {
-                    if let TokenKind::Identifier(s) = &self.peek().kind {
-                        params.push(s.clone());
-                        self.advance();
-                    } else {
-                        return Err(JSError::SyntaxError("Expected parameter name".to_string()));
-                    }
-                    if !self.check(&TokenKind::RightParen) && !self.match_token(&TokenKind::Comma) {
-                        return Err(JSError::SyntaxError("Expected ',' in parameter list".to_string()));
-                    }
-                }
-                if !self.match_token(&TokenKind::RightParen) {
-                    return Err(JSError::SyntaxError("Expected ')' after parameters".to_string()));
-                }
-
-                // body
-                let body = self.parse_block()?;
-                Ok(Expression::Function { name, params, body })
-            }
-             _ => Err(JSError::SyntaxError(format!(
-                 "Unexpected token: {:?}",
-                 token.kind
-             ))),
-         }
-    }
-
-    /// 配列リテラルをパース: [1, 2, 3]
-    fn parse_array_literal(&mut self) -> JSResult<Expression> {
-        self.advance(); // consume '['
-
-        let mut elements = Vec::new();
-
-        while !self.check(&TokenKind::RightBracket) && !self.is_at_end() {
-            // 空要素をサポート (例: [1,,3])
-            if self.check(&TokenKind::Comma) {
-                elements.push(Expression::Literal(Literal::Undefined));
-                self.advance();
-                continue;
-            }
-
-            elements.push(self.parse_assignment()?);
-
-            if !self.check(&TokenKind::RightBracket) && !self.match_token(&TokenKind::Comma) {
-                return Err(JSError::SyntaxError(
-                    "Expected ',' or ']' in array literal".to_string(),
-                ));
-            }
-        }
-
-        if !self.match_token(&TokenKind::RightBracket) {
-            return Err(JSError::SyntaxError("Expected ']'".to_string()));
-        }
-
-        Ok(Expression::ArrayLiteral(elements))
-    }
-
-    /// オブジェクトリテラルをパース: { key: value }
-    fn parse_object_literal(&mut self) -> JSResult<Expression> {
-        self.advance(); // consume '{'
-
-        let mut properties = Vec::new();
-
-        while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
-            // プロパティキーをパース
-            let key = match &self.peek().kind {
-                TokenKind::Identifier(s) => s.clone(),
-                TokenKind::String(s) => s.clone(),
-                _ => return Err(JSError::SyntaxError("Expected property key".to_string())),
-            };
-            self.advance();
-
-            // ':' を期待
-            if !self.match_token(&TokenKind::Colon) {
-                return Err(JSError::SyntaxError(
-                    "Expected ':' after property key".to_string(),
-                ));
-            }
-
-            // 値をパース
-            let value = self.parse_assignment()?;
-
-            properties.push((key, value));
-
-            if !self.check(&TokenKind::RightBrace) && !self.match_token(&TokenKind::Comma) {
-                return Err(JSError::SyntaxError(
-                    "Expected ',' or '}' in object literal".to_string(),
-                ));
-            }
-        }
-
-        if !self.match_token(&TokenKind::RightBrace) {
-            return Err(JSError::SyntaxError("Expected '}'".to_string()));
-        }
-
-        Ok(Expression::ObjectLiteral(properties))
-    }
-
-    /// 呼び出し引数リストをパース
-    fn parse_call_arguments(&mut self) -> JSResult<Vec<Expression>> {
+    fn parse_arguments(&mut self) -> JSResult<Vec<Expression>> {
         let mut args = Vec::new();
 
-        while !self.check(&TokenKind::RightParen) && !self.is_at_end() {
-            // 空の引数をサポート (例: func(1,,3))
-            if self.check(&TokenKind::Comma) {
-                args.push(Expression::Literal(Literal::Undefined));
-                self.advance();
-                continue;
-            }
-
+        while !self.check(&TokenKind::RightParen) {
             args.push(self.parse_expression()?);
 
-            if !self.check(&TokenKind::RightParen) && !self.match_token(&TokenKind::Comma) {
-                return Err(JSError::SyntaxError(
-                    "Expected ',' or ')' in function call".to_string(),
-                ));
+            if !self.eat(&TokenKind::Comma)? {
+                break;
             }
         }
 
         Ok(args)
     }
 
-    /// 現在のトークンを取得
-    fn peek(&self) -> &Token {
-        &self.tokens[self.current]
+    /// 基本式をパース
+    fn parse_primary(&mut self) -> JSResult<Expression> {
+        match &self.current().kind {
+            TokenKind::NumberLiteral(n) => {
+                let n = n.parse().unwrap();
+
+                self.advance()?;
+
+                Ok(Expression::Literal(Literal::Number(n)))
+            }
+            TokenKind::String(s) => {
+                let s = s.clone();
+
+                self.advance()?;
+
+                Ok(Expression::Literal(Literal::String(s)))
+            }
+            TokenKind::True => {
+                self.advance()?;
+                Ok(Expression::Literal(Literal::Boolean(true)))
+            }
+            TokenKind::False => {
+                self.advance()?;
+                Ok(Expression::Literal(Literal::Boolean(false)))
+            }
+            TokenKind::Null => {
+                self.advance()?;
+                Ok(Expression::Literal(Literal::Null))
+            }
+            TokenKind::Undefined => {
+                self.advance()?;
+                Ok(Expression::Literal(Literal::Undefined))
+            }
+            TokenKind::Identifier(s) => {
+                let s = s.clone();
+
+                self.advance()?;
+
+                Ok(Expression::Identifier(s))
+            }
+            TokenKind::LeftParen => {
+                self.advance()?;
+
+                let expr = self.parse_expression()?;
+
+                self.expect(&TokenKind::RightParen, "Expected ')'")?;
+
+                Ok(expr)
+            }
+            TokenKind::LeftBracket => self.parse_array_literal(),
+            TokenKind::LeftBrace => self.parse_object_literal(),
+            TokenKind::Function => self.parse_function_expression(),
+
+            _ => Err(JSError::SyntaxError(
+                format!("Unexpected token {:?}", self.current().kind),
+                self.current().span,
+            )),
+        }
     }
 
-    /// トークンを1つ進めて取得
-    fn advance(&mut self) -> &Token {
-        if !self.is_at_end() {
-            self.current += 1;
+    /// 配列リテラルをパース: [1, 2, 3]
+    fn parse_array_literal(&mut self) -> JSResult<Expression> {
+        self.advance()?; // consume '['
+
+        let mut elements = Vec::new();
+
+        while !self.check(&TokenKind::RightBracket) && !self.is_at_end() {
+            // Support empty slots: [1,,3]
+            if self.eat(&TokenKind::Comma)? {
+                elements.push(Expression::Literal(Literal::Undefined));
+
+                continue;
+            }
+
+            elements.push(self.parse_expression()?);
+
+            if !self.check(&TokenKind::RightBracket) && !self.eat(&TokenKind::Comma)? {
+                return Err(JSError::SyntaxError(
+                    "Expected ',' or ']' in array literal".into(),
+                    self.current().span,
+                ));
+            }
         }
-        &self.tokens[self.current - 1]
+
+        self.expect(&TokenKind::RightBracket, "Expected ']'")?;
+
+        Ok(Expression::ArrayLiteral(elements))
     }
 
-    /// 現在のトークンが指定の種類かチェック
-    fn check(&self, kind: &TokenKind) -> bool {
-        if self.is_at_end() {
-            return false;
-        }
-        std::mem::discriminant(&self.peek().kind) == std::mem::discriminant(kind)
-    }
+    /// オブジェクトリテラルをパース: { key: value }
+    fn parse_object_literal(&mut self) -> JSResult<Expression> {
+        self.advance()?; // consume '{'
 
-    /// 現在のトークンが指定の種類なら進めてtrueを返す
-    fn match_token(&mut self, kind: &TokenKind) -> bool {
-        if self.check(kind) {
-            self.advance();
-            true
-        } else {
-            false
+        let mut properties = Vec::new();
+
+        while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+            // Parse property key
+            let key = self.expect_identifier("Expected property key")?;
+
+            self.expect(&TokenKind::Colon, "Expected ':' after property key")?;
+
+            let value = self.parse_expression()?;
+
+            properties.push((key, value));
+
+            if !self.check(&TokenKind::RightBrace) && !self.eat(&TokenKind::Comma)? {
+                return Err(JSError::SyntaxError(
+                    "Expected ',' or '}' in object literal".into(),
+                    self.current().span,
+                ));
+            }
         }
+
+        self.expect(&TokenKind::RightBrace, "Expected '}'")?;
+
+        Ok(Expression::ObjectLiteral(properties))
     }
 
     /// セミコロンを消費
-    fn consume_semicolon(&mut self) {
+    fn consume_semicolon(&mut self) -> JSResult<()> {
         // JavaScriptでは自動セミコロン挿入があるため、セミコロンは任意
-        self.match_token(&TokenKind::Semicolon);
+        self.eat(&TokenKind::Semicolon)?;
+        Ok(())
     }
 
     /// トークン列の終端かチェック
     fn is_at_end(&self) -> bool {
-        matches!(self.peek().kind, TokenKind::Eof)
+        matches!(self.current().kind, TokenKind::Eof)
+    }
+}
+
+impl Parser {
+    /// Current token
+    fn current(&self) -> &Token {
+        &self.current
+    }
+
+    /*
+    /// Lookahead token
+    fn next(&self) -> &Token {
+        &self.next
+    }
+    */
+
+    /// Advance one token
+    fn advance(&mut self) -> JSResult<()> {
+        self.current = std::mem::replace(
+            &mut self.next,
+            self.lexer
+                .next()
+                .transpose()?
+                .unwrap_or_else(|| self.lexer.eof_token()),
+        );
+
+        Ok(())
+    }
+
+    /// Check current token kind
+    fn check(&self, kind: &TokenKind) -> bool {
+        std::mem::discriminant(&self.current().kind) == std::mem::discriminant(kind)
+    }
+
+    /// Consume token if matched
+    fn eat(&mut self, kind: &TokenKind) -> JSResult<bool> {
+        if self.check(kind) {
+            self.advance()?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Require token
+    fn expect(&mut self, kind: &TokenKind, message: &str) -> JSResult<()> {
+        if self.check(kind) {
+            self.advance()?;
+            Ok(())
+        } else {
+            Err(JSError::SyntaxError(
+                format!("{}: found {:?}", message, self.current().kind),
+                self.current().span,
+            ))
+        }
+    }
+
+    /// Read identifier
+    fn expect_identifier(&mut self, message: &str) -> JSResult<String> {
+        match &self.current().kind {
+            TokenKind::Identifier(s) => {
+                let s = s.clone();
+
+                self.advance()?;
+
+                Ok(s)
+            }
+
+            _ => Err(JSError::SyntaxError(
+                format!("{}: found {:?}", message, self.current().kind),
+                self.current().span,
+            )),
+        }
+    }
+}
+
+/// TokenKind を binding power 付き BinaryOp にして返す
+fn precedence(kind: &TokenKind) -> Option<(u8, BinaryOp)> {
+    match kind {
+        // logical (lowest)
+        TokenKind::Or => Some((1, BinaryOp::Or)),
+        TokenKind::And => Some((2, BinaryOp::And)),
+
+        // equality
+        TokenKind::EqEqEq => Some((3, BinaryOp::StrictEq)),
+        TokenKind::EqEq => Some((3, BinaryOp::Eq)),
+        TokenKind::NotEqEq => Some((3, BinaryOp::StrictNotEq)),
+        TokenKind::NotEq => Some((3, BinaryOp::NotEq)),
+
+        // relational
+        TokenKind::Lt => Some((4, BinaryOp::Lt)),
+        TokenKind::Gt => Some((4, BinaryOp::Gt)),
+        TokenKind::LtEq => Some((4, BinaryOp::LtEq)),
+        TokenKind::GtEq => Some((4, BinaryOp::GtEq)),
+
+        // additive
+        TokenKind::Plus => Some((5, BinaryOp::Add)),
+        TokenKind::Minus => Some((5, BinaryOp::Sub)),
+
+        // multiplicative
+        TokenKind::Star => Some((6, BinaryOp::Mul)),
+        TokenKind::Slash => Some((6, BinaryOp::Div)),
+        TokenKind::Percent => Some((6, BinaryOp::Mod)),
+
+        _ => None,
     }
 }
