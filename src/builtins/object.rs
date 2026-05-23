@@ -392,9 +392,9 @@ fn object_define_property(
                     .define_property_descriptor(key, desc_ref.clone());
                 Ok(JSValue::Object(obj_ref.clone()))
             } else {
-                return Err(crate::error::JSError::TypeError(
+                Err(crate::error::JSError::TypeError(
                     "Object.defineProperty: descriptor must be an object".to_string(),
-                ));
+                ))
             }
         }
         _ => Err(crate::error::JSError::TypeError(

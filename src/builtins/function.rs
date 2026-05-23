@@ -28,7 +28,7 @@ fn function_call(
             // call native with thisArg as first arg, then provided args
             let mut call_args = Vec::new();
             call_args.push(this_arg);
-            call_args.extend(args.into_iter());
+            call_args.extend(args);
             let res = native_fn(vm, call_args)?;
             Ok(res)
         }
@@ -71,7 +71,7 @@ fn function_call(
 
             // Swap env and stack, execute
             let old_env = vm.env.clone();
-            let old_stack = std::mem::replace(&mut vm.stack, Vec::new());
+            let old_stack = std::mem::take(&mut vm.stack);
             vm.env = new_env;
 
             let res = vm.execute(func_chunk)?;
@@ -184,7 +184,7 @@ fn function_apply(
 
             // Swap env and stack, execute
             let old_env = vm.env.clone();
-            let old_stack = std::mem::replace(&mut vm.stack, Vec::new());
+            let old_stack = std::mem::take(&mut vm.stack);
             vm.env = new_env;
 
             let res = vm.execute(func_chunk)?;
@@ -222,11 +222,11 @@ fn function_bind(
     match func {
         JSValue::BoundFunction(boxed) => {
             // If already bound, preserve original target and bound_this, concatenate args
-            let mut new_args = (*boxed).bound_args.clone();
+            let mut new_args = boxed.bound_args.clone();
             new_args.extend(bound_args);
             let bf = BoundFunctionData {
-                target: (*boxed).target.clone(),
-                bound_this: (*boxed).bound_this.clone(),
+                target: boxed.target.clone(),
+                bound_this: boxed.bound_this.clone(),
                 bound_args: new_args,
             };
             Ok(JSValue::BoundFunction(Box::new(bf)))
