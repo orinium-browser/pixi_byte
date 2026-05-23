@@ -204,59 +204,30 @@ impl VM {
                 let key = self.pop()?;
                 let obj = self.pop()?;
 
-                match obj {
-                    JSValue::Object(ref obj_ref) => {
+                match &obj {
+                    JSValue::Object(obj_ref) => {
                         let key_str = key.to_string();
 
-                        // Try to get property descriptor on the object itself first
-                        if let Some(prop) = obj_ref.borrow().get_property_descriptor(&key_str) {
-                            // If accessor getter exists, call it
-                            if let Some(getter_val) = prop.getter.clone() {
-                                match getter_val {
-                                    JSValue::NativeFunction(native_fn) => {
-                                        // call native getter with receiver as first arg
-                                        let result = native_fn(
-                                            self,
-                                            vec![JSValue::Object(obj_ref.clone())],
-                                        )?;
-                                        self.stack.push(result);
-                                    }
-                                    JSValue::Function(func_chunk, _params, captured_env_opt, _) => {
-                                        // call JS getter as method with receiver as this and no args
-                                        let outer = match captured_env_opt {
-                                            Some(env_rc) => env_rc,
-                                            None => self.current_env(),
-                                        };
-                                        let new_env =
-                                            Rc::new(RefCell::new(Environment::with_outer(outer)));
+                        let maybe_prop = { obj_ref.borrow().get_property_descriptor(&key_str) };
 
-                                        let res = self.with_call_frame(
-                                            new_env,
-                                            JSValue::Object(obj_ref.clone()),
-                                            func_chunk,
-                                        )?;
+                        if let Some(prop) = maybe_prop {
+                            if let Some(getter) = prop.getter.clone() {
+                                let result = self.call(getter, obj.clone(), vec![])?;
+                                self.stack.push(result);
 
-                                        self.stack.push(res);
-                                    }
-                                    _ => {
-                                        // getter not callable
-                                        self.stack.push(JSValue::Undefined);
-                                    }
-                                }
-                                return Ok(ControlFlow::Continue); // processed getter
+                                return Ok(ControlFlow::Continue);
                             }
 
-                            // No getter: return data value
                             self.stack.push(prop.value.clone());
+
                             return Ok(ControlFlow::Continue);
                         }
 
-                        // Not an own property: use prototype chain lookup via get (existing behavior)
                         let value = obj_ref.borrow().get(&key_str);
+
                         self.stack.push(value);
                     }
                     _ => {
-                        // プリミティブ値のプロパティアクセスは後で実装
                         self.stack.push(JSValue::Undefined);
                     }
                 }
@@ -266,67 +237,28 @@ impl VM {
                 let key = self.pop()?;
                 let obj = self.pop()?;
 
-                match obj {
-                    JSValue::Object(ref obj_ref) => {
+                match &obj {
+                    JSValue::Object(obj_ref) => {
                         let key_str = key.to_string();
 
-                        // Obtain property descriptor in a short scope so RefCell borrow ends
-                        let maybe_prop = {
-                            let borrowed = obj_ref.borrow();
-                            borrowed.get_property_descriptor(&key_str)
-                        };
+                        let maybe_prop = { obj_ref.borrow().get_property_descriptor(&key_str) };
 
-                        // If there is an own property with a setter, call it
-                        if let Some(prop) = maybe_prop
-                            && let Some(setter_val) = prop.setter.clone()
-                        {
-                            match setter_val {
-                                JSValue::NativeFunction(native_fn) => {
-                                    // call native setter with receiver and value
-                                    let _res = native_fn(
-                                        self,
-                                        vec![JSValue::Object(obj_ref.clone()), value.clone()],
-                                    )?;
-                                    // setters usually return undefined; we push the object as per prior behavior
-                                    self.stack.push(JSValue::Object(obj_ref.clone()));
-                                }
-                                JSValue::Function(func_chunk, params, captured_env_opt, _) => {
-                                    // call JS setter with receiver as this and value as first param
-                                    let outer = match captured_env_opt {
-                                        Some(env_rc) => env_rc,
-                                        None => self.current_env(),
-                                    };
-                                    let new_env =
-                                        Rc::new(RefCell::new(Environment::with_outer(outer)));
+                        if let Some(prop) = maybe_prop {
+                            if let Some(setter) = prop.setter.clone() {
+                                self.call(setter, obj.clone(), vec![value.clone()])?;
+                                self.stack.push(obj.clone());
 
-                                    // bind parameter (if exists)
-                                    if !params.is_empty() {
-                                        new_env.borrow().define(params[0].clone(), value.clone());
-                                    }
-
-                                    self.with_call_frame(
-                                        new_env,
-                                        JSValue::Object(obj_ref.clone()),
-                                        func_chunk,
-                                    )?;
-                                }
-                                _ => {
-                                    return Err(JSError::TypeError(
-                                        "SetProperty: setter is not callable".to_string(),
-                                    ));
-                                }
+                                return Ok(ControlFlow::Continue);
                             }
-                            return Ok(ControlFlow::Continue);
                         }
 
-                        // No setter: perform normal set
-                        let key_str = key.to_string();
-                        obj_ref.borrow_mut().set(key_str, value.clone());
-                        self.stack.push(JSValue::Object(obj_ref.clone()));
+                        obj_ref.borrow_mut().set(key_str, value);
+
+                        self.stack.push(obj.clone());
                     }
                     _ => {
                         return Err(JSError::TypeError(
-                            "Cannot set property on non-object".to_string(),
+                            "Cannot set property on non-object".into(),
                         ));
                     }
                 }
