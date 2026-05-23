@@ -30,3 +30,15 @@ fn test_vm_execute_variable() {
     let result = engine.eval("let x = 10; x + 5").unwrap();
     assert_eq!(result, JSValue::Number(15.0));
 }
+
+#[test]
+fn test_vm_execute_add_function() {
+    let source = r#"
+        function add(a,b) {a + b}
+
+        add(098,2)
+        "#;
+    let mut engine = JSEngine::new();
+    let result = engine.eval(source).unwrap();
+    assert_eq!(result, JSValue::Number(100.0));
+}
