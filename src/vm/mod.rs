@@ -388,99 +388,11 @@ impl VM {
                 args.reverse();
 
                 let func = self.pop()?;
+                let this = JSValue::Object(self.global_object.clone());
 
-                match func {
-                    // BoundFunction: unwrap and invoke target with bound_this and bound_args
-                    JSValue::BoundFunction(boxed) => {
-                        let target = boxed.target.clone();
-                        let bound_this = boxed.bound_this.clone();
-                        let mut combined_args = boxed.bound_args.clone();
-                        combined_args.extend(args);
+                let result = self.call(func, this, args)?;
 
-                        match *target {
-                            JSValue::NativeFunction(native_fn) => {
-                                let mut call_vec = Vec::new();
-                                call_vec.push(bound_this);
-                                call_vec.extend(combined_args);
-                                let result = native_fn(self, call_vec)?;
-                                self.stack.push(result);
-                            }
-                            JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
-                                let outer = match captured_env_opt {
-                                    Some(env_rc) => env_rc,
-                                    None => self.current_env(),
-                                };
-                                let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
-
-                                for (i, arg) in combined_args.into_iter().enumerate() {
-                                    if i < params.len() {
-                                        new_env.borrow().define(params[i].clone(), arg);
-                                    } else {
-                                        new_env.borrow().define(format!("arg{}", i), arg);
-                                    }
-                                }
-
-                                if let Some(name) = name_opt.clone() {
-                                    new_env.borrow().define(name, JSValue::Undefined);
-                                }
-
-                                let res = self.with_call_frame(new_env, bound_this, func_chunk)?;
-
-                                self.stack.push(res);
-                            }
-                            _ => {
-                                return Err(JSError::TypeError(
-                                    "CallFunction: bound target is not callable".to_string(),
-                                ));
-                            }
-                        }
-                    }
-                    JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
-                        // 新しい環境を作成し、キャプチャされた環境または現在の環境を外側に設定
-                        let outer = match captured_env_opt {
-                            Some(env_rc) => env_rc,
-                            None => self.current_env(),
-                        };
-                        let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
-
-                        // パラメータ名があれば、それに対応して引数をセット
-                        for (i, arg) in args.into_iter().enumerate() {
-                            if i < params.len() {
-                                new_env.borrow().define(params[i].clone(), arg);
-                            } else {
-                                // 余分な引数は argN としても格納
-                                new_env.borrow().define(format!("arg{}", i), arg);
-                            }
-                        }
-
-                        // named function expression の場合、関数名は関数オブジェクト内でのみ見えるため
-                        // 新しい環境の内部に関数名を定義する
-                        if let Some(name) = name_opt.clone() {
-                            // 関数オブジェクト自体を参照可能にする
-                            // ここでは CreateFunction で作った関数オブジェクトがスタック上にあるため、
-                            // 名前解決で参照されるべきオブジェクトは呼び出し時点の func 変数です。
-                            new_env.borrow().define(name, JSValue::Undefined);
-                        }
-
-                        let res = self.with_call_frame(
-                            new_env,
-                            JSValue::Object(self.global_object.clone()),
-                            func_chunk,
-                        )?;
-
-                        self.stack.push(res);
-                    }
-                    JSValue::NativeFunction(native_fn) => {
-                        // For native functions, we pass the VM and args. Treat as simple call: no this handling here.
-                        let result = native_fn(self, args)?;
-                        self.stack.push(result);
-                    }
-                    _ => {
-                        return Err(JSError::TypeError(
-                            "CallFunction: not a function".to_string(),
-                        ));
-                    }
-                }
+                self.stack.push(result);
             }
             Opcode::CallMethod(arg_count) => {
                 // スタック: ..., object, property, arg1, arg2, ..., argN
@@ -616,6 +528,64 @@ impl VM {
         self.stack
             .pop()
             .ok_or_else(|| JSError::InternalError("Stack underflow".to_string()))
+    }
+
+    fn call(&mut self, callee: JSValue, this: JSValue, args: Vec<JSValue>) -> JSResult<JSValue> {
+        let callee_clone = callee.clone();
+
+        match callee {
+            JSValue::BoundFunction(bound) => {
+                let mut all = bound.bound_args.clone();
+
+                all.extend(args);
+
+                self.call(*bound.target, bound.bound_this.clone(), all)
+            }
+
+            JSValue::NativeFunction(f) => {
+                let mut all = vec![this];
+
+                all.extend(args);
+
+                f(self, all)
+            }
+
+            JSValue::Function(chunk, params, env, name) => {
+                let env = self.create_function_env(callee_clone, env, params, args, name);
+
+                self.with_call_frame(env, this, chunk)
+            }
+
+            _ => Err(JSError::TypeError("not a function".into())),
+        }
+    }
+
+    fn create_function_env(
+        &self,
+        func: JSValue,
+        captured_env: Option<Rc<RefCell<Environment>>>,
+        params: Vec<String>,
+        args: Vec<JSValue>,
+        name: Option<String>,
+    ) -> Rc<RefCell<Environment>> {
+        let outer = captured_env.unwrap_or_else(|| self.current_env());
+
+        let env = Rc::new(RefCell::new(Environment::with_outer(outer)));
+
+        for (i, arg) in args.into_iter().enumerate() {
+            let key = params
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| format!("arg{}", i));
+
+            env.borrow().define(key, arg);
+        }
+
+        if let Some(name) = name {
+            env.borrow().define(name, func);
+        }
+
+        env
     }
 
     /// 二項演算ヘルパー
