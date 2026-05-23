@@ -359,7 +359,7 @@ impl Compiler {
                 if let Expression::MemberAccess {
                     object,
                     property,
-                    computed,
+                    computed: _,
                 } = *callee
                 {
                     self.compile_expression(*object)?;
