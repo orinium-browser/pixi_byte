@@ -1,4 +1,4 @@
-println("PixiByte JS");
+this.println("PixiByte JS");
 
 function add(a, b) {
   return a + b;
