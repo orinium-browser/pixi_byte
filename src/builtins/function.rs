@@ -1,6 +1,7 @@
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
 use crate::value::jsvalue::BoundFunctionData;
+use crate::vm::CallFrame;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -36,8 +37,9 @@ fn function_call(
             // Prepare outer environment (captured or current)
             let outer = match captured_env_opt {
                 Some(env_rc) => env_rc,
-                None => vm.env.clone(),
+                None => vm.current_env().clone(),
             };
+
             let new_env = Rc::new(RefCell::new(crate::runtime::Environment::with_outer(outer)));
 
             // Bind parameters from args (args currently contains the function args, not thisArg)
@@ -64,21 +66,16 @@ fn function_call(
                 new_env.borrow().define(name, JSValue::Undefined);
             }
 
-            // Bind this
-            new_env
-                .borrow()
-                .define("this".to_string(), this_arg.clone());
-
-            // Swap env and stack, execute
-            let old_env = vm.env.clone();
+            vm.frames.push(CallFrame {
+                env: new_env,
+                this: this_arg,
+            });
             let old_stack = std::mem::take(&mut vm.stack);
-            vm.env = new_env;
 
             let res = vm.execute(func_chunk)?;
 
-            // restore
-            let _inner_stack = std::mem::replace(&mut vm.stack, old_stack);
-            vm.env = old_env;
+            vm.stack = old_stack;
+            vm.frames.pop();
 
             Ok(res)
         }
@@ -148,7 +145,7 @@ fn function_apply(
             // Prepare outer environment (captured or current)
             let outer = match captured_env_opt {
                 Some(env_rc) => env_rc,
-                None => vm.env.clone(),
+                None => vm.current_env(),
             };
             let new_env = Rc::new(RefCell::new(crate::runtime::Environment::with_outer(outer)));
 
@@ -175,21 +172,16 @@ fn function_apply(
                 new_env.borrow().define(name, JSValue::Undefined);
             }
 
-            // Bind this
-            new_env
-                .borrow()
-                .define("this".to_string(), this_arg.clone());
-
-            // Swap env and stack, execute
-            let old_env = vm.env.clone();
+            vm.frames.push(CallFrame {
+                env: new_env,
+                this: this_arg,
+            });
             let old_stack = std::mem::take(&mut vm.stack);
-            vm.env = new_env;
 
             let res = vm.execute(func_chunk)?;
 
-            // restore
-            let _inner_stack = std::mem::replace(&mut vm.stack, old_stack);
-            vm.env = old_env;
+            vm.stack = old_stack;
+            vm.frames.pop();
 
             Ok(res)
         }

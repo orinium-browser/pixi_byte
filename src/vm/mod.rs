@@ -15,10 +15,24 @@ use std::rc::Rc;
 pub struct VM {
     /// オペランドスタック
     pub(crate) stack: Vec<JSValue>,
-    /// グローバル環境（レキシカルスコープチェーンのルート）
-    pub env: Rc<RefCell<Environment>>,
+    /// コールフレーム
+    pub frames: Vec<CallFrame>,
     /// グローバルオブジェクト（非モジュールスクリプトの `this` などに利用）
     pub global_object: Rc<RefCell<crate::value::jsobject::JSObject>>,
+}
+
+pub struct CallFrame {
+    pub env: Rc<RefCell<Environment>>,
+    pub this: JSValue,
+}
+
+impl CallFrame {
+    pub fn new(this: JSValue) -> Self {
+        CallFrame {
+            env: Rc::new(RefCell::new(Environment::new())),
+            this,
+        }
+    }
 }
 
 impl VM {
@@ -29,9 +43,17 @@ impl VM {
         let global_rc = Rc::new(RefCell::new(global_obj));
         // builtins を初期化してグローバルに組み込みを登録
         crate::builtins::Builtins::new().init(&global_rc);
+
+        let global_env = Rc::new(RefCell::new(crate::runtime::Environment::new()));
+
+        let global_frame = CallFrame {
+            env: global_env,
+            this: JSValue::Object(global_rc.clone()),
+        };
+
         Self {
             stack: Vec::new(),
-            env: Rc::new(RefCell::new(Environment::new())),
+            frames: vec![global_frame],
             global_object: global_rc,
         }
     }
@@ -50,14 +72,18 @@ impl VM {
                     self.stack.push(value);
                 }
                 Opcode::LoadVar(name) => {
-                    let value = self.env.borrow().get(name).unwrap_or(JSValue::Undefined);
+                    let value = self
+                        .current_env()
+                        .borrow()
+                        .get(name)
+                        .unwrap_or(JSValue::Undefined);
                     self.stack.push(value);
                 }
                 Opcode::StoreVar(name) => {
                     if let Some(value) = self.stack.pop() {
                         // 既存のスコープチェーンに存在すれば set、なければ現在の env に define
-                        if !self.env.borrow().set(name, value.clone()) {
-                            self.env.borrow().define(name.clone(), value);
+                        if !self.current_env().borrow().set(name, value.clone()) {
+                            self.current_env().borrow().define(name.clone(), value);
                         }
                     } else {
                         return Err(JSError::InternalError("Stack underflow".to_string()));
@@ -65,6 +91,11 @@ impl VM {
                 }
                 Opcode::Pop => {
                     self.stack.pop();
+                }
+
+                Opcode::LoadThis => {
+                    let value = self.current_frame().this.clone();
+                    self.stack.push(value);
                 }
 
                 // 算術演算
@@ -190,7 +221,7 @@ impl VM {
                                             // call JS getter as method with receiver as this and no args
                                             let outer = match captured_env_opt {
                                                 Some(env_rc) => env_rc,
-                                                None => self.env.clone(),
+                                                None => self.current_env(),
                                             };
                                             let new_env = Rc::new(RefCell::new(
                                                 Environment::with_outer(outer),
@@ -202,15 +233,15 @@ impl VM {
                                                 JSValue::Object(obj_ref.clone()),
                                             );
 
-                                            let old_env = self.env.clone();
+                                            let old_env = self.current_env();
                                             let old_stack = std::mem::take(&mut self.stack);
-                                            self.env = new_env;
+                                            self.current_frame_mut().env = new_env;
 
                                             let res = self.execute(func_chunk)?;
 
                                             let _inner_stack =
                                                 std::mem::replace(&mut self.stack, old_stack);
-                                            self.env = old_env;
+                                            self.current_frame_mut().env = old_env;
 
                                             self.stack.push(res);
                                         }
@@ -270,7 +301,7 @@ impl VM {
                                         // call JS setter with receiver as this and value as first param
                                         let outer = match captured_env_opt {
                                             Some(env_rc) => env_rc,
-                                            None => self.env.clone(),
+                                            None => self.current_env(),
                                         };
                                         let new_env =
                                             Rc::new(RefCell::new(Environment::with_outer(outer)));
@@ -288,15 +319,15 @@ impl VM {
                                             JSValue::Object(obj_ref.clone()),
                                         );
 
-                                        let old_env = self.env.clone();
+                                        let old_env = self.current_env();
                                         let old_stack = std::mem::take(&mut self.stack);
-                                        self.env = new_env;
+                                        self.current_frame_mut().env = new_env;
 
                                         let _ = self.execute(func_chunk)?;
 
                                         let _inner_stack =
                                             std::mem::replace(&mut self.stack, old_stack);
-                                        self.env = old_env;
+                                        self.current_frame_mut().env = old_env;
 
                                         self.stack.push(JSValue::Object(obj_ref.clone()));
                                     }
@@ -355,7 +386,7 @@ impl VM {
                     let func_const = chunk.constants[*idx].clone();
                     match func_const {
                         JSValue::Function(func_chunk, params, _maybe_env, name_opt) => {
-                            let captured = Some(self.env.clone());
+                            let captured = Some(self.current_env());
                             let func =
                                 JSValue::Function(func_chunk, params, captured, name_opt.clone());
                             self.stack.push(func);
@@ -403,7 +434,7 @@ impl VM {
                                 ) => {
                                     let outer = match captured_env_opt {
                                         Some(env_rc) => env_rc,
-                                        None => self.env.clone(),
+                                        None => self.current_env(),
                                     };
                                     let new_env =
                                         Rc::new(RefCell::new(Environment::with_outer(outer)));
@@ -420,17 +451,17 @@ impl VM {
                                         new_env.borrow().define(name, JSValue::Undefined);
                                     }
 
-                                    new_env.borrow().define("this".to_string(), bound_this);
+                                    self.current_frame_mut().this = bound_this;
 
-                                    let old_env = self.env.clone();
+                                    let old_env = self.current_env();
                                     let old_stack = std::mem::take(&mut self.stack);
-                                    self.env = new_env;
+                                    self.current_frame_mut().env = new_env;
 
                                     let res = self.execute(func_chunk)?;
 
                                     let _inner_stack =
                                         std::mem::replace(&mut self.stack, old_stack);
-                                    self.env = old_env;
+                                    self.current_frame_mut().env = old_env;
 
                                     self.stack.push(res);
                                 }
@@ -445,7 +476,7 @@ impl VM {
                             // 新しい環境を作成し、キャプチャされた環境または現在の環境を外側に設定
                             let outer = match captured_env_opt {
                                 Some(env_rc) => env_rc,
-                                None => self.env.clone(),
+                                None => self.current_env(),
                             };
                             let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
 
@@ -475,15 +506,15 @@ impl VM {
                             );
 
                             // スタックと環境を切り替えて同一VMで関数を実行
-                            let old_env = self.env.clone();
+                            let old_env = self.current_env();
                             let old_stack = std::mem::take(&mut self.stack);
-                            self.env = new_env;
+                            self.current_frame_mut().env = new_env;
 
                             let res = self.execute(func_chunk)?;
 
                             // 関数実行後、内部スタックを破棄して呼び出し元のスタックを復元
                             let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
-                            self.env = old_env;
+                            self.current_frame_mut().env = old_env;
 
                             self.stack.push(res);
                         }
@@ -528,7 +559,7 @@ impl VM {
                                     // outer は関数生成時のキャプチャまたは現在の env
                                     let outer = match captured_env_opt {
                                         Some(env_rc) => env_rc,
-                                        None => self.env.clone(),
+                                        None => self.current_env(),
                                     };
                                     let new_env =
                                         Rc::new(RefCell::new(Environment::with_outer(outer)));
@@ -551,15 +582,15 @@ impl VM {
                                     }
 
                                     // 実行
-                                    let old_env = self.env.clone();
+                                    let old_env = self.current_env();
                                     let old_stack = std::mem::take(&mut self.stack);
-                                    self.env = new_env;
+                                    self.current_frame_mut().env = new_env;
 
                                     let res = self.execute(func_chunk)?;
 
                                     let _inner_stack =
                                         std::mem::replace(&mut self.stack, old_stack);
-                                    self.env = old_env;
+                                    self.current_frame_mut().env = old_env;
 
                                     self.stack.push(res);
                                 }
@@ -620,6 +651,20 @@ impl VM {
         } else {
             Ok(JSValue::Undefined)
         }
+    }
+
+    /// 現在の CallFrame を返す
+    fn current_frame(&self) -> &CallFrame {
+        self.frames.last().expect("no call frame")
+    }
+
+    fn current_frame_mut(&mut self) -> &mut CallFrame {
+        self.frames.last_mut().expect("no call frame")
+    }
+
+    /// 現在の Environment を返す
+    pub(crate) fn current_env(&self) -> Rc<RefCell<Environment>> {
+        self.current_frame().env.clone()
     }
 
     /// スタックから値をポップ

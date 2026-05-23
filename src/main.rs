@@ -6,7 +6,10 @@ fn main() {
 
     let mut engine = JSEngine::new();
 
-    let test_code = "1 + 2";
+    let test_code = r"
+        function add(a,b) {this; return a+b}
+        add(1,2)
+    ";
 
     match engine.eval(test_code) {
         Ok(result) => println!("Result: {:?}", result),

@@ -11,6 +11,8 @@ pub enum Opcode {
     StoreVar(String), // スタックトップを変数に格納
     Pop,              // スタックトップを削除
 
+    LoadThis,
+
     // 算術演算
     Add,
     Sub,
@@ -294,6 +296,9 @@ impl Compiler {
                         return Err(JSError::TypeError("Invalid assignment target".to_string()));
                     }
                 }
+            }
+            Expression::This => {
+                self.chunk.emit(Opcode::LoadThis);
             }
             Expression::ArrayLiteral(elements) => {
                 // 空の配列を作成してスタックにプッシュ
