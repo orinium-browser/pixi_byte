@@ -1,12 +1,14 @@
 use std::fmt;
 
+use crate::lexer::Span;
+
 pub type JSResult<T> = Result<T, JSError>;
 
 /// JavaScript エラー型
 #[derive(Debug, Clone)]
 pub enum JSError {
     /// 構文エラー
-    SyntaxError(String),
+    SyntaxError(String, Span),
     /// 参照エラー
     ReferenceError(String),
     /// 型エラー
@@ -21,7 +23,7 @@ impl fmt::Display for JSError {
     /// エラーをフォーマット表示
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            JSError::SyntaxError(msg) => write!(f, "SyntaxError: {}", msg),
+            JSError::SyntaxError(msg, span) => write!(f, "SyntaxError: {} at {}", msg, span),
             JSError::ReferenceError(msg) => write!(f, "ReferenceError: {}", msg),
             JSError::TypeError(msg) => write!(f, "TypeError: {}", msg),
             JSError::RangeError(msg) => write!(f, "RangeError: {}", msg),

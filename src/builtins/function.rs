@@ -1,18 +1,27 @@
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
+use crate::value::jsvalue::BoundFunctionData;
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::value::jsvalue::BoundFunctionData;
 
 // Native functions: function.call / function.apply
 
-fn function_call(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+fn function_call(
+    vm: &mut crate::vm::VM,
+    mut args: Vec<JSValue>,
+) -> crate::error::JSResult<JSValue> {
     // args: [func, thisArg, ...args]
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError("Function.prototype.call: missing function receiver".to_string()));
+        return Err(crate::error::JSError::TypeError(
+            "Function.prototype.call: missing function receiver".to_string(),
+        ));
     }
     let func = args.remove(0);
-    let this_arg = if !args.is_empty() { args.remove(0) } else { JSValue::Undefined };
+    let this_arg = if !args.is_empty() {
+        args.remove(0)
+    } else {
+        JSValue::Undefined
+    };
 
     match func {
         JSValue::NativeFunction(native_fn) => {
@@ -37,13 +46,17 @@ fn function_call(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error
                     new_env.borrow().define(param_name.clone(), args[i].clone());
                 } else {
                     // missing args -> undefined
-                    new_env.borrow().define(param_name.clone(), JSValue::Undefined);
+                    new_env
+                        .borrow()
+                        .define(param_name.clone(), JSValue::Undefined);
                 }
             }
 
             // If extra args exist, store as argN
             for i in params.len()..args.len() {
-                new_env.borrow().define(format!("arg{}", i), args[i].clone());
+                new_env
+                    .borrow()
+                    .define(format!("arg{}", i), args[i].clone());
             }
 
             // Named function expression handling: define name in env if present
@@ -52,7 +65,9 @@ fn function_call(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error
             }
 
             // Bind this
-            new_env.borrow().define("this".to_string(), this_arg.clone());
+            new_env
+                .borrow()
+                .define("this".to_string(), this_arg.clone());
 
             // Swap env and stack, execute
             let old_env = vm.env.clone();
@@ -67,17 +82,32 @@ fn function_call(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error
 
             Ok(res)
         }
-        _ => Err(crate::error::JSError::TypeError("Function.prototype.call: receiver is not a function".to_string())),
+        _ => Err(crate::error::JSError::TypeError(
+            "Function.prototype.call: receiver is not a function".to_string(),
+        )),
     }
 }
 
-fn function_apply(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+fn function_apply(
+    vm: &mut crate::vm::VM,
+    mut args: Vec<JSValue>,
+) -> crate::error::JSResult<JSValue> {
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError("Function.prototype.apply: missing function receiver".to_string()));
+        return Err(crate::error::JSError::TypeError(
+            "Function.prototype.apply: missing function receiver".to_string(),
+        ));
     }
     let func = args.remove(0);
-    let this_arg = if !args.is_empty() { args.remove(0) } else { JSValue::Undefined };
-    let args_array = if !args.is_empty() { args.remove(0) } else { JSValue::Undefined };
+    let this_arg = if !args.is_empty() {
+        args.remove(0)
+    } else {
+        JSValue::Undefined
+    };
+    let args_array = if !args.is_empty() {
+        args.remove(0)
+    } else {
+        JSValue::Undefined
+    };
 
     // build argument vector from args_array
     let mut call_args_vec: Vec<JSValue> = Vec::new();
@@ -85,7 +115,9 @@ fn function_apply(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::erro
         JSValue::Object(arr_ref) => {
             let len_val = arr_ref.borrow().get("length");
             let mut len = len_val.to_number();
-            if len.is_nan() { len = 0.0; }
+            if len.is_nan() {
+                len = 0.0;
+            }
             let mut idx = 0usize;
             while (idx as f64) < len {
                 let v = arr_ref.borrow().get(&idx.to_string());
@@ -94,14 +126,21 @@ fn function_apply(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::erro
             }
         }
         JSValue::Undefined | JSValue::Null => {}
-        _ => return Err(crate::error::JSError::TypeError("Function.prototype.apply: second argument must be an array or null/undefined".to_string())),
+        _ => {
+            return Err(crate::error::JSError::TypeError(
+                "Function.prototype.apply: second argument must be an array or null/undefined"
+                    .to_string(),
+            ));
+        }
     }
 
     match func {
         JSValue::NativeFunction(native_fn) => {
             let mut call_args = Vec::new();
             call_args.push(this_arg);
-            for v in call_args_vec.into_iter() { call_args.push(v); }
+            for v in call_args_vec.into_iter() {
+                call_args.push(v);
+            }
             let res = native_fn(vm, call_args)?;
             Ok(res)
         }
@@ -116,15 +155,21 @@ fn function_apply(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::erro
             // Bind parameters from call_args_vec
             for (i, param_name) in params.iter().enumerate() {
                 if i < call_args_vec.len() {
-                    new_env.borrow().define(param_name.clone(), call_args_vec[i].clone());
+                    new_env
+                        .borrow()
+                        .define(param_name.clone(), call_args_vec[i].clone());
                 } else {
-                    new_env.borrow().define(param_name.clone(), JSValue::Undefined);
+                    new_env
+                        .borrow()
+                        .define(param_name.clone(), JSValue::Undefined);
                 }
             }
 
             // Extra args
             for i in params.len()..call_args_vec.len() {
-                new_env.borrow().define(format!("arg{}", i), call_args_vec[i].clone());
+                new_env
+                    .borrow()
+                    .define(format!("arg{}", i), call_args_vec[i].clone());
             }
 
             // Named function expression handling
@@ -133,7 +178,9 @@ fn function_apply(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::erro
             }
 
             // Bind this
-            new_env.borrow().define("this".to_string(), this_arg.clone());
+            new_env
+                .borrow()
+                .define("this".to_string(), this_arg.clone());
 
             // Swap env and stack, execute
             let old_env = vm.env.clone();
@@ -148,17 +195,28 @@ fn function_apply(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::erro
 
             Ok(res)
         }
-        _ => Err(crate::error::JSError::TypeError("Function.prototype.apply: receiver is not a function".to_string())),
+        _ => Err(crate::error::JSError::TypeError(
+            "Function.prototype.apply: receiver is not a function".to_string(),
+        )),
     }
 }
 
-fn function_bind(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+fn function_bind(
+    _vm: &mut crate::vm::VM,
+    mut args: Vec<JSValue>,
+) -> crate::error::JSResult<JSValue> {
     // args: [func, thisArg, ...boundArgs]
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError("Function.prototype.bind: missing function receiver".to_string()));
+        return Err(crate::error::JSError::TypeError(
+            "Function.prototype.bind: missing function receiver".to_string(),
+        ));
     }
     let func = args.remove(0);
-    let this_arg = if !args.is_empty() { args.remove(0) } else { JSValue::Undefined };
+    let this_arg = if !args.is_empty() {
+        args.remove(0)
+    } else {
+        JSValue::Undefined
+    };
     let bound_args = args; // remaining
 
     match func {
@@ -182,7 +240,9 @@ fn function_bind(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::erro
             };
             Ok(JSValue::BoundFunction(Box::new(bf)))
         }
-        _ => Err(crate::error::JSError::TypeError("Function.prototype.bind: receiver is not a function".to_string())),
+        _ => Err(crate::error::JSError::TypeError(
+            "Function.prototype.bind: receiver is not a function".to_string(),
+        )),
     }
 }
 
@@ -194,7 +254,13 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     proto.set("call".to_string(), JSValue::NativeFunction(function_call));
     proto.set("apply".to_string(), JSValue::NativeFunction(function_apply));
     proto.set("bind".to_string(), JSValue::NativeFunction(function_bind));
-    fn_ctor.set("prototype".to_string(), JSValue::Object(Rc::new(RefCell::new(proto))));
+    fn_ctor.set(
+        "prototype".to_string(),
+        JSValue::Object(Rc::new(RefCell::new(proto))),
+    );
 
-    global.borrow_mut().set("Function".to_string(), JSValue::Object(Rc::new(RefCell::new(fn_ctor))));
+    global.borrow_mut().set(
+        "Function".to_string(),
+        JSValue::Object(Rc::new(RefCell::new(fn_ctor))),
+    );
 }

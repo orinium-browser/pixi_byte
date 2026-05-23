@@ -1,5 +1,5 @@
-use pixi_byte::vm::VM;
 use pixi_byte::value::JSValue;
+use pixi_byte::vm::VM;
 
 #[test]
 fn getter_receives_this() {
@@ -32,7 +32,15 @@ fn getter_receives_this() {
     let obj_global = global.borrow().get("Object");
     if let JSValue::Object(obj_ref) = obj_global {
         if let JSValue::NativeFunction(def_fn) = obj_ref.borrow().get("defineProperty") {
-            let _ = def_fn(&mut vm, vec![JSValue::Object(target_rc.clone()), JSValue::String("a".to_string()), JSValue::Object(desc_inner_rc.clone())]).unwrap();
+            let _ = def_fn(
+                &mut vm,
+                vec![
+                    JSValue::Object(target_rc.clone()),
+                    JSValue::String("a".to_string()),
+                    JSValue::Object(desc_inner_rc.clone()),
+                ],
+            )
+            .unwrap();
         } else {
             panic!("defineProperty not callable");
         }
@@ -89,7 +97,15 @@ fn setter_updates_internal_state() {
     let obj_global = global.borrow().get("Object");
     if let JSValue::Object(obj_ref) = obj_global {
         if let JSValue::NativeFunction(def_fn) = obj_ref.borrow().get("defineProperty") {
-            let _ = def_fn(&mut vm, vec![JSValue::Object(target_rc.clone()), JSValue::String("a".to_string()), JSValue::Object(desc_inner_rc.clone())]).unwrap();
+            let _ = def_fn(
+                &mut vm,
+                vec![
+                    JSValue::Object(target_rc.clone()),
+                    JSValue::String("a".to_string()),
+                    JSValue::Object(desc_inner_rc.clone()),
+                ],
+            )
+            .unwrap();
         } else {
             panic!("defineProperty not callable");
         }

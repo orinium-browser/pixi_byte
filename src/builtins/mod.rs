@@ -3,9 +3,9 @@
 //! This module registers ECMAScript built-in objects into the global object at VM startup.
 //! Each built-in has an `install` function which receives the global object.
 
-pub mod object;
 pub mod array;
 pub mod function;
+pub mod object;
 
 use std::cell::RefCell;
 use std::rc::Rc;

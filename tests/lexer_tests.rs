@@ -2,10 +2,10 @@ use pixi_byte::{Lexer, TokenKind};
 
 #[test]
 fn test_tokenize_numbers() {
-    let mut lexer = Lexer::new("123 45.67 .89");
-    let tokens = lexer.tokenize().unwrap();
-    let kinds: Vec<TokenKind> = tokens
+    let lexer = Lexer::new("123 45.67 .89");
+    let kinds: Vec<TokenKind> = lexer
         .iter()
+        .map(|v| v.unwrap())
         .map(|t| t.kind.clone())
         .into_iter()
         .filter(|k| *k != TokenKind::Eof)
@@ -22,10 +22,10 @@ fn test_tokenize_numbers() {
 
 #[test]
 fn test_weird_number_digits() {
-    let mut lexer = Lexer::new(".0.1 0.2.1");
-    let tokens = lexer.tokenize().unwrap();
-    let kinds: Vec<TokenKind> = tokens
+    let lexer = Lexer::new(".0.1 0.2.1");
+    let kinds: Vec<TokenKind> = lexer
         .iter()
+        .map(|v| v.unwrap())
         .map(|t| t.kind.clone())
         .into_iter()
         .filter(|k| *k != TokenKind::Eof)
@@ -45,8 +45,8 @@ fn test_weird_number_digits() {
 
 #[test]
 fn test_tokenize_operators() {
-    let mut lexer = Lexer::new("+ - * / % ** ++ --");
-    let tokens = lexer.tokenize().unwrap();
+    let lexer = Lexer::new("+ - * / % ** ++ --");
+    let tokens = lexer.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
 
     assert_eq!(tokens[0].kind, TokenKind::Plus);
     assert_eq!(tokens[1].kind, TokenKind::Minus);
@@ -60,8 +60,8 @@ fn test_tokenize_operators() {
 
 #[test]
 fn test_tokenize_keywords() {
-    let mut lexer = Lexer::new("let const var function return");
-    let tokens = lexer.tokenize().unwrap();
+    let lexer = Lexer::new("let const var function return");
+    let tokens = lexer.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
 
     assert_eq!(tokens[0].kind, TokenKind::Let);
     assert_eq!(tokens[1].kind, TokenKind::Const);
@@ -72,8 +72,8 @@ fn test_tokenize_keywords() {
 
 #[test]
 fn test_tokenize_strings() {
-    let mut lexer = Lexer::new(r#""hello" 'world'"#);
-    let tokens = lexer.tokenize().unwrap();
+    let lexer = Lexer::new(r#""hello" 'world'"#);
+    let tokens = lexer.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
 
     assert!(matches!(tokens[0].kind, TokenKind::String(ref s) if s == "hello"));
     assert!(matches!(tokens[1].kind, TokenKind::String(ref s) if s == "world"));
@@ -81,8 +81,8 @@ fn test_tokenize_strings() {
 
 #[test]
 fn test_tokenize_identifiers() {
-    let mut lexer = Lexer::new("foo bar123 _test $value");
-    let tokens = lexer.tokenize().unwrap();
+    let lexer = Lexer::new("foo bar123 _test $value");
+    let tokens = lexer.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
 
     assert!(matches!(tokens[0].kind, TokenKind::Identifier(ref s) if s == "foo"));
     assert!(matches!(tokens[1].kind, TokenKind::Identifier(ref s) if s == "bar123"));

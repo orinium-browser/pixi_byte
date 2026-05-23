@@ -50,11 +50,7 @@ impl VM {
                     self.stack.push(value);
                 }
                 Opcode::LoadVar(name) => {
-                    let value = self
-                        .env
-                        .borrow()
-                        .get(name)
-                        .unwrap_or(JSValue::Undefined);
+                    let value = self.env.borrow().get(name).unwrap_or(JSValue::Undefined);
                     self.stack.push(value);
                 }
                 Opcode::StoreVar(name) => {
@@ -179,27 +175,42 @@ impl VM {
                                     match getter_val {
                                         JSValue::NativeFunction(native_fn) => {
                                             // call native getter with receiver as first arg
-                                            let result = native_fn(self, vec![JSValue::Object(obj_ref.clone())])?;
+                                            let result = native_fn(
+                                                self,
+                                                vec![JSValue::Object(obj_ref.clone())],
+                                            )?;
                                             self.stack.push(result);
                                         }
-                                        JSValue::Function(func_chunk, _params, captured_env_opt, _) => {
+                                        JSValue::Function(
+                                            func_chunk,
+                                            _params,
+                                            captured_env_opt,
+                                            _,
+                                        ) => {
                                             // call JS getter as method with receiver as this and no args
                                             let outer = match captured_env_opt {
                                                 Some(env_rc) => env_rc,
                                                 None => self.env.clone(),
                                             };
-                                            let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
+                                            let new_env = Rc::new(RefCell::new(
+                                                Environment::with_outer(outer),
+                                            ));
 
                                             // bind this
-                                            new_env.borrow().define("this".to_string(), JSValue::Object(obj_ref.clone()));
+                                            new_env.borrow().define(
+                                                "this".to_string(),
+                                                JSValue::Object(obj_ref.clone()),
+                                            );
 
                                             let old_env = self.env.clone();
-                                            let old_stack = std::mem::replace(&mut self.stack, Vec::new());
+                                            let old_stack =
+                                                std::mem::replace(&mut self.stack, Vec::new());
                                             self.env = new_env;
 
                                             let res = self.execute(func_chunk)?;
 
-                                            let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
+                                            let _inner_stack =
+                                                std::mem::replace(&mut self.stack, old_stack);
                                             self.env = old_env;
 
                                             self.stack.push(res);
@@ -248,39 +259,61 @@ impl VM {
                                     match setter_val {
                                         JSValue::NativeFunction(native_fn) => {
                                             // call native setter with receiver and value
-                                            let _res = native_fn(self, vec![JSValue::Object(obj_ref.clone()), value.clone()])?;
+                                            let _res = native_fn(
+                                                self,
+                                                vec![
+                                                    JSValue::Object(obj_ref.clone()),
+                                                    value.clone(),
+                                                ],
+                                            )?;
                                             // setters usually return undefined; we push the object as per prior behavior
                                             self.stack.push(JSValue::Object(obj_ref.clone()));
                                         }
-                                        JSValue::Function(func_chunk, params, captured_env_opt, _) => {
+                                        JSValue::Function(
+                                            func_chunk,
+                                            params,
+                                            captured_env_opt,
+                                            _,
+                                        ) => {
                                             // call JS setter with receiver as this and value as first param
                                             let outer = match captured_env_opt {
                                                 Some(env_rc) => env_rc,
                                                 None => self.env.clone(),
                                             };
-                                            let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
+                                            let new_env = Rc::new(RefCell::new(
+                                                Environment::with_outer(outer),
+                                            ));
 
                                             // bind parameter (if exists)
                                             if params.len() > 0 {
-                                                new_env.borrow().define(params[0].clone(), value.clone());
+                                                new_env
+                                                    .borrow()
+                                                    .define(params[0].clone(), value.clone());
                                             }
 
                                             // bind this
-                                            new_env.borrow().define("this".to_string(), JSValue::Object(obj_ref.clone()));
+                                            new_env.borrow().define(
+                                                "this".to_string(),
+                                                JSValue::Object(obj_ref.clone()),
+                                            );
 
                                             let old_env = self.env.clone();
-                                            let old_stack = std::mem::replace(&mut self.stack, Vec::new());
+                                            let old_stack =
+                                                std::mem::replace(&mut self.stack, Vec::new());
                                             self.env = new_env;
 
                                             let _ = self.execute(func_chunk)?;
 
-                                            let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
+                                            let _inner_stack =
+                                                std::mem::replace(&mut self.stack, old_stack);
                                             self.env = old_env;
 
                                             self.stack.push(JSValue::Object(obj_ref.clone()));
                                         }
                                         _ => {
-                                            return Err(JSError::TypeError("SetProperty: setter is not callable".to_string()));
+                                            return Err(JSError::TypeError(
+                                                "SetProperty: setter is not callable".to_string(),
+                                            ));
                                         }
                                     }
                                     continue;
@@ -334,7 +367,8 @@ impl VM {
                     match func_const {
                         JSValue::Function(func_chunk, params, _maybe_env, name_opt) => {
                             let captured = Some(self.env.clone());
-                            let func = JSValue::Function(func_chunk, params, captured, name_opt.clone());
+                            let func =
+                                JSValue::Function(func_chunk, params, captured, name_opt.clone());
                             self.stack.push(func);
                         }
                         _other => {
@@ -372,12 +406,18 @@ impl VM {
                                     let result = native_fn(self, call_vec)?;
                                     self.stack.push(result);
                                 }
-                                JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
+                                JSValue::Function(
+                                    func_chunk,
+                                    params,
+                                    captured_env_opt,
+                                    name_opt,
+                                ) => {
                                     let outer = match captured_env_opt {
                                         Some(env_rc) => env_rc,
                                         None => self.env.clone(),
                                     };
-                                    let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
+                                    let new_env =
+                                        Rc::new(RefCell::new(Environment::with_outer(outer)));
 
                                     for (i, arg) in combined_args.into_iter().enumerate() {
                                         if i < params.len() {
@@ -399,7 +439,8 @@ impl VM {
 
                                     let res = self.execute(func_chunk)?;
 
-                                    let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
+                                    let _inner_stack =
+                                        std::mem::replace(&mut self.stack, old_stack);
                                     self.env = old_env;
 
                                     self.stack.push(res);
@@ -462,11 +503,11 @@ impl VM {
                             let result = native_fn(self, args)?;
                             self.stack.push(result);
                         }
-                         _ => {
-                             return Err(JSError::TypeError(
-                                 "CallFunction: not a function".to_string(),
-                             ));
-                         }
+                        _ => {
+                            return Err(JSError::TypeError(
+                                "CallFunction: not a function".to_string(),
+                            ));
+                        }
                     }
                 }
                 Opcode::CallMethod(arg_count) => {
@@ -485,18 +526,23 @@ impl VM {
                     // property を文字列化してプロパティアクセス
                     let key_str = property.to_string();
 
-
                     match object.clone() {
                         JSValue::Object(obj_ref) => {
                             let method = obj_ref.borrow().get(&key_str);
                             match method {
-                                JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
+                                JSValue::Function(
+                                    func_chunk,
+                                    params,
+                                    captured_env_opt,
+                                    name_opt,
+                                ) => {
                                     // outer は関数生成時のキャプチャまたは現在の env
                                     let outer = match captured_env_opt {
                                         Some(env_rc) => env_rc,
                                         None => self.env.clone(),
                                     };
-                                    let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
+                                    let new_env =
+                                        Rc::new(RefCell::new(Environment::with_outer(outer)));
 
                                     // パラメータをバインド
                                     for (i, arg) in args.into_iter().enumerate() {
@@ -522,7 +568,8 @@ impl VM {
 
                                     let res = self.execute(func_chunk)?;
 
-                                    let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
+                                    let _inner_stack =
+                                        std::mem::replace(&mut self.stack, old_stack);
                                     self.env = old_env;
 
                                     self.stack.push(res);
@@ -535,11 +582,11 @@ impl VM {
                                     let res = native_fn(self, call_args)?;
                                     self.stack.push(res);
                                 }
-                                 _ => {
-                                     return Err(JSError::TypeError(
-                                         "CallMethod: property is not a function".to_string(),
-                                     ));
-                                 }
+                                _ => {
+                                    return Err(JSError::TypeError(
+                                        "CallMethod: property is not a function".to_string(),
+                                    ));
+                                }
                             }
                         }
                         _ => {

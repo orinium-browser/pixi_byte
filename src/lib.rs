@@ -32,8 +32,7 @@ impl JSEngine {
 
     /// JavaScriptコードを評価
     pub fn eval(&mut self, source: &str) -> JSResult<JSValue> {
-        let tokens = lexer::Lexer::new(source).tokenize()?;
-        let ast = parser::Parser::new(tokens).parse()?;
+        let ast = parser::Parser::new(Lexer::new(source))?.parse()?;
         let bytecode = compiler::Compiler::new().compile(ast)?;
         self.vm.execute(bytecode)
     }

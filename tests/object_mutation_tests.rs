@@ -1,5 +1,5 @@
-use pixi_byte::vm::VM;
 use pixi_byte::value::JSValue;
+use pixi_byte::vm::VM;
 
 #[test]
 fn test_prevent_extensions_and_is_extensible() {

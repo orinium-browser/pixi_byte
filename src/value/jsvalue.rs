@@ -12,7 +12,8 @@ use std::rc::Rc;
 
 /// ネイティブ関数の型エイリアス。
 /// Rust 側で実装された組み込み関数はこのシグネチャを持ちます。
-pub type NativeFunctionType = fn(&mut crate::vm::VM, Vec<JSValue>) -> crate::error::JSResult<JSValue>;
+pub type NativeFunctionType =
+    fn(&mut crate::vm::VM, Vec<JSValue>) -> crate::error::JSResult<JSValue>;
 
 /// JavaScript の値型（Value）を表す列挙型。
 ///
@@ -100,7 +101,7 @@ impl JSValue {
                 }
                 trimmed.parse().unwrap_or(f64::NAN)
             }
-            JSValue::Object(_) => f64::NAN,      // オブジェクトはNaN（簡易）
+            JSValue::Object(_) => f64::NAN, // オブジェクトはNaN（簡易）
             JSValue::Function(_, _, _, _) => f64::NAN,
             JSValue::NativeFunction(_) => f64::NAN,
             JSValue::BoundFunction(data) => data.target.to_number(),
@@ -114,7 +115,7 @@ impl JSValue {
             JSValue::Boolean(b) => *b,
             JSValue::Number(n) => !n.is_nan() && *n != 0.0,
             JSValue::String(s) => !s.is_empty(),
-            JSValue::Object(_) => true,      // オブジェクトは常にtrue
+            JSValue::Object(_) => true, // オブジェクトは常にtrue
             JSValue::Function(_, _, _, _) => true,
             JSValue::NativeFunction(_) => true,
             JSValue::BoundFunction(_) => true,

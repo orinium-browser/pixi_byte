@@ -57,7 +57,7 @@ pub enum Opcode {
     // 関数操作
     CreateFunction(usize), // 定数プール内の関数オブジェクトを生成してプッシュ（func chunk idx）
     CallFunction(usize),   // 呼び出し（引数個数） - スタックから argN..arg1, func を使う
-    CallMethod(usize),     // メソッド呼び出し（arg count） - スタック: ..., object, property, arg1..argN
+    CallMethod(usize), // メソッド呼び出し（arg count） - スタック: ..., object, property, arg1..argN
 
     // 制御フロー
     Jump(usize),        // 無条件ジャンプ
@@ -185,9 +185,12 @@ impl Compiler {
                 let function_chunk = Compiler::new().compile(program)?;
 
                 // 現在のチャンクに関数を追加 (chunk, params)
-                let idx = self.chunk.add_constant(
-                    JSValue::Function(function_chunk, params.clone(), None, Some(name.clone())),
-                );
+                let idx = self.chunk.add_constant(JSValue::Function(
+                    function_chunk,
+                    params.clone(),
+                    None,
+                    Some(name.clone()),
+                ));
                 self.chunk.emit(Opcode::CreateFunction(idx));
 
                 // 関数名を変数としてストア
@@ -288,9 +291,7 @@ impl Compiler {
                         self.chunk.emit(Opcode::SetProperty);
                     }
                     _ => {
-                        return Err(JSError::SyntaxError(
-                            "Invalid assignment target".to_string(),
-                        ));
+                        return Err(JSError::TypeError("Invalid assignment target".to_string()));
                     }
                 }
             }
@@ -348,13 +349,19 @@ impl Compiler {
 
                 // 現在のチャンクに関数オブジェクト（チャンク + params）を追加
                 // 関数式の場合は name があれば保持する
-                let func_value = JSValue::Function(function_chunk, params.clone(), None, name.clone());
+                let func_value =
+                    JSValue::Function(function_chunk, params.clone(), None, name.clone());
                 let idx = self.chunk.add_constant(func_value);
                 self.chunk.emit(Opcode::CreateFunction(idx));
             }
             Expression::Call { callee, args } => {
                 // MemberAccess (obj.prop(args)) は receiver を使うので専用の CallMethod を出す
-                if let Expression::MemberAccess { object, property, computed } = *callee {
+                if let Expression::MemberAccess {
+                    object,
+                    property,
+                    computed,
+                } = *callee
+                {
                     self.compile_expression(*object)?;
                     if computed {
                         self.compile_expression(*property)?;
@@ -380,7 +387,7 @@ impl Compiler {
                     let arg_count = args.len();
                     self.chunk.emit(Opcode::CallFunction(arg_count));
                 }
-             }
+            }
         }
         Ok(())
     }

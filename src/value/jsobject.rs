@@ -244,7 +244,10 @@ impl JSObject {
             let value = if has("value") {
                 desc_obj.borrow().get("value")
             } else {
-                existing.as_ref().map(|p| p.value.clone()).unwrap_or(JSValue::Undefined)
+                existing
+                    .as_ref()
+                    .map(|p| p.value.clone())
+                    .unwrap_or(JSValue::Undefined)
             };
 
             let writable = if has("writable") {

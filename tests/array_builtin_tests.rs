@@ -1,5 +1,5 @@
-use pixi_byte::vm::VM;
 use pixi_byte::value::JSValue;
+use pixi_byte::vm::VM;
 
 #[test]
 fn test_array_prototype_push_pop_native() {
@@ -53,4 +53,3 @@ fn test_array_prototype_push_pop_native() {
         _ => panic!("Array global not object"),
     }
 }
-

@@ -1,5 +1,5 @@
-use pixi_byte::vm::VM;
 use pixi_byte::value::JSValue;
+use pixi_byte::vm::VM;
 
 #[test]
 fn test_object_builtins_registered_and_functional() {
@@ -38,7 +38,16 @@ fn test_object_builtins_registered_and_functional() {
                         assert!(got.is_some());
                         if let Some(gp) = got {
                             // 同一参照かどうか
-                            assert_eq!(std::rc::Rc::ptr_eq(&gp, &std::rc::Rc::new(std::cell::RefCell::new(pixi_byte::value::jsobject::JSObject::new())).clone()), false);
+                            assert_eq!(
+                                std::rc::Rc::ptr_eq(
+                                    &gp,
+                                    &std::rc::Rc::new(std::cell::RefCell::new(
+                                        pixi_byte::value::jsobject::JSObject::new()
+                                    ))
+                                    .clone()
+                                ),
+                                false
+                            );
                             // ここでは proto_obj と同じプロトタイプが設定されていることを期待
                         }
                     }
@@ -54,7 +63,8 @@ fn test_object_builtins_registered_and_functional() {
                 let created = f(&mut vm, vec![proto_obj.clone()]).unwrap();
                 if let JSValue::Object(created_ref) = created {
                     if let JSValue::NativeFunction(getp) = obj_ref.borrow().get("getPrototypeOf") {
-                        let got = getp(&mut vm, vec![JSValue::Object(created_ref.clone())]).unwrap();
+                        let got =
+                            getp(&mut vm, vec![JSValue::Object(created_ref.clone())]).unwrap();
                         match got {
                             JSValue::Object(gp_ref) => {
                                 // gp_ref should point to same prototype as proto_obj
@@ -101,7 +111,11 @@ fn test_object_create_with_descriptors() {
     let obj_global = global.borrow().get("Object");
     if let JSValue::Object(obj_ref) = obj_global {
         if let JSValue::NativeFunction(create_fn) = obj_ref.borrow().get("create") {
-            let res = create_fn(&mut vm, vec![proto_obj.clone(), JSValue::Object(desc_outer_rc.clone())]).unwrap();
+            let res = create_fn(
+                &mut vm,
+                vec![proto_obj.clone(), JSValue::Object(desc_outer_rc.clone())],
+            )
+            .unwrap();
             match res {
                 JSValue::Object(new_obj_ref) => {
                     let a = new_obj_ref.borrow().get("a");
@@ -139,11 +153,19 @@ fn test_is_prototype_of() {
             if let JSValue::Object(created_ref) = created {
                 // call isPrototypeOf on proto
                 if let JSValue::Object(proto_constructor) = global.borrow().get("Object") {
-                    if let JSValue::Object(proto_proto) = proto_constructor.borrow().get("prototype") {
+                    if let JSValue::Object(proto_proto) =
+                        proto_constructor.borrow().get("prototype")
+                    {
                         // proto_proto is Object.prototype, but we want to call isPrototypeOf on proto_obj instance
-                        if let JSValue::NativeFunction(isp) = proto_proto.borrow().get("isPrototypeOf") {
+                        if let JSValue::NativeFunction(isp) =
+                            proto_proto.borrow().get("isPrototypeOf")
+                        {
                             // method expects receiver as first arg
-                            let res = isp(&mut vm, vec![proto_obj.clone(), JSValue::Object(created_ref.clone())]).unwrap();
+                            let res = isp(
+                                &mut vm,
+                                vec![proto_obj.clone(), JSValue::Object(created_ref.clone())],
+                            )
+                            .unwrap();
                             match res {
                                 JSValue::Boolean(b) => assert!(b),
                                 _ => panic!("isPrototypeOf returned non-boolean"),
@@ -179,7 +201,9 @@ fn test_object_to_string() {
         if let JSValue::Object(proto_obj) = obj_ref.borrow().get("prototype") {
             if let JSValue::NativeFunction(to_str) = proto_obj.borrow().get("toString") {
                 // call on an object
-                let target = JSValue::Object(std::rc::Rc::new(std::cell::RefCell::new(pixi_byte::value::jsobject::JSObject::new())));
+                let target = JSValue::Object(std::rc::Rc::new(std::cell::RefCell::new(
+                    pixi_byte::value::jsobject::JSObject::new(),
+                )));
                 let res = to_str(&mut vm, vec![target]).unwrap();
                 match res {
                     JSValue::String(s) => assert_eq!(s, "[object Object]"),
@@ -187,12 +211,15 @@ fn test_object_to_string() {
                 }
 
                 // call on a function value (NativeFunction)
-                let res2 = to_str(&mut vm, vec![JSValue::NativeFunction(|_, _| Ok(JSValue::Undefined))]).unwrap();
+                let res2 = to_str(
+                    &mut vm,
+                    vec![JSValue::NativeFunction(|_, _| Ok(JSValue::Undefined))],
+                )
+                .unwrap();
                 match res2 {
                     JSValue::String(s) => assert_eq!(s, "[object Function]"),
                     _ => panic!("toString on function returned non-string"),
                 }
-
             } else {
                 panic!("toString not found on Object.prototype");
             }
@@ -226,10 +253,23 @@ fn test_define_property_and_get_own_property_descriptor() {
 
         // call Object.defineProperty(target, "x", desc)
         if let JSValue::NativeFunction(def_fn) = obj_ref.borrow().get("defineProperty") {
-            let _ = def_fn(&mut vm, vec![target_val.clone(), JSValue::String("x".to_string()), JSValue::Object(desc_rc.clone())]).unwrap();
+            let _ = def_fn(
+                &mut vm,
+                vec![
+                    target_val.clone(),
+                    JSValue::String("x".to_string()),
+                    JSValue::Object(desc_rc.clone()),
+                ],
+            )
+            .unwrap();
             // get descriptor back
-            if let JSValue::NativeFunction(gopd) = obj_ref.borrow().get("getOwnPropertyDescriptor") {
-                let got = gopd(&mut vm, vec![target_val.clone(), JSValue::String("x".to_string())]).unwrap();
+            if let JSValue::NativeFunction(gopd) = obj_ref.borrow().get("getOwnPropertyDescriptor")
+            {
+                let got = gopd(
+                    &mut vm,
+                    vec![target_val.clone(), JSValue::String("x".to_string())],
+                )
+                .unwrap();
                 match got {
                     JSValue::Object(desc_obj_ref) => {
                         let v = desc_obj_ref.borrow().get("value");
@@ -256,14 +296,30 @@ fn test_define_property_and_get_own_property_descriptor() {
 
         let mut accessor_desc = pixi_byte::value::jsobject::JSObject::new();
         accessor_desc.set("get".to_string(), getter_val.clone());
-        accessor_desc.set("set".to_string(), JSValue::NativeFunction(|_vm, _args| Ok(JSValue::Undefined)));
+        accessor_desc.set(
+            "set".to_string(),
+            JSValue::NativeFunction(|_vm, _args| Ok(JSValue::Undefined)),
+        );
         let accessor_desc_rc = std::rc::Rc::new(std::cell::RefCell::new(accessor_desc));
 
         if let JSValue::NativeFunction(def_fn2) = obj_ref.borrow().get("defineProperty") {
-            let _ = def_fn2(&mut vm, vec![target_val.clone(), JSValue::String("g".to_string()), JSValue::Object(accessor_desc_rc.clone())]).unwrap();
+            let _ = def_fn2(
+                &mut vm,
+                vec![
+                    target_val.clone(),
+                    JSValue::String("g".to_string()),
+                    JSValue::Object(accessor_desc_rc.clone()),
+                ],
+            )
+            .unwrap();
 
-            if let JSValue::NativeFunction(gopd2) = obj_ref.borrow().get("getOwnPropertyDescriptor") {
-                let got2 = gopd2(&mut vm, vec![target_val.clone(), JSValue::String("g".to_string())]).unwrap();
+            if let JSValue::NativeFunction(gopd2) = obj_ref.borrow().get("getOwnPropertyDescriptor")
+            {
+                let got2 = gopd2(
+                    &mut vm,
+                    vec![target_val.clone(), JSValue::String("g".to_string())],
+                )
+                .unwrap();
                 match got2 {
                     JSValue::Object(desc_obj_ref) => {
                         let getv = desc_obj_ref.borrow().get("get");
@@ -280,7 +336,6 @@ fn test_define_property_and_get_own_property_descriptor() {
         } else {
             panic!("defineProperty not callable (2)");
         }
-
     } else {
         panic!("Object constructor not found");
     }
@@ -328,7 +383,15 @@ fn test_function_call_apply() {
                 let mut arr = pixi_byte::value::jsarray::JSArray::new();
                 arr.push(JSValue::String("world".to_string()));
                 let arr_val = arr.to_object();
-                let res2 = apply_fn(&mut vm, vec![native_fn.clone(), JSValue::String("world".to_string()), arr_val]).unwrap();
+                let res2 = apply_fn(
+                    &mut vm,
+                    vec![
+                        native_fn.clone(),
+                        JSValue::String("world".to_string()),
+                        arr_val,
+                    ],
+                )
+                .unwrap();
                 match res2 {
                     JSValue::String(s) => assert_eq!(s, "world"),
                     _ => panic!("Function.prototype.apply returned unexpected value"),
@@ -336,7 +399,6 @@ fn test_function_call_apply() {
             } else {
                 panic!("apply not found");
             }
-
         } else {
             panic!("Function.prototype missing");
         }

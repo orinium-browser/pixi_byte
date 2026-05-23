@@ -42,4 +42,3 @@ fn test_closure_capture_after_mutation() {
         other => panic!("unexpected result: {}", other),
     }
 }
-

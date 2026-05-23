@@ -11,7 +11,9 @@ use std::rc::Rc;
 fn array_push(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     // args: [this, value1, value2, ...] or if called via CallFunction maybe only values
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError("Array.prototype.push: missing receiver".to_string()));
+        return Err(crate::error::JSError::TypeError(
+            "Array.prototype.push: missing receiver".to_string(),
+        ));
     }
 
     let receiver = args.remove(0);
@@ -36,13 +38,17 @@ fn array_push(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::
                 .set("length".to_string(), JSValue::Number(idx as f64));
             Ok(JSValue::Number(idx as f64))
         }
-        _ => Err(crate::error::JSError::TypeError("Array.prototype.push: receiver is not an object".to_string())),
+        _ => Err(crate::error::JSError::TypeError(
+            "Array.prototype.push: receiver is not an object".to_string(),
+        )),
     }
 }
 
 fn array_pop(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     if args.is_empty() {
-        return Err(crate::error::JSError::TypeError("Array.prototype.pop: missing receiver".to_string()));
+        return Err(crate::error::JSError::TypeError(
+            "Array.prototype.pop: missing receiver".to_string(),
+        ));
     }
 
     let receiver = args.remove(0);
@@ -71,7 +77,9 @@ fn array_pop(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::J
                 .set("length".to_string(), JSValue::Number(idx as f64));
             Ok(element)
         }
-        _ => Err(crate::error::JSError::TypeError("Array.prototype.pop: receiver is not an object".to_string())),
+        _ => Err(crate::error::JSError::TypeError(
+            "Array.prototype.pop: receiver is not an object".to_string(),
+        )),
     }
 }
 
@@ -86,7 +94,13 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     proto.set("push".to_string(), JSValue::NativeFunction(array_push));
     proto.set("pop".to_string(), JSValue::NativeFunction(array_pop));
 
-    array_ctor.set("prototype".to_string(), JSValue::Object(Rc::new(RefCell::new(proto))));
+    array_ctor.set(
+        "prototype".to_string(),
+        JSValue::Object(Rc::new(RefCell::new(proto))),
+    );
 
-    global.borrow_mut().set("Array".to_string(), JSValue::Object(Rc::new(RefCell::new(array_ctor))));
+    global.borrow_mut().set(
+        "Array".to_string(),
+        JSValue::Object(Rc::new(RefCell::new(array_ctor))),
+    );
 }
