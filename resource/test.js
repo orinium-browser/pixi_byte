@@ -41,4 +41,7 @@ let b = {
 this.println(a.show());
 this.println(b.show());
 
+this.println(a.show);
+this.println(b.show);
+
 this.println("=== Eval Test End ===");
