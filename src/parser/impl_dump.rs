@@ -77,9 +77,27 @@ impl Expression {
                 println!("{prefix}{branch}Identifier({name})");
             }
 
-            Expression::Literal(Literal::Number(n)) => {
-                println!("{prefix}{branch}Number({n})");
-            }
+            Expression::Literal(lit) => match lit {
+                Literal::Number(n) => {
+                    println!("{prefix}{branch}Number({n})");
+                }
+
+                Literal::String(s) => {
+                    println!("{prefix}{branch}String(\"{s}\")");
+                }
+
+                Literal::Boolean(b) => {
+                    println!("{prefix}{branch}Boolean({b})");
+                }
+
+                Literal::Null => {
+                    println!("{prefix}{branch}Null");
+                }
+
+                Literal::Undefined => {
+                    println!("{prefix}{branch}Undefined");
+                }
+            },
 
             Expression::Call { callee, args } => {
                 println!("{prefix}{branch}Call");
@@ -133,8 +151,24 @@ impl Expression {
                 }
             }
 
-            _ => {
-                println!("{prefix}{branch}<unimplemented>");
+            Expression::MemberAccess {
+                object,
+                property,
+                computed: _,
+            } => {
+                println!("{prefix}{branch}MemberAccess");
+
+                object.dump_impl(next_prefix.clone(), false);
+
+                property.dump_impl(next_prefix, true);
+            }
+
+            Expression::Function { params, body, .. } => {
+                println!("{prefix}{branch}FunctionExpr({})", params.join(", "));
+
+                for (i, stmt) in body.iter().enumerate() {
+                    stmt.dump_impl(next_prefix.clone(), i == body.len() - 1);
+                }
             }
         }
     }
