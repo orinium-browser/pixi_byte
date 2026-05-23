@@ -230,19 +230,11 @@ impl VM {
                                         let new_env =
                                             Rc::new(RefCell::new(Environment::with_outer(outer)));
 
-                                        let old_stack = std::mem::take(&mut self.stack);
-
-                                        self.frames.push(CallFrame {
-                                            env: new_env,
-                                            this: JSValue::Object(obj_ref.clone()),
-                                        });
-
-                                        let res = self.execute(func_chunk)?;
-
-                                        let _inner_stack =
-                                            std::mem::replace(&mut self.stack, old_stack);
-
-                                        self.frames.pop();
+                                        let res = self.with_call_frame(
+                                            new_env,
+                                            JSValue::Object(obj_ref.clone()),
+                                            func_chunk,
+                                        )?;
 
                                         self.stack.push(res);
                                     }
@@ -312,20 +304,11 @@ impl VM {
                                         new_env.borrow().define(params[0].clone(), value.clone());
                                     }
 
-                                    let old_stack = std::mem::take(&mut self.stack);
-                                    self.frames.push(CallFrame {
-                                        env: new_env,
-                                        this: JSValue::Object(obj_ref.clone()),
-                                    });
-
-                                    let _ = self.execute(func_chunk)?;
-
-                                    let _inner_stack =
-                                        std::mem::replace(&mut self.stack, old_stack);
-
-                                    self.frames.pop();
-
-                                    self.stack.push(JSValue::Object(obj_ref.clone()));
+                                    self.with_call_frame(
+                                        new_env,
+                                        JSValue::Object(obj_ref.clone()),
+                                        func_chunk,
+                                    )?;
                                 }
                                 _ => {
                                     return Err(JSError::TypeError(
@@ -441,17 +424,7 @@ impl VM {
                                     new_env.borrow().define(name, JSValue::Undefined);
                                 }
 
-                                let old_stack = std::mem::take(&mut self.stack);
-                                self.frames.push(CallFrame {
-                                    env: new_env,
-                                    this: bound_this,
-                                });
-
-                                let res = self.execute(func_chunk)?;
-
-                                let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
-
-                                self.frames.pop();
+                                let res = self.with_call_frame(new_env, bound_this, func_chunk)?;
 
                                 self.stack.push(res);
                             }
@@ -489,17 +462,11 @@ impl VM {
                             new_env.borrow().define(name, JSValue::Undefined);
                         }
 
-                        let old_stack = std::mem::take(&mut self.stack);
-                        self.frames.push(CallFrame {
-                            env: new_env,
-                            this: JSValue::Object(self.global_object.clone()),
-                        });
-
-                        let res = self.execute(func_chunk)?;
-
-                        let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
-
-                        self.frames.pop();
+                        let res = self.with_call_frame(
+                            new_env,
+                            JSValue::Object(self.global_object.clone()),
+                            func_chunk,
+                        )?;
 
                         self.stack.push(res);
                     }
@@ -558,17 +525,7 @@ impl VM {
                                 }
 
                                 // 実行
-                                let old_stack = std::mem::take(&mut self.stack);
-                                self.frames.push(CallFrame {
-                                    env: new_env,
-                                    this: object,
-                                });
-
-                                let res = self.execute(func_chunk)?;
-
-                                let _inner_stack = std::mem::replace(&mut self.stack, old_stack);
-
-                                self.frames.pop();
+                                let res = self.with_call_frame(new_env, object, func_chunk)?;
 
                                 self.stack.push(res);
                             }
@@ -625,6 +582,23 @@ impl VM {
         }
 
         Ok(ControlFlow::Continue)
+    }
+
+    fn with_call_frame(
+        &mut self,
+        env: Rc<RefCell<Environment>>,
+        this: JSValue,
+        func: BytecodeChunk,
+    ) -> JSResult<JSValue> {
+        let old_stack = std::mem::take(&mut self.stack);
+        self.frames.push(CallFrame { env, this });
+
+        let result = self.execute(func);
+
+        self.frames.pop();
+        self.stack = old_stack;
+
+        result
     }
 
     /// 現在の CallFrame を返す
