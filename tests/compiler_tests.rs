@@ -2,9 +2,8 @@ use pixi_byte::{Compiler, Lexer, Opcode, Parser};
 
 #[test]
 fn test_compile_literal() {
-    let mut lexer = Lexer::new("42");
-    let tokens = lexer.tokenize().unwrap();
-    let mut parser = Parser::new(tokens);
+    let lexer = Lexer::new("42");
+    let mut parser = Parser::new(lexer).unwrap();
     let program = parser.parse().unwrap();
 
     let mut compiler = Compiler::new();
@@ -15,9 +14,8 @@ fn test_compile_literal() {
 
 #[test]
 fn test_compile_binary_expr() {
-    let mut lexer = Lexer::new("1 + 2");
-    let tokens = lexer.tokenize().unwrap();
-    let mut parser = Parser::new(tokens);
+    let lexer = Lexer::new("1 + 2");
+    let mut parser = Parser::new(lexer).unwrap();
     let program = parser.parse().unwrap();
 
     let mut compiler = Compiler::new();

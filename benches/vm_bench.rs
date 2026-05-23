@@ -13,7 +13,9 @@ fn benchmark_arithmetic(c: &mut Criterion) {
     c.bench_function("complex expression", |b| {
         let mut engine = JSEngine::new();
         b.iter(|| {
-            engine.eval(std::hint::black_box("(1 + 2) * 3 - 4 / 2")).unwrap();
+            engine
+                .eval(std::hint::black_box("(1 + 2) * 3 - 4 / 2"))
+                .unwrap();
         });
     });
 }
@@ -23,7 +25,9 @@ fn benchmark_variables(c: &mut Criterion) {
     c.bench_function("variable assignment", |b| {
         let mut engine = JSEngine::new();
         b.iter(|| {
-            engine.eval(std::hint::black_box("let x = 42; x + 1")).unwrap();
+            engine
+                .eval(std::hint::black_box("let x = 42; x + 1"))
+                .unwrap();
         });
     });
 }

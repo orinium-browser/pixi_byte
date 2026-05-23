@@ -119,6 +119,16 @@ pub struct Span {
     pub column: usize,
 }
 
+impl fmt::Display for Span {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{} ({}..{})",
+            self.line, self.column, self.start, self.end,
+        )
+    }
+}
+
 impl Span {
     /// 新しいSpanを作成
     pub fn new(start: usize, end: usize, line: usize, column: usize) -> Self {

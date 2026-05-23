@@ -11,6 +11,8 @@ pub enum Opcode {
     StoreVar(String), // スタックトップを変数に格納
     Pop,              // スタックトップを削除
 
+    LoadThis,
+
     // 算術演算
     Add,
     Sub,
@@ -57,6 +59,7 @@ pub enum Opcode {
     // 関数操作
     CreateFunction(usize), // 定数プール内の関数オブジェクトを生成してプッシュ（func chunk idx）
     CallFunction(usize),   // 呼び出し（引数個数） - スタックから argN..arg1, func を使う
+    CallMethod(usize), // メソッド呼び出し（arg count） - スタック: ..., object, property, arg1..argN
 
     // 制御フロー
     Jump(usize),        // 無条件ジャンプ
@@ -184,9 +187,12 @@ impl Compiler {
                 let function_chunk = Compiler::new().compile(program)?;
 
                 // 現在のチャンクに関数を追加 (chunk, params)
-                let idx = self
-                    .chunk
-                    .add_constant(JSValue::Function(function_chunk, params.clone()));
+                let idx = self.chunk.add_constant(JSValue::Function(
+                    function_chunk,
+                    params.clone(),
+                    None,
+                    Some(name.clone()),
+                ));
                 self.chunk.emit(Opcode::CreateFunction(idx));
 
                 // 関数名を変数としてストア
@@ -287,11 +293,12 @@ impl Compiler {
                         self.chunk.emit(Opcode::SetProperty);
                     }
                     _ => {
-                        return Err(JSError::SyntaxError(
-                            "Invalid assignment target".to_string(),
-                        ));
+                        return Err(JSError::TypeError("Invalid assignment target".to_string()));
                     }
                 }
+            }
+            Expression::This => {
+                self.chunk.emit(Opcode::LoadThis);
             }
             Expression::ArrayLiteral(elements) => {
                 // 空の配列を作成してスタックにプッシュ
@@ -340,28 +347,47 @@ impl Compiler {
                 }
                 self.chunk.emit(Opcode::GetProperty);
             }
-            Expression::Function { params, body } => {
+            Expression::Function { name, params, body } => {
                 // 関数本体をコンパイル
                 let program = Program { body };
                 let function_chunk = Compiler::new().compile(program)?;
 
                 // 現在のチャンクに関数オブジェクト（チャンク + params）を追加
-                let func_value = JSValue::Function(function_chunk, params.clone());
+                // 関数式の場合は name があれば保持する
+                let func_value =
+                    JSValue::Function(function_chunk, params.clone(), None, name.clone());
                 let idx = self.chunk.add_constant(func_value);
                 self.chunk.emit(Opcode::CreateFunction(idx));
             }
             Expression::Call { callee, args } => {
-                // 呼び出し対象をコンパイル
-                self.compile_expression(*callee)?;
+                // MemberAccess (obj.prop(args)) は receiver を使うので専用の CallMethod を出す
+                if let Expression::MemberAccess {
+                    object,
+                    property,
+                    computed: _,
+                } = *callee
+                {
+                    self.compile_expression(*object)?;
+                    self.compile_expression(*property)?;
 
-                // 引数をコンパイル
-                for arg in &args {
-                    self.compile_expression(arg.clone())?;
+                    // 引数をコンパイル
+                    for arg in &args {
+                        self.compile_expression(arg.clone())?;
+                    }
+
+                    // CallMethod は property と object を使ってメソッドを取得し呼び出す
+                    let arg_count = args.len();
+                    // 新 opcode を直接 encode as CallFunction for non-member and CallMethod for member
+                    self.chunk.emit(Opcode::CallMethod(arg_count));
+                } else {
+                    // 通常の関数呼び出し
+                    self.compile_expression(*callee)?;
+                    for arg in &args {
+                        self.compile_expression(arg.clone())?;
+                    }
+                    let arg_count = args.len();
+                    self.chunk.emit(Opcode::CallFunction(arg_count));
                 }
-
-                // 引数の数だけスタックからポップ
-                let arg_count = args.len();
-                self.chunk.emit(Opcode::CallFunction(arg_count));
             }
         }
         Ok(())
