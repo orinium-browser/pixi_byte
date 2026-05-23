@@ -286,87 +286,6 @@ fn object_to_string(
     }
 }
 
-/// グローバルオブジェクトに Object 組み込みをインストールする
-pub fn install(global: &Rc<RefCell<JSObject>>) {
-    // TODO: グローバルオブジェクトに `Object` をオブジェクトとしてセット
-    let mut obj = JSObject::new();
-
-    // Create Object.prototype and attach methods (e.g., hasOwnProperty)
-    let mut proto = JSObject::new();
-    proto.set(
-        "hasOwnProperty".to_string(),
-        JSValue::NativeFunction(object_has_own_property),
-    );
-    proto.set(
-        "isPrototypeOf".to_string(),
-        JSValue::NativeFunction(object_is_prototype_of),
-    );
-    proto.set(
-        "toString".to_string(),
-        JSValue::NativeFunction(object_to_string),
-    );
-    proto.set(
-        "propertyIsEnumerable".to_string(),
-        JSValue::NativeFunction(object_property_is_enumerable),
-    );
-
-    // Define __proto__ accessor on Object.prototype
-    let proto_accessor = crate::value::jsobject::Property {
-        value: JSValue::Undefined,
-        enumerable: false,
-        writable: false,
-        configurable: true,
-        getter: Some(JSValue::NativeFunction(object_proto_get)),
-        setter: Some(JSValue::NativeFunction(object_proto_set)),
-    };
-    proto.define_property("__proto__".to_string(), proto_accessor);
-
-    // `create` と `getPrototypeOf` をネイティブ関数として登録
-    obj.set("create".to_string(), JSValue::NativeFunction(object_create));
-    obj.set(
-        "getPrototypeOf".to_string(),
-        JSValue::NativeFunction(object_get_prototype_of),
-    );
-    // register setPrototypeOf
-    obj.set(
-        "setPrototypeOf".to_string(),
-        JSValue::NativeFunction(object_set_prototype_of),
-    );
-
-    // Object.preventExtensions / isExtensible / seal / freeze
-    obj.set(
-        "preventExtensions".to_string(),
-        JSValue::NativeFunction(object_prevent_extensions),
-    );
-    obj.set(
-        "isExtensible".to_string(),
-        JSValue::NativeFunction(object_is_extensible),
-    );
-    obj.set("seal".to_string(), JSValue::NativeFunction(object_seal));
-    obj.set("freeze".to_string(), JSValue::NativeFunction(object_freeze));
-
-    // register defineProperty and getOwnPropertyDescriptor
-    obj.set(
-        "defineProperty".to_string(),
-        JSValue::NativeFunction(object_define_property),
-    );
-    obj.set(
-        "getOwnPropertyDescriptor".to_string(),
-        JSValue::NativeFunction(object_get_own_property_descriptor),
-    );
-
-    // Set prototype property on constructor-like object
-    obj.set(
-        "prototype".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(proto))),
-    );
-
-    global.borrow_mut().set(
-        "Object".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(obj))),
-    );
-}
-
 /// Object.defineProperty(obj, prop, descriptor)
 fn object_define_property(
     _vm: &mut crate::vm::VM,
@@ -587,4 +506,85 @@ fn object_property_is_enumerable(
             "propertyIsEnumerable: receiver is not an object".to_string(),
         )),
     }
+}
+
+/// グローバルオブジェクトに Object 組み込みをインストールする
+pub fn install(global: &Rc<RefCell<JSObject>>) {
+    // TODO: グローバルオブジェクトに `Object` をオブジェクトとしてセット
+    let mut obj = JSObject::new();
+
+    // Create Object.prototype and attach methods (e.g., hasOwnProperty)
+    let mut proto = JSObject::new();
+    proto.set(
+        "hasOwnProperty".to_string(),
+        JSValue::NativeFunction(object_has_own_property),
+    );
+    proto.set(
+        "isPrototypeOf".to_string(),
+        JSValue::NativeFunction(object_is_prototype_of),
+    );
+    proto.set(
+        "toString".to_string(),
+        JSValue::NativeFunction(object_to_string),
+    );
+    proto.set(
+        "propertyIsEnumerable".to_string(),
+        JSValue::NativeFunction(object_property_is_enumerable),
+    );
+
+    // Define __proto__ accessor on Object.prototype
+    let proto_accessor = crate::value::jsobject::Property {
+        value: JSValue::Undefined,
+        enumerable: false,
+        writable: false,
+        configurable: true,
+        getter: Some(JSValue::NativeFunction(object_proto_get)),
+        setter: Some(JSValue::NativeFunction(object_proto_set)),
+    };
+    proto.define_property("__proto__".to_string(), proto_accessor);
+
+    // `create` と `getPrototypeOf` をネイティブ関数として登録
+    obj.set("create".to_string(), JSValue::NativeFunction(object_create));
+    obj.set(
+        "getPrototypeOf".to_string(),
+        JSValue::NativeFunction(object_get_prototype_of),
+    );
+    // register setPrototypeOf
+    obj.set(
+        "setPrototypeOf".to_string(),
+        JSValue::NativeFunction(object_set_prototype_of),
+    );
+
+    // Object.preventExtensions / isExtensible / seal / freeze
+    obj.set(
+        "preventExtensions".to_string(),
+        JSValue::NativeFunction(object_prevent_extensions),
+    );
+    obj.set(
+        "isExtensible".to_string(),
+        JSValue::NativeFunction(object_is_extensible),
+    );
+    obj.set("seal".to_string(), JSValue::NativeFunction(object_seal));
+    obj.set("freeze".to_string(), JSValue::NativeFunction(object_freeze));
+
+    // register defineProperty and getOwnPropertyDescriptor
+    obj.set(
+        "defineProperty".to_string(),
+        JSValue::NativeFunction(object_define_property),
+    );
+    obj.set(
+        "getOwnPropertyDescriptor".to_string(),
+        JSValue::NativeFunction(object_get_own_property_descriptor),
+    );
+
+    // Set prototype property on constructor-like object
+    obj.set(
+        "prototype".to_string(),
+        JSValue::Object(Rc::new(RefCell::new(proto))),
+    );
+
+    global.borrow_mut().set(
+        "Object".to_string(),
+        JSValue::Object(Rc::new(RefCell::new(obj))),
+    );
 }
