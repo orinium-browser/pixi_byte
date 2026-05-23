@@ -398,70 +398,31 @@ impl VM {
                 // スタック: ..., object, property, arg1, arg2, ..., argN
                 // まず引数を取り出す
                 let mut args = Vec::new();
+
                 for _ in 0..*arg_count {
                     args.push(self.pop()?);
                 }
+
                 args.reverse();
 
                 // 次に property と object を取り出す
                 let property = self.pop()?;
                 let object = self.pop()?;
 
-                // property を文字列化してプロパティアクセス
-                let key_str = property.to_string();
+                let key = property.to_string();
 
-                match object.clone() {
-                    JSValue::Object(obj_ref) => {
-                        let method = obj_ref.borrow().get(&key_str);
-                        match method {
-                            JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
-                                // outer は関数生成時のキャプチャまたは現在の env
-                                let outer = match captured_env_opt {
-                                    Some(env_rc) => env_rc,
-                                    None => self.current_env(),
-                                };
-                                let new_env = Rc::new(RefCell::new(Environment::with_outer(outer)));
-
-                                // パラメータをバインド
-                                for (i, arg) in args.into_iter().enumerate() {
-                                    if i < params.len() {
-                                        new_env.borrow().define(params[i].clone(), arg);
-                                    } else {
-                                        new_env.borrow().define(format!("arg{}", i), arg);
-                                    }
-                                }
-
-                                // named function expression の場合は名前を環境に定義
-                                if let Some(name) = name_opt.clone() {
-                                    new_env.borrow().define(name, JSValue::Undefined);
-                                }
-
-                                // 実行
-                                let res = self.with_call_frame(new_env, object, func_chunk)?;
-
-                                self.stack.push(res);
-                            }
-                            JSValue::NativeFunction(native_fn) => {
-                                // For methods, inject receiver as first arg
-                                let mut call_args = Vec::new();
-                                call_args.push(object.clone());
-                                call_args.extend(args);
-                                let res = native_fn(self, call_args)?;
-                                self.stack.push(res);
-                            }
-                            _ => {
-                                return Err(JSError::TypeError(
-                                    "CallMethod: property is not a function".to_string(),
-                                ));
-                            }
-                        }
-                    }
+                let method = match &object {
+                    JSValue::Object(obj_ref) => obj_ref.borrow().get(&key),
                     _ => {
                         return Err(JSError::TypeError(
-                            "CallMethod: receiver is not an object".to_string(),
+                            "CallMethod: receiver is not an object".into(),
                         ));
                     }
-                }
+                };
+
+                let result = self.call(method, object, args)?;
+
+                self.stack.push(result);
             }
 
             // その他
