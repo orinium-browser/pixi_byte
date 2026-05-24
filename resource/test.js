@@ -1,19 +1,19 @@
-this.println("=== Eval Test Start ===");
+println("=== Eval Test Start ===");
 
 // Basic arithmetic
-this.println(1 + 2 * 3);
+println(1 + 2 * 3);
 
 // Variables
 var x = "Variable";
 
-this.println(x);
+println(x);
 
 // Function definition + call
 function add(a, b) {
   return a + b;
 }
 
-this.println(add(10, 20));
+println(add(10, 20));
 
 // Object
 let obj = {
@@ -23,7 +23,7 @@ let obj = {
   },
 };
 
-this.println(obj.get());
+println(obj.get());
 
 // this test
 let a = {
@@ -38,10 +38,10 @@ let b = {
   show: a.show,
 };
 
-this.println(a.show());
-this.println(b.show());
+println(a.show());
+println(b.show());
 
-this.println(a.show);
-this.println(b.show);
+println(a.show);
+println(b.show);
 
-this.println("=== Eval Test End ===");
+println("=== Eval Test End ===");
