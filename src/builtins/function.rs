@@ -236,7 +236,7 @@ fn function_bind(
     }
 }
 
-pub fn install(global: &Rc<RefCell<JSObject>>) {
+pub fn install(global: &Rc<RefCell<JSObject>>) -> Rc<RefCell<JSObject>> {
     // Create Function constructor-like object (minimal)
     let mut fn_ctor = JSObject::new();
     // Function.prototype object
@@ -244,13 +244,13 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     proto.set("call".to_string(), JSValue::NativeFunction(function_call));
     proto.set("apply".to_string(), JSValue::NativeFunction(function_apply));
     proto.set("bind".to_string(), JSValue::NativeFunction(function_bind));
-    fn_ctor.set(
-        "prototype".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(proto))),
-    );
+    let fn_proto = Rc::new(RefCell::new(proto));
+    fn_ctor.set("prototype".to_string(), JSValue::Object(fn_proto.clone()));
 
     global.borrow_mut().set(
         "Function".to_string(),
         JSValue::Object(Rc::new(RefCell::new(fn_ctor))),
     );
+
+    fn_proto
 }

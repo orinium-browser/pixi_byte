@@ -8,6 +8,7 @@ use crate::compiler::{BytecodeChunk, Opcode};
 use crate::error::{JSError, JSResult};
 use crate::runtime::{CallFrame, Environment};
 use crate::value::JSValue;
+use crate::value::jsobject::JSObject;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -19,6 +20,8 @@ pub struct VM {
     pub frames: Vec<CallFrame>,
     /// グローバルオブジェクト（非モジュールスクリプトの `this` などに利用）
     pub global_object: Rc<RefCell<crate::value::jsobject::JSObject>>,
+    /// Function.prototype への参照（関数値のプロパティ検索に利用）
+    pub function_prototype: Rc<RefCell<JSObject>>,
 }
 
 enum ControlFlow {
@@ -34,7 +37,7 @@ impl VM {
         let global_obj = crate::value::jsobject::JSObject::new();
         let global_rc = Rc::new(RefCell::new(global_obj));
         // builtins を初期化してグローバルに組み込みを登録
-        crate::builtins::Builtins::new().init(&global_rc);
+        let function_prototype = crate::builtins::Builtins::new().init(&global_rc);
 
         let global_frame = CallFrame::new(
             Environment::with_object_env(global_rc.clone()),
@@ -45,6 +48,7 @@ impl VM {
             stack: Vec::new(),
             frames: vec![global_frame],
             global_object: global_rc,
+            function_prototype,
         }
     }
 
@@ -225,6 +229,13 @@ impl VM {
 
                         self.stack.push(value);
                     }
+                    JSValue::Function(..)
+                    | JSValue::NativeFunction(..)
+                    | JSValue::BoundFunction(..) => {
+                        let key_str = key.to_string();
+                        let value = self.function_prototype.borrow().get(&key_str);
+                        self.stack.push(value);
+                    }
                     _ => {
                         self.stack.push(JSValue::Undefined);
                     }
@@ -271,6 +282,13 @@ impl VM {
                     let idx_num = index.to_number() as usize;
                     let key_str = idx_num.to_string();
                     obj_ref.borrow_mut().set(key_str, value);
+                    // Update length if index >= current length
+                    let current_len = obj_ref.borrow().get("length").to_number() as usize;
+                    if idx_num >= current_len {
+                        obj_ref
+                            .borrow_mut()
+                            .set("length".to_string(), JSValue::Number((idx_num + 1) as f64));
+                    }
                 } else {
                     return Err(JSError::TypeError("ArrayPush: not an object".to_string()));
                 }
@@ -343,6 +361,9 @@ impl VM {
 
                 let method = match &object {
                     JSValue::Object(obj_ref) => obj_ref.borrow().get(&key),
+                    JSValue::Function(..)
+                    | JSValue::NativeFunction(..)
+                    | JSValue::BoundFunction(..) => self.function_prototype.borrow().get(&key),
                     _ => {
                         return Err(JSError::TypeError(
                             "CallMethod: receiver is not an object".into(),

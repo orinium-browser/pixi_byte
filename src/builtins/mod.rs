@@ -18,13 +18,17 @@ impl Builtins {
     }
 
     /// グローバルオブジェクトに組み込みを初期配置する
-    pub fn init(&self, global: &Rc<RefCell<crate::value::jsobject::JSObject>>) {
+    /// 関数値のプロパティ検索で使用する Function.prototype を返します。
+    pub fn init(
+        &self,
+        global: &Rc<RefCell<crate::value::jsobject::JSObject>>,
+    ) -> Rc<RefCell<crate::value::jsobject::JSObject>> {
         // Object 関連の組み込みを登録
         self::object::install(global);
         // Array 関連の組み込みを登録
         self::array::install(global);
         // Function 関連の組み込みを登録
-        self::function::install(global);
+        self::function::install(global)
     }
 }
 
