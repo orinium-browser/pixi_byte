@@ -44,4 +44,10 @@ println(b.show());
 println(a.show);
 println(b.show);
 
+const str = "hello";
+println(str.length); // 5
+
+function f(a, b, c) {}
+println(f.length); // 3
+
 println("=== Eval Test End ===");
