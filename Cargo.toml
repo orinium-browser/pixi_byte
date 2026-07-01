@@ -7,12 +7,12 @@ license = "MIT OR Apache-2.0"
 description = "A JavaScript engine for OriniumBrowser"
 repository = "https://github.com/oriniumbrowser/pixi_byte"
 
+[[bench]]
+harness = false
+name = "vm_bench"
+
 [dependencies]
 rustc-hash = "2.1"
 
 [dev-dependencies]
 criterion = "0.8"
-
-[[bench]]
-name = "vm_bench"
-harness = false
