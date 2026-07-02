@@ -72,7 +72,7 @@ fn function_call(
             });
             let old_stack = std::mem::take(&mut vm.stack);
 
-            let res = vm.execute(func_chunk)?;
+            let res = vm.execute(&func_chunk)?;
 
             vm.stack = old_stack;
             vm.frames.pop();
@@ -178,7 +178,7 @@ fn function_apply(
             });
             let old_stack = std::mem::take(&mut vm.stack);
 
-            let res = vm.execute(func_chunk)?;
+            let res = vm.execute(&func_chunk)?;
 
             vm.stack = old_stack;
             vm.frames.pop();

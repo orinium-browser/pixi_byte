@@ -57,7 +57,7 @@ fn getter_receives_this() {
     chunk.emit(pixi_byte::compiler::Opcode::GetProperty);
     chunk.emit(pixi_byte::compiler::Opcode::Return);
 
-    let res = vm.execute(chunk).unwrap();
+    let res = vm.execute(&chunk).unwrap();
     match res {
         JSValue::String(s) => assert_eq!(s, "hello"),
         _ => panic!("getter did not return expected string"),
@@ -124,7 +124,7 @@ fn setter_updates_internal_state() {
     chunk.emit(pixi_byte::compiler::Opcode::SetProperty);
     chunk.emit(pixi_byte::compiler::Opcode::Return);
 
-    let _ = vm.execute(chunk).unwrap();
+    let _ = vm.execute(&chunk).unwrap();
 
     // internal property 'v' should be set to 42
     let v = target_rc.borrow().get("v");

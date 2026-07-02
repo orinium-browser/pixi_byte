@@ -52,7 +52,7 @@ impl VM {
         }
     }
 
-    pub fn execute(&mut self, chunk: BytecodeChunk) -> JSResult<JSValue> {
+    pub fn execute(&mut self, chunk: &BytecodeChunk) -> JSResult<JSValue> {
         let mut pc = 0; // プログラムカウンタ
 
         while pc < chunk.code.len() {
@@ -417,7 +417,7 @@ impl VM {
         let old_stack = std::mem::take(&mut self.stack);
         self.frames.push(CallFrame::new(env, this));
 
-        let result = self.execute(func);
+        let result = self.execute(&func);
 
         self.frames.pop();
         self.stack = old_stack;

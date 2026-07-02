@@ -63,7 +63,7 @@ impl JSEngine {
             }
         }
 
-        self.vm.execute(bytecode)
+        self.vm.execute(&bytecode)
     }
 
     /// JavaScriptコードを評価
