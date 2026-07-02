@@ -71,6 +71,21 @@ pub enum Opcode {
     Void,
 }
 
+impl Opcode {
+    fn remap_constants(mut self, offset: usize) -> Self {
+        match self {
+            Self::LoadConst(ref mut u)
+            | Self::CreateFunction(ref mut u)
+            | Self::Jump(ref mut u)
+            | Self::JumpIfFalse(ref mut u) => {
+                *u = u.checked_add(offset).expect("constant index overflow")
+            }
+            _ => {}
+        }
+        self
+    }
+}
+
 /// バイトコードチャンク
 #[derive(Debug, Clone)]
 pub struct BytecodeChunk {
@@ -86,6 +101,20 @@ impl BytecodeChunk {
         Self {
             code: Vec::new(),
             constants: Vec::new(),
+        }
+    }
+
+    /// Merges BytecodeChunk.
+    ///
+    /// # Panics
+    /// Panics if merging the chunks would cause a constant index to overflow.
+    pub fn merge(&mut self, other: BytecodeChunk) {
+        let constant_offset = self.constants.len();
+
+        self.constants.extend(other.constants);
+
+        for opcode in other.code {
+            self.code.push(opcode.remap_constants(constant_offset));
         }
     }
 
