@@ -161,14 +161,14 @@ impl Compiler {
     }
 
     /// ASTをバイトコードにコンパイル
-    pub fn compile(&mut self, program: Program) -> JSResult<BytecodeChunk> {
+    pub fn compile(mut self, program: Program) -> JSResult<BytecodeChunk> {
         let len = program.body.len();
         for (i, statement) in program.body.into_iter().enumerate() {
             let is_last = i == len - 1;
             self.compile_statement(statement, is_last)?;
         }
 
-        Ok(self.chunk.clone())
+        Ok(self.chunk)
     }
 
     /// ステートメントをコンパイル
