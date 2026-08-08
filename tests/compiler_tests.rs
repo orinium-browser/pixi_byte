@@ -6,7 +6,7 @@ fn test_compile_literal() {
     let mut parser = Parser::new(lexer).unwrap();
     let program = parser.parse().unwrap();
 
-    let mut compiler = Compiler::new();
+    let compiler = Compiler::new();
     let chunk = compiler.compile(program).unwrap();
 
     assert!(!chunk.code.is_empty());
@@ -18,7 +18,7 @@ fn test_compile_binary_expr() {
     let mut parser = Parser::new(lexer).unwrap();
     let program = parser.parse().unwrap();
 
-    let mut compiler = Compiler::new();
+    let compiler = Compiler::new();
     let chunk = compiler.compile(program).unwrap();
 
     assert!(chunk.code.contains(&Opcode::Add));
