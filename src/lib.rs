@@ -76,6 +76,36 @@ impl JSEngine {
     ) -> &mut std::rc::Rc<std::cell::RefCell<crate::value::jsobject::JSObject>> {
         &mut self.vm.global_object
     }
+
+    /// Returns the underlying VM.
+    ///
+    /// The host reads `vm.host` (the shared host-data slot) to access its own
+    /// state from outside a native-function call.
+    pub fn vm(&self) -> &vm::VM {
+        &self.vm
+    }
+
+    /// Sets the host data.
+    ///
+    /// Stores arbitrary host state (e.g. the browser DOM tree) as
+    /// `Rc<RefCell<dyn Any>>` in the VM. Native functions read it via
+    /// `downcast_ref` on `vm.host`.
+    pub fn set_host(&mut self, host: std::rc::Rc<std::cell::RefCell<dyn std::any::Any>>) {
+        self.vm.host = Some(host);
+    }
+
+    /// Calls a JS function value from Rust.
+    ///
+    /// `callee` must be `JSValue::Function`, `JSValue::NativeFunction`, or
+    /// `JSValue::BoundFunction`.
+    pub fn call(
+        &mut self,
+        callee: JSValue,
+        this: JSValue,
+        args: Vec<JSValue>,
+    ) -> JSResult<JSValue> {
+        self.vm.call(callee, this, args)
+    }
 }
 
 impl Default for JSEngine {

@@ -9,6 +9,7 @@ use crate::error::{JSError, JSResult};
 use crate::runtime::{CallFrame, Environment};
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
+use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -22,6 +23,13 @@ pub struct VM {
     pub global_object: Rc<RefCell<crate::value::jsobject::JSObject>>,
     /// Function.prototype への参照（関数値のプロパティ検索に利用）
     pub function_prototype: Rc<RefCell<JSObject>>,
+    /// Host data slot.
+    ///
+    /// A shared slot where the host (the embedding app) can store arbitrary state.
+    /// Native functions are plain function pointers (`fn(&mut VM, Vec<JSValue>)`)
+    /// and cannot capture closures, so host state (e.g. the DOM tree) is accessed
+    /// from native functions through this slot via `downcast_ref`.
+    pub host: Option<Rc<RefCell<dyn Any>>>,
 }
 
 enum ControlFlow {
@@ -49,6 +57,7 @@ impl VM {
             frames: vec![global_frame],
             global_object: global_rc,
             function_prototype,
+            host: None,
         }
     }
 
@@ -442,7 +451,15 @@ impl VM {
             .ok_or_else(|| JSError::InternalError("Stack underflow".to_string()))
     }
 
-    fn call(&mut self, callee: JSValue, this: JSValue, args: Vec<JSValue>) -> JSResult<JSValue> {
+    /// Calls a function (native / JS / bound function).
+    ///
+    /// Exposed so the host can invoke a JS function directly.
+    pub fn call(
+        &mut self,
+        callee: JSValue,
+        this: JSValue,
+        args: Vec<JSValue>,
+    ) -> JSResult<JSValue> {
         let callee_clone = callee.clone();
 
         match callee {
