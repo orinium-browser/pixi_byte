@@ -62,6 +62,12 @@ struct TryHandler {
     finally_target: Option<usize>,
 }
 
+enum PendingFinally {
+    Normal,
+    Throw(JSError),
+    Return(JSValue),
+}
+
 impl VM {
     /// 新しい VM インスタンスを作成します。
     pub fn new() -> Self {
@@ -153,6 +159,7 @@ impl VM {
             let control = match self.execute_opcode(opcode, &chunk) {
                 Ok(control) => control,
                 Err(error) => {
+                    pending_finally.pop();
                     self.redirect_exception(
                         error,
                         &mut handlers,
@@ -170,7 +177,15 @@ impl VM {
                 }
 
                 ControlFlow::Return(value) => {
-                    return Ok(value);
+                    pending_finally.pop();
+                    if let Some(value) = self.redirect_return(
+                        value,
+                        &mut handlers,
+                        &mut pending_finally,
+                        &mut pc,
+                    ) {
+                        return Ok(value);
+                    }
                 }
                 ControlFlow::PushTry {
                     catch_target,
@@ -182,15 +197,28 @@ impl VM {
                 ControlFlow::PopTry => {
                     handlers.pop();
                 }
-                ControlFlow::BeginFinally => pending_finally.push(None),
+                ControlFlow::BeginFinally => pending_finally.push(PendingFinally::Normal),
                 ControlFlow::EndFinally => {
-                    if let Some(Some(error)) = pending_finally.pop() {
-                        self.redirect_exception(
-                            error,
-                            &mut handlers,
-                            &mut pending_finally,
-                            &mut pc,
-                        )?;
+                    match pending_finally.pop() {
+                        Some(PendingFinally::Throw(error)) => {
+                            self.redirect_exception(
+                                error,
+                                &mut handlers,
+                                &mut pending_finally,
+                                &mut pc,
+                            )?;
+                        }
+                        Some(PendingFinally::Return(value)) => {
+                            if let Some(value) = self.redirect_return(
+                                value,
+                                &mut handlers,
+                                &mut pending_finally,
+                                &mut pc,
+                            ) {
+                                return Ok(value);
+                            }
+                        }
+                        Some(PendingFinally::Normal) | None => {}
                     }
                 }
             }
@@ -203,7 +231,7 @@ impl VM {
         &mut self,
         error: JSError,
         handlers: &mut Vec<TryHandler>,
-        pending_finally: &mut Vec<Option<JSError>>,
+        pending_finally: &mut Vec<PendingFinally>,
         pc: &mut usize,
     ) -> JSResult<()> {
         let Some(handler) = handlers.pop() else {
@@ -219,11 +247,28 @@ impl VM {
             return Ok(());
         }
         if let Some(finally_target) = handler.finally_target {
-            pending_finally.push(Some(error));
+            pending_finally.push(PendingFinally::Throw(error));
             *pc = finally_target;
             return Ok(());
         }
         Err(error)
+    }
+
+    fn redirect_return(
+        &mut self,
+        value: JSValue,
+        handlers: &mut Vec<TryHandler>,
+        pending_finally: &mut Vec<PendingFinally>,
+        pc: &mut usize,
+    ) -> Option<JSValue> {
+        while let Some(handler) = handlers.pop() {
+            if let Some(finally_target) = handler.finally_target {
+                pending_finally.push(PendingFinally::Return(value));
+                *pc = finally_target;
+                return None;
+            }
+        }
+        Some(value)
     }
 
     /// バイトコードを実行（トップレベルはグローバル環境を使用）
@@ -641,7 +686,7 @@ impl VM {
                     JSValue::Function(..)
                     | JSValue::ArrowFunction(..)
                     | JSValue::NativeFunction(..)
-                        | JSValue::BoundFunction(..) => self.function_prototype.borrow().get(&key),
+                    | JSValue::BoundFunction(..) => self.function_prototype.borrow().get(&key),
                     JSValue::String(_) => self.string_prototype.borrow().get(&key),
                     JSValue::Number(_) => self.number_prototype.borrow().get(&key),
                     _ => {
