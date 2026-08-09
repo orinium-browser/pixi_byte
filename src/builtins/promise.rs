@@ -4,9 +4,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::{JSError, JSResult};
-use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
 use crate::value::jsvalue::BoundFunctionData;
+use crate::value::{JSArray, JSValue};
 use crate::vm::VM;
 
 const STATE: &str = "__promise_state";
@@ -69,6 +69,88 @@ fn promise_reject(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let promise = promise_receiver(args.first())?;
     let reason = args.get(1).cloned().unwrap_or(JSValue::Undefined);
     settle_promise(vm, &promise, true, reason);
+    Ok(JSValue::Undefined)
+}
+
+fn promise_resolve_static(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    if let JSValue::Object(object) = &value
+        && object.borrow().has_own_property(STATE)
+    {
+        return Ok(value);
+    }
+
+    let promise = new_promise();
+    resolve_promise(vm, &promise, value);
+    Ok(JSValue::Object(promise))
+}
+
+fn promise_reject_static(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let reason = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let promise = new_promise();
+    settle_promise(vm, &promise, true, reason);
+    Ok(JSValue::Object(promise))
+}
+
+fn promise_all(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let Some(JSValue::Object(values)) = args.get(1) else {
+        return Err(JSError::TypeError(
+            "Promise.all expects an array-like object".to_string(),
+        ));
+    };
+    let length = values.borrow().get("length").to_number() as usize;
+    let result = new_promise();
+    if length == 0 {
+        resolve_promise(vm, &result, JSArray::from_vec(Vec::new()).to_object());
+        return Ok(JSValue::Object(result));
+    }
+
+    let mut tracker = JSObject::new();
+    tracker.set("remaining".to_string(), JSValue::Number(length as f64));
+    tracker.set("result".to_string(), JSValue::Object(Rc::clone(&result)));
+    tracker.set(
+        "values".to_string(),
+        JSArray::from_vec(vec![JSValue::Undefined; length]).to_object(),
+    );
+    let tracker = Rc::new(RefCell::new(tracker));
+
+    for index in 0..length {
+        let value = values.borrow().get(&index.to_string());
+        let promise = promise_resolve_static(vm, vec![JSValue::Undefined, value])?;
+        let on_fulfilled = JSValue::BoundFunction(Box::new(BoundFunctionData {
+            target: Box::new(JSValue::NativeFunction(promise_all_fulfill)),
+            bound_this: JSValue::Object(Rc::clone(&tracker)),
+            bound_args: vec![JSValue::Number(index as f64)],
+        }));
+        let on_rejected = bound_settler(promise_reject, &result);
+        let _ = promise_then(vm, vec![promise, on_fulfilled, on_rejected])?;
+    }
+
+    Ok(JSValue::Object(result))
+}
+
+fn promise_all_fulfill(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let Some(JSValue::Object(tracker)) = args.first() else {
+        return Err(JSError::TypeError(
+            "invalid Promise.all tracker".to_string(),
+        ));
+    };
+    let index = args.get(1).map(JSValue::to_number).unwrap_or(0.0) as usize;
+    let value = args.get(2).cloned().unwrap_or(JSValue::Undefined);
+    let values = tracker.borrow().get("values");
+    if let JSValue::Object(values) = &values {
+        values.borrow_mut().set(index.to_string(), value);
+    }
+
+    let remaining = tracker.borrow().get("remaining").to_number() as usize - 1;
+    tracker
+        .borrow_mut()
+        .set("remaining".to_string(), JSValue::Number(remaining as f64));
+    if remaining == 0
+        && let JSValue::Object(result) = tracker.borrow().get("result")
+    {
+        resolve_promise(vm, &result, values);
+    }
     Ok(JSValue::Undefined)
 }
 
@@ -223,8 +305,22 @@ fn promise_reaction_job(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 
 /// Installs the Promise constructor.
 pub fn install(global: &Rc<RefCell<JSObject>>) {
+    let mut constructor = JSObject::new();
+    constructor.set(
+        "__construct__".to_string(),
+        JSValue::NativeFunction(promise_constructor),
+    );
+    constructor.set(
+        "resolve".to_string(),
+        JSValue::NativeFunction(promise_resolve_static),
+    );
+    constructor.set(
+        "reject".to_string(),
+        JSValue::NativeFunction(promise_reject_static),
+    );
+    constructor.set("all".to_string(), JSValue::NativeFunction(promise_all));
     global.borrow_mut().set(
         "Promise".to_string(),
-        JSValue::NativeFunction(promise_constructor),
+        JSValue::Object(Rc::new(RefCell::new(constructor))),
     );
 }

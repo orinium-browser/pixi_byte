@@ -76,3 +76,49 @@ fn promise_ignores_later_settlement_attempts() {
         JSValue::String("first".into())
     );
 }
+
+#[test]
+fn promise_static_resolve_and_reject_create_settled_promises() {
+    let mut engine = JSEngine::new();
+    engine
+        .eval(
+            r#"
+            let fulfilled = "pending";
+            let rejected = "pending";
+            Promise.resolve("yes").then(function (value) { fulfilled = value; });
+            Promise.reject("no").catch(function (reason) { rejected = reason; });
+            "#,
+        )
+        .unwrap();
+
+    engine.run_jobs().unwrap();
+    assert_eq!(
+        engine.eval("fulfilled").unwrap(),
+        JSValue::String("yes".into())
+    );
+    assert_eq!(
+        engine.eval("rejected").unwrap(),
+        JSValue::String("no".into())
+    );
+}
+
+#[test]
+fn promise_all_preserves_input_order() {
+    let mut engine = JSEngine::new();
+    engine
+        .eval(
+            r#"
+            let combined = "pending";
+            Promise.all([Promise.resolve("first"), "second"]).then(function (values) {
+                combined = values[0] + "-" + values[1];
+            });
+            "#,
+        )
+        .unwrap();
+
+    engine.run_jobs().unwrap();
+    assert_eq!(
+        engine.eval("combined").unwrap(),
+        JSValue::String("first-second".into())
+    );
+}
