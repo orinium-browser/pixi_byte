@@ -62,6 +62,39 @@ fn object_can_expose_an_internal_constructor_entry_point() {
 }
 
 #[test]
+fn new_accepts_member_expression_constructors() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const namespace = {
+                Constructor: function (value) { this.value = value; }
+            };
+            const instance = new namespace.Constructor(42);
+            instance.value;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Number(42.0));
+}
+
+#[test]
+fn implicit_object_expression_does_not_replace_constructor_this() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            function Wrapper(value) { this.value = value; }
+            const internal = { marker: "internal" };
+            const wrapper = new Wrapper(internal);
+            wrapper === internal ? "replaced" : wrapper.value.marker;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("internal".to_string()));
+}
+
+#[test]
 fn arrow_function_is_not_a_constructor() {
     let mut engine = JSEngine::new();
     assert!(engine.eval("new (() => 1)()").is_err());

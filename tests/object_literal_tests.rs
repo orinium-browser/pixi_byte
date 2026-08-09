@@ -30,7 +30,7 @@ fn test_object_literal() {
     let mut engine = JSEngine::new();
 
     // 基本的なオブジェクトリテラル
-    let result = engine.eval(r#"{ name: "Alice", age: 30 }"#).unwrap();
+    let result = engine.eval(r#"({ name: "Alice", age: 30 })"#).unwrap();
     match result {
         JSValue::Object(_) => assert!(true),
         _ => panic!("Expected object for object literal"),
@@ -40,7 +40,7 @@ fn test_object_literal() {
 #[test]
 fn test_object_literal_empty() {
     let mut engine = JSEngine::new();
-    let result = engine.eval("{}").unwrap();
+    let result = engine.eval("({})").unwrap();
     match result {
         JSValue::Object(_) => assert!(true),
         _ => panic!("Expected object for empty object"),

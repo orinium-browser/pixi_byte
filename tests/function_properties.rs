@@ -60,3 +60,41 @@ fn closure_own_properties_are_isolated() {
         .unwrap();
     assert_eq!(result, JSValue::String("first:true".to_string()));
 }
+
+#[test]
+fn chained_prototype_method_assignment_updates_each_constructor() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            function First() {}
+            function Second() {}
+            Second.prototype.render = First.prototype.render = function () {
+                return "ready";
+            };
+            const first = new First();
+            const second = new Second();
+            first.render() + ":" + second.render();
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("ready:ready".to_string()));
+}
+
+#[test]
+fn nested_constructor_keeps_its_assigned_prototype_methods() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            function createInstance() {
+                function Constructor(value) { this.value = value; }
+                Constructor.prototype.render = function () { return this.value; };
+                return new Constructor("ready");
+            }
+            createInstance().render();
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("ready".to_string()));
+}

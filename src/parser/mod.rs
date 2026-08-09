@@ -13,6 +13,7 @@ pub struct Program {
 /// 文
 #[derive(Debug, Clone)]
 pub enum Statement {
+    Empty,
     Block(Vec<Statement>),
     Labeled {
         label: String,
@@ -50,6 +51,7 @@ pub enum Statement {
     },
     ForIn {
         binding: String,
+        kind: Option<VarKind>,
         right: Expression,
         body: Vec<Statement>,
     },
@@ -107,7 +109,7 @@ pub enum Expression {
     Sequence(Vec<Expression>),
     This,
     ArrayLiteral(Vec<Expression>),
-    ObjectLiteral(Vec<(String, Expression)>),
+    ObjectLiteral(Vec<ObjectProperty>),
     RegExpLiteral {
         pattern: String,
         flags: String,
@@ -135,6 +137,23 @@ pub enum Expression {
         body: Vec<Statement>,
     },
     // TODO: 他の式を追加
+}
+
+#[derive(Debug, Clone)]
+pub enum ObjectProperty {
+    Data {
+        key: String,
+        value: Expression,
+    },
+    Getter {
+        key: String,
+        body: Vec<Statement>,
+    },
+    Setter {
+        key: String,
+        parameter: String,
+        body: Vec<Statement>,
+    },
 }
 
 /// リテラル
@@ -243,6 +262,10 @@ impl Parser {
         }
 
         match &self.current().kind {
+            TokenKind::Semicolon => {
+                self.advance()?;
+                Ok(Statement::Empty)
+            }
             TokenKind::LeftBrace => Ok(Statement::Block(self.parse_block()?)),
             TokenKind::Var => self.parse_var_declaration(VarKind::Var),
             TokenKind::Let => self.parse_var_declaration(VarKind::Let),
@@ -422,6 +445,12 @@ impl Parser {
             self.current().kind,
             TokenKind::Var | TokenKind::Let | TokenKind::Const
         ) {
+            let kind = match self.current().kind {
+                TokenKind::Var => VarKind::Var,
+                TokenKind::Let => VarKind::Let,
+                TokenKind::Const => VarKind::Const,
+                _ => unreachable!(),
+            };
             let mut candidate = self.clone();
             candidate.advance()?;
             if matches!(candidate.current().kind, TokenKind::Identifier(_)) {
@@ -430,7 +459,7 @@ impl Parser {
                     self.advance()?;
                     let binding = self.expect_identifier("Expected for-in binding")?;
                     self.expect(&TokenKind::In, "Expected 'in' after for-in binding")?;
-                    return self.parse_for_in_tail(binding);
+                    return self.parse_for_in_tail(binding, Some(kind));
                 }
             }
         } else if matches!(self.current().kind, TokenKind::Identifier(_))
@@ -438,7 +467,7 @@ impl Parser {
         {
             let binding = self.expect_identifier("Expected for-in binding")?;
             self.expect(&TokenKind::In, "Expected 'in' after for-in binding")?;
-            return self.parse_for_in_tail(binding);
+            return self.parse_for_in_tail(binding, None);
         }
 
         let init = if self.eat(&TokenKind::Semicolon)? {
@@ -488,7 +517,7 @@ impl Parser {
         })
     }
 
-    fn parse_for_in_tail(&mut self, binding: String) -> JSResult<Statement> {
+    fn parse_for_in_tail(&mut self, binding: String, kind: Option<VarKind>) -> JSResult<Statement> {
         let right = self.parse_expression()?;
         self.expect(
             &TokenKind::RightParen,
@@ -501,6 +530,7 @@ impl Parser {
         };
         Ok(Statement::ForIn {
             binding,
+            kind,
             right,
             body,
         })
@@ -717,7 +747,8 @@ impl Parser {
 
             self.advance()?;
 
-            let right = self.parse_expression_bp(bp + 1)?;
+            let right =
+                self.parse_expression_bp(if op == BinaryOp::Power { bp } else { bp + 1 })?;
 
             left = Expression::Binary {
                 op,
@@ -916,6 +947,18 @@ impl Parser {
 
                 Ok(Expression::Identifier(s))
             }
+            TokenKind::Of | TokenKind::From | TokenKind::As | TokenKind::Async => {
+                let name = match self.current().kind {
+                    TokenKind::Of => "of",
+                    TokenKind::From => "from",
+                    TokenKind::As => "as",
+                    TokenKind::Async => "async",
+                    _ => unreachable!(),
+                }
+                .to_string();
+                self.advance()?;
+                Ok(Expression::Identifier(name))
+            }
             TokenKind::LeftParen => {
                 self.advance()?;
 
@@ -939,7 +982,30 @@ impl Parser {
 
     fn parse_new_expression(&mut self) -> JSResult<Expression> {
         self.advance()?; // consume 'new'
-        let callee = self.parse_primary()?;
+        let mut callee = self.parse_primary()?;
+        loop {
+            if self.eat(&TokenKind::Dot)? {
+                let property = self.expect_identifier_name("Expected property name")?;
+                callee = Expression::MemberAccess {
+                    object: Box::new(callee),
+                    property: Box::new(Expression::Literal(Literal::String(property))),
+                    computed: false,
+                };
+            } else if self.eat(&TokenKind::LeftBracket)? {
+                let property = self.parse_expression()?;
+                self.expect(
+                    &TokenKind::RightBracket,
+                    "Expected ']' after constructor property",
+                )?;
+                callee = Expression::MemberAccess {
+                    object: Box::new(callee),
+                    property: Box::new(property),
+                    computed: true,
+                };
+            } else {
+                break;
+            }
+        }
         let args = if self.eat(&TokenKind::LeftParen)? {
             let args = self.parse_arguments()?;
             self.expect(
@@ -993,6 +1059,43 @@ impl Parser {
         let mut properties = Vec::new();
 
         while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+            if let TokenKind::Identifier(kind) = &self.current().kind
+                && (kind == "get" || kind == "set")
+                && !matches!(self.next.kind, TokenKind::Colon | TokenKind::Comma)
+            {
+                let is_getter = kind == "get";
+                self.advance()?;
+                let key = self.expect_object_property_key()?;
+                self.expect(&TokenKind::LeftParen, "Expected '(' after accessor name")?;
+                let property = if is_getter {
+                    self.expect(&TokenKind::RightParen, "Expected ')' after getter name")?;
+                    ObjectProperty::Getter {
+                        key,
+                        body: self.parse_block()?,
+                    }
+                } else {
+                    let parameter = self.expect_identifier("Expected setter parameter")?;
+                    self.expect(
+                        &TokenKind::RightParen,
+                        "Expected ')' after setter parameter",
+                    )?;
+                    ObjectProperty::Setter {
+                        key,
+                        parameter,
+                        body: self.parse_block()?,
+                    }
+                };
+                properties.push(property);
+
+                if !self.check(&TokenKind::RightBrace) && !self.eat(&TokenKind::Comma)? {
+                    return Err(JSError::SyntaxError(
+                        "Expected ',' or '}' in object literal".into(),
+                        self.current().span,
+                    ));
+                }
+                continue;
+            }
+
             let (key, shorthand) = match &self.current().kind {
                 TokenKind::String(key) => {
                     let key = key.clone();
@@ -1023,7 +1126,7 @@ impl Parser {
                 ));
             };
 
-            properties.push((key, value));
+            properties.push(ObjectProperty::Data { key, value });
 
             if !self.check(&TokenKind::RightBrace) && !self.eat(&TokenKind::Comma)? {
                 return Err(JSError::SyntaxError(
@@ -1036,6 +1139,17 @@ impl Parser {
         self.expect(&TokenKind::RightBrace, "Expected '}'")?;
 
         Ok(Expression::ObjectLiteral(properties))
+    }
+
+    fn expect_object_property_key(&mut self) -> JSResult<String> {
+        match &self.current().kind {
+            TokenKind::String(key) | TokenKind::NumberLiteral(key) => {
+                let key = key.clone();
+                self.advance()?;
+                Ok(key)
+            }
+            _ => self.expect_identifier_name("Expected property key"),
+        }
     }
 
     /// セミコロンを消費
@@ -1107,19 +1221,22 @@ impl Parser {
 
     /// Read identifier
     fn expect_identifier(&mut self, message: &str) -> JSResult<String> {
-        match &self.current().kind {
-            TokenKind::Identifier(s) => {
-                let s = s.clone();
-
-                self.advance()?;
-
-                Ok(s)
-            }
-
-            _ => Err(JSError::SyntaxError(
+        let identifier = match &self.current().kind {
+            TokenKind::Identifier(identifier) => Some(identifier.clone()),
+            TokenKind::Of => Some("of".to_string()),
+            TokenKind::From => Some("from".to_string()),
+            TokenKind::As => Some("as".to_string()),
+            TokenKind::Async => Some("async".to_string()),
+            _ => None,
+        };
+        if let Some(identifier) = identifier {
+            self.advance()?;
+            Ok(identifier)
+        } else {
+            Err(JSError::SyntaxError(
                 format!("{}: found {:?}", message, self.current().kind),
                 self.current().span,
-            )),
+            ))
         }
     }
 
@@ -1185,28 +1302,41 @@ fn precedence(kind: &TokenKind) -> Option<(u8, BinaryOp)> {
         TokenKind::Or => Some((1, BinaryOp::Or)),
         TokenKind::And => Some((2, BinaryOp::And)),
 
+        // bitwise
+        TokenKind::BitOr => Some((3, BinaryOp::BitOr)),
+        TokenKind::BitXor => Some((4, BinaryOp::BitXor)),
+        TokenKind::BitAnd => Some((5, BinaryOp::BitAnd)),
+
         // equality
-        TokenKind::EqEqEq => Some((3, BinaryOp::StrictEq)),
-        TokenKind::EqEq => Some((3, BinaryOp::Eq)),
-        TokenKind::NotEqEq => Some((3, BinaryOp::StrictNotEq)),
-        TokenKind::NotEq => Some((3, BinaryOp::NotEq)),
+        TokenKind::EqEqEq => Some((6, BinaryOp::StrictEq)),
+        TokenKind::EqEq => Some((6, BinaryOp::Eq)),
+        TokenKind::NotEqEq => Some((6, BinaryOp::StrictNotEq)),
+        TokenKind::NotEq => Some((6, BinaryOp::NotEq)),
 
         // relational
-        TokenKind::Lt => Some((4, BinaryOp::Lt)),
-        TokenKind::Gt => Some((4, BinaryOp::Gt)),
-        TokenKind::LtEq => Some((4, BinaryOp::LtEq)),
-        TokenKind::GtEq => Some((4, BinaryOp::GtEq)),
-        TokenKind::In => Some((4, BinaryOp::In)),
-        TokenKind::Instanceof => Some((4, BinaryOp::Instanceof)),
+        TokenKind::Lt => Some((7, BinaryOp::Lt)),
+        TokenKind::Gt => Some((7, BinaryOp::Gt)),
+        TokenKind::LtEq => Some((7, BinaryOp::LtEq)),
+        TokenKind::GtEq => Some((7, BinaryOp::GtEq)),
+        TokenKind::In => Some((7, BinaryOp::In)),
+        TokenKind::Instanceof => Some((7, BinaryOp::Instanceof)),
+
+        // shift
+        TokenKind::LeftShift => Some((8, BinaryOp::LeftShift)),
+        TokenKind::RightShift => Some((8, BinaryOp::RightShift)),
+        TokenKind::UnsignedRightShift => Some((8, BinaryOp::UnsignedRightShift)),
 
         // additive
-        TokenKind::Plus => Some((5, BinaryOp::Add)),
-        TokenKind::Minus => Some((5, BinaryOp::Sub)),
+        TokenKind::Plus => Some((9, BinaryOp::Add)),
+        TokenKind::Minus => Some((9, BinaryOp::Sub)),
 
         // multiplicative
-        TokenKind::Star => Some((6, BinaryOp::Mul)),
-        TokenKind::Slash => Some((6, BinaryOp::Div)),
-        TokenKind::Percent => Some((6, BinaryOp::Mod)),
+        TokenKind::Star => Some((10, BinaryOp::Mul)),
+        TokenKind::Slash => Some((10, BinaryOp::Div)),
+        TokenKind::Percent => Some((10, BinaryOp::Mod)),
+
+        // exponentiation (right associative)
+        TokenKind::Power => Some((11, BinaryOp::Power)),
 
         _ => None,
     }

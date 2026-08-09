@@ -34,3 +34,20 @@ fn object_assign_copies_sources_from_left_to_right() {
 
     assert_eq!(result, JSValue::Boolean(true));
 }
+
+#[test]
+fn extracted_object_assign_uses_its_first_argument_as_the_target() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const assign = Object.assign;
+            const target = {};
+            const returned = assign(target, { value: 42 });
+            returned === target && target.value === 42 && typeof globalThis.value === "undefined";
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::Boolean(true));
+}

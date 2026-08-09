@@ -1,5 +1,27 @@
+use pixi_byte::JSEngine;
 use pixi_byte::value::JSValue;
 use pixi_byte::vm::VM;
+
+#[test]
+fn inherited_accessors_receive_the_original_receiver() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const prototype = {};
+            Object.defineProperty(prototype, "value", {
+                get: function () { return this._value; },
+                set: function (next) { this._value = next; }
+            });
+            const target = Object.create(prototype);
+            target.value = "tracked";
+            target.value;
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::String("tracked".to_string()));
+}
 
 #[test]
 fn getter_receives_this() {
@@ -31,16 +53,19 @@ fn getter_receives_this() {
     let global = vm.global_object.clone();
     let obj_global = global.borrow().get("Object");
     if let JSValue::Object(obj_ref) = obj_global {
-        if let JSValue::NativeFunction(def_fn) = obj_ref.borrow().get("defineProperty") {
-            let _ = def_fn(
-                &mut vm,
-                vec![
-                    JSValue::Object(target_rc.clone()),
-                    JSValue::String("a".to_string()),
-                    JSValue::Object(desc_inner_rc.clone()),
-                ],
-            )
-            .unwrap();
+        let define_property = obj_ref.borrow().get("defineProperty");
+        if matches!(define_property, JSValue::NativeFunction(_)) {
+            let _ = vm
+                .call(
+                    define_property,
+                    JSValue::Object(obj_ref),
+                    vec![
+                        JSValue::Object(target_rc.clone()),
+                        JSValue::String("a".to_string()),
+                        JSValue::Object(desc_inner_rc.clone()),
+                    ],
+                )
+                .unwrap();
         } else {
             panic!("defineProperty not callable");
         }
@@ -96,16 +121,19 @@ fn setter_updates_internal_state() {
     let global = vm.global_object.clone();
     let obj_global = global.borrow().get("Object");
     if let JSValue::Object(obj_ref) = obj_global {
-        if let JSValue::NativeFunction(def_fn) = obj_ref.borrow().get("defineProperty") {
-            let _ = def_fn(
-                &mut vm,
-                vec![
-                    JSValue::Object(target_rc.clone()),
-                    JSValue::String("a".to_string()),
-                    JSValue::Object(desc_inner_rc.clone()),
-                ],
-            )
-            .unwrap();
+        let define_property = obj_ref.borrow().get("defineProperty");
+        if matches!(define_property, JSValue::NativeFunction(_)) {
+            let _ = vm
+                .call(
+                    define_property,
+                    JSValue::Object(obj_ref),
+                    vec![
+                        JSValue::Object(target_rc.clone()),
+                        JSValue::String("a".to_string()),
+                        JSValue::Object(desc_inner_rc.clone()),
+                    ],
+                )
+                .unwrap();
         } else {
             panic!("defineProperty not callable");
         }
@@ -208,4 +236,23 @@ fn host_property_hooks_handle_missing_properties() {
     read.emit(pixi_byte::compiler::Opcode::Return);
 
     assert_eq!(vm.execute(&read).unwrap().to_string(), "read:color");
+}
+
+#[test]
+fn method_call_resolves_an_accessor_getter() {
+    let mut engine = pixi_byte::JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const object = {
+                value: 7,
+                get method() {
+                    return function () { return this.value; };
+                }
+            };
+            object.method();
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Number(7.0));
 }

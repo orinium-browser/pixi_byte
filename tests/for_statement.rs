@@ -41,3 +41,10 @@ fn supports_expression_initializer_and_single_statement_body() {
         .unwrap();
     assert_eq!(result.to_number(), 6.0);
 }
+
+#[test]
+fn supports_an_empty_statement_as_the_loop_body() {
+    let mut engine = JSEngine::new();
+    let result = engine.eval("let i = 0; for (; i < 3; i++); i;").unwrap();
+    assert_eq!(result.to_number(), 3.0);
+}

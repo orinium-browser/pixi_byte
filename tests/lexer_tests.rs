@@ -45,17 +45,31 @@ fn test_weird_number_digits() {
 
 #[test]
 fn test_tokenize_operators() {
-    let lexer = Lexer::new("+ - * / % ** ++ --");
-    let tokens = lexer.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
+    let lexer = Lexer::new("a + b - c * d / e % f ** g; h++; --i");
+    let operators = lexer
+        .iter()
+        .map(|token| token.unwrap().kind)
+        .filter(|kind| {
+            !matches!(
+                kind,
+                TokenKind::Identifier(_) | TokenKind::Semicolon | TokenKind::Eof
+            )
+        })
+        .collect::<Vec<_>>();
 
-    assert_eq!(tokens[0].kind, TokenKind::Plus);
-    assert_eq!(tokens[1].kind, TokenKind::Minus);
-    assert_eq!(tokens[2].kind, TokenKind::Star);
-    assert_eq!(tokens[3].kind, TokenKind::Slash);
-    assert_eq!(tokens[4].kind, TokenKind::Percent);
-    assert_eq!(tokens[5].kind, TokenKind::Power);
-    assert_eq!(tokens[6].kind, TokenKind::PlusPlus);
-    assert_eq!(tokens[7].kind, TokenKind::MinusMinus);
+    assert_eq!(
+        operators,
+        vec![
+            TokenKind::Plus,
+            TokenKind::Minus,
+            TokenKind::Star,
+            TokenKind::Slash,
+            TokenKind::Percent,
+            TokenKind::Power,
+            TokenKind::PlusPlus,
+            TokenKind::MinusMinus,
+        ]
+    );
 }
 
 #[test]

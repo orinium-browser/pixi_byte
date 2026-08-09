@@ -35,3 +35,14 @@ fn test_keyword_after_dot_is_an_identifier_name() {
 
     assert_eq!(program.body.len(), 1);
 }
+
+#[test]
+fn contextual_keywords_are_allowed_as_function_names() {
+    let mut engine = pixi_byte::JSEngine::new();
+    assert_eq!(
+        engine
+            .eval("function of(value) { return value; } of(42);")
+            .unwrap(),
+        pixi_byte::JSValue::Number(42.0)
+    );
+}

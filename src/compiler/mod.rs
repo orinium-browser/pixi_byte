@@ -1,6 +1,9 @@
 use crate::error::{JSError, JSResult};
-use crate::parser::{BinaryOp, Expression, Literal, Program, Statement, UnaryOp};
+use crate::parser::{
+    BinaryOp, Expression, Literal, ObjectProperty, Program, Statement, UnaryOp, VarKind,
+};
 use crate::value::JSValue;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_BYTECODE_ID: AtomicU64 = AtomicU64::new(1);
@@ -9,12 +12,13 @@ static NEXT_BYTECODE_ID: AtomicU64 = AtomicU64::new(1);
 #[derive(Debug, Clone, PartialEq)]
 pub enum Opcode {
     // スタック操作
-    LoadConst(usize), // 定数をスタックにロード
-    LoadVar(String),  // 変数をスタックにロード
-    StoreVar(String), // スタックトップを変数に格納
-    Pop,              // スタックトップを削除
-    Dup,              // スタックトップを複製
-    Dup2,             // スタックトップの2値を複製
+    LoadConst(usize),  // 定数をスタックにロード
+    LoadVar(String),   // 変数をスタックにロード
+    StoreVar(String),  // スタックトップを変数に格納
+    DefineVar(String), // スタックトップを現在のスコープへ新しく束縛
+    Pop,               // スタックトップを削除
+    Dup,               // スタックトップを複製
+    Dup2,              // スタックトップの2値を複製
 
     LoadThis,
 
@@ -65,6 +69,8 @@ pub enum Opcode {
     DeleteProperty,     // delete obj[key] - スタックから key, obj をポップ
     ArrayPush,          // arr.push(value) - スタックから index, value をポップ、arr は残る
     ObjectSetProperty,  // obj[key] = value - スタックから key, value をポップ、obj は残る
+    ObjectDefineGetter, // object literal getter; object remains on the stack
+    ObjectDefineSetter, // object literal setter; object remains on the stack
     Enumerate,          // for-in用の列挙可能なプロパティ名配列を生成
 
     // 関数操作
@@ -207,6 +213,7 @@ impl Compiler {
 
     /// ASTをバイトコードにコンパイル
     pub fn compile(mut self, program: Program) -> JSResult<BytecodeChunk> {
+        self.emit_var_declarations(&program.body);
         let mut executable = Vec::new();
         for statement in program.body {
             if matches!(&statement, Statement::FunctionDeclaration { .. }) {
@@ -225,9 +232,47 @@ impl Compiler {
         Ok(self.chunk)
     }
 
+    fn compile_function(mut self, program: Program) -> JSResult<BytecodeChunk> {
+        self.emit_var_declarations(&program.body);
+        let mut executable = Vec::new();
+        for statement in program.body {
+            if matches!(&statement, Statement::FunctionDeclaration { .. }) {
+                self.compile_statement(statement, false)?;
+            } else {
+                executable.push(statement);
+            }
+        }
+        for statement in executable {
+            self.compile_statement(statement, false)?;
+        }
+        let undefined = self.chunk.add_constant(JSValue::Undefined);
+        self.chunk.emit(Opcode::LoadConst(undefined));
+        self.chunk.emit(Opcode::Return);
+        Ok(self.chunk)
+    }
+
+    fn emit_var_declarations(&mut self, statements: &[Statement]) {
+        let mut names = Vec::new();
+        collect_var_declarations(statements, &mut names);
+        let mut emitted = HashSet::new();
+        for name in names {
+            if emitted.insert(name.clone()) {
+                let undefined = self.chunk.add_constant(JSValue::Undefined);
+                self.chunk.emit(Opcode::LoadConst(undefined));
+                self.chunk.emit(Opcode::DefineVar(name));
+            }
+        }
+    }
+
     /// ステートメントをコンパイル
     fn compile_statement(&mut self, statement: Statement, is_last: bool) -> JSResult<()> {
         match statement {
+            Statement::Empty => {
+                if is_last {
+                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    self.chunk.emit(Opcode::LoadConst(undefined));
+                }
+            }
             Statement::Block(body) => {
                 self.compile_statements(body, is_last)?;
             }
@@ -267,10 +312,7 @@ impl Compiler {
                     self.chunk.emit(Opcode::Pop);
                 }
             }
-            Statement::VariableDeclaration {
-                kind: _,
-                declarations,
-            } => {
+            Statement::VariableDeclaration { kind, declarations } => {
                 for (name, init) in declarations {
                     if let Some(expr) = init {
                         self.compile_expression(expr)?;
@@ -278,7 +320,11 @@ impl Compiler {
                         let idx = self.chunk.add_constant(JSValue::Undefined);
                         self.chunk.emit(Opcode::LoadConst(idx));
                     }
-                    self.chunk.emit(Opcode::StoreVar(name));
+                    self.chunk.emit(if kind == VarKind::Var {
+                        Opcode::StoreVar(name)
+                    } else {
+                        Opcode::DefineVar(name)
+                    });
                 }
 
                 // 変数宣言の文は常にundefinedを返す
@@ -299,7 +345,7 @@ impl Compiler {
             Statement::FunctionDeclaration { name, params, body } => {
                 // 関数本体をコンパイル
                 let program = Program { body };
-                let function_chunk = Compiler::new().compile(program)?;
+                let function_chunk = Compiler::new().compile_function(program)?;
 
                 // 現在のチャンクに関数を追加 (chunk, params)
                 let idx = self.chunk.add_constant(JSValue::Function(
@@ -312,7 +358,7 @@ impl Compiler {
                 self.chunk.emit(Opcode::CreateFunction(idx));
 
                 // 関数名を変数としてストア
-                self.chunk.emit(Opcode::StoreVar(name));
+                self.chunk.emit(Opcode::DefineVar(name));
             }
             Statement::If {
                 test,
@@ -456,6 +502,7 @@ impl Compiler {
             }
             Statement::ForIn {
                 binding,
+                kind,
                 right,
                 body,
             } => {
@@ -466,10 +513,15 @@ impl Compiler {
 
                 self.compile_expression(right)?;
                 self.chunk.emit(Opcode::Enumerate);
-                self.chunk.emit(Opcode::StoreVar(keys.clone()));
+                self.chunk.emit(Opcode::DefineVar(keys.clone()));
                 let zero = self.chunk.add_constant(JSValue::Number(0.0));
                 self.chunk.emit(Opcode::LoadConst(zero));
-                self.chunk.emit(Opcode::StoreVar(index.clone()));
+                self.chunk.emit(Opcode::DefineVar(index.clone()));
+                if matches!(kind, Some(VarKind::Let | VarKind::Const)) {
+                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    self.chunk.emit(Opcode::LoadConst(undefined));
+                    self.chunk.emit(Opcode::DefineVar(binding.clone()));
+                }
 
                 let loop_start = self.chunk.code.len();
                 self.chunk.emit(Opcode::LoadVar(index.clone()));
@@ -552,7 +604,7 @@ impl Compiler {
                         });
                     }
                     if let Some(binding) = binding {
-                        self.chunk.emit(Opcode::StoreVar(binding));
+                        self.chunk.emit(Opcode::DefineVar(binding));
                     } else {
                         self.chunk.emit(Opcode::Pop);
                     }
@@ -603,7 +655,7 @@ impl Compiler {
                 let temporary = format!("__pixi_switch_{}", self.next_temporary);
                 self.next_temporary += 1;
                 self.compile_expression(discriminant)?;
-                self.chunk.emit(Opcode::StoreVar(temporary.clone()));
+                self.chunk.emit(Opcode::DefineVar(temporary.clone()));
 
                 let mut case_jumps = Vec::new();
                 for (case_index, (test, _)) in cases.iter().enumerate() {
@@ -982,14 +1034,38 @@ impl Compiler {
                 self.chunk.emit(Opcode::NewObject);
 
                 // 各プロパティを設定
-                for (key, value) in properties {
-                    // 値をコンパイル
+                for property in properties {
+                    let (key, value, opcode) = match property {
+                        ObjectProperty::Data { key, value } => {
+                            (key, value, Opcode::ObjectSetProperty)
+                        }
+                        ObjectProperty::Getter { key, body } => (
+                            key,
+                            Expression::Function {
+                                name: None,
+                                params: Vec::new(),
+                                body,
+                            },
+                            Opcode::ObjectDefineGetter,
+                        ),
+                        ObjectProperty::Setter {
+                            key,
+                            parameter,
+                            body,
+                        } => (
+                            key,
+                            Expression::Function {
+                                name: None,
+                                params: vec![parameter],
+                                body,
+                            },
+                            Opcode::ObjectDefineSetter,
+                        ),
+                    };
                     self.compile_expression(value)?;
-                    // キーをプッシュ
                     let key_idx = self.chunk.add_constant(JSValue::String(key));
                     self.chunk.emit(Opcode::LoadConst(key_idx));
-                    // スタック: [object, value, key]
-                    self.chunk.emit(Opcode::ObjectSetProperty);
+                    self.chunk.emit(opcode);
                 }
             }
             Expression::RegExpLiteral { pattern, flags } => {
@@ -1014,7 +1090,7 @@ impl Compiler {
             Expression::Function { name, params, body } => {
                 // 関数本体をコンパイル
                 let program = Program { body };
-                let function_chunk = Compiler::new().compile(program)?;
+                let function_chunk = Compiler::new().compile_function(program)?;
 
                 // 現在のチャンクに関数オブジェクト（チャンク + params）を追加
                 // 関数式の場合は name があれば保持する
@@ -1025,7 +1101,7 @@ impl Compiler {
             }
             Expression::ArrowFunction { params, body } => {
                 let program = Program { body };
-                let function_chunk = Compiler::new().compile(program)?;
+                let function_chunk = Compiler::new().compile_function(program)?;
                 let func_value =
                     JSValue::ArrowFunction(function_chunk, params.clone(), None, None, 0);
                 let idx = self.chunk.add_constant(func_value);
@@ -1070,6 +1146,75 @@ impl Compiler {
             }
         }
         Ok(())
+    }
+}
+
+fn collect_var_declarations(statements: &[Statement], names: &mut Vec<String>) {
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration { kind, declarations } if *kind == VarKind::Var => {
+                names.extend(declarations.iter().map(|(name, _)| name.clone()));
+            }
+            Statement::Block(body)
+            | Statement::While { body, .. }
+            | Statement::DoWhile { body, .. } => collect_var_declarations(body, names),
+            Statement::Labeled { body, .. } => {
+                collect_var_declarations(std::slice::from_ref(body.as_ref()), names);
+            }
+            Statement::If {
+                consequent,
+                alternate,
+                ..
+            } => {
+                collect_var_declarations(consequent, names);
+                if let Some(alternate) = alternate {
+                    collect_var_declarations(alternate, names);
+                }
+            }
+            Statement::For { init, body, .. } => {
+                if let Some(init) = init {
+                    collect_var_declarations(std::slice::from_ref(init.as_ref()), names);
+                }
+                collect_var_declarations(body, names);
+            }
+            Statement::ForIn {
+                binding,
+                kind,
+                body,
+                ..
+            } => {
+                if *kind == Some(VarKind::Var) {
+                    names.push(binding.clone());
+                }
+                collect_var_declarations(body, names);
+            }
+            Statement::Try {
+                block,
+                handler,
+                finalizer,
+            } => {
+                collect_var_declarations(block, names);
+                if let Some((_, body)) = handler {
+                    collect_var_declarations(body, names);
+                }
+                if let Some(finalizer) = finalizer {
+                    collect_var_declarations(finalizer, names);
+                }
+            }
+            Statement::Switch { cases, .. } => {
+                for (_, body) in cases {
+                    collect_var_declarations(body, names);
+                }
+            }
+            Statement::Empty
+            | Statement::Expression(_)
+            | Statement::VariableDeclaration { .. }
+            | Statement::Return(_)
+            | Statement::FunctionDeclaration { .. }
+            | Statement::Throw(_)
+            | Statement::Break(_)
+            | Statement::Continue(_) => {}
+        }
     }
 }
 

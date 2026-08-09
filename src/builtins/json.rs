@@ -57,7 +57,7 @@ fn serialize(
                 ));
             }
 
-            let (is_array, entries) = {
+            let (is_array, entries): (bool, Vec<(String, JSValue)>) = {
                 let object = object.borrow();
                 let is_array = matches!(object.get("__pixi_array__"), JSValue::Boolean(true));
                 if is_array {

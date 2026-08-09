@@ -11,10 +11,13 @@ use std::rc::Rc;
 
 fn object_static_arguments(vm: &crate::vm::VM, mut args: Vec<JSValue>) -> Vec<JSValue> {
     let constructor = vm.global_object.borrow().get("Object");
-    if let (Some(JSValue::Object(receiver)), JSValue::Object(constructor)) =
-        (args.first(), constructor)
-        && Rc::ptr_eq(receiver, &constructor)
-    {
+    let has_receiver = match (args.first(), constructor) {
+        (Some(JSValue::Object(receiver)), JSValue::Object(constructor)) => {
+            Rc::ptr_eq(receiver, &vm.global_object) || Rc::ptr_eq(receiver, &constructor)
+        }
+        _ => false,
+    };
+    if has_receiver {
         args.remove(0);
     }
     args
@@ -561,21 +564,18 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
 
     // Create Object.prototype and attach methods (e.g., hasOwnProperty)
     let mut proto = JSObject::new();
-    proto.set(
+    proto.define_property(
         "hasOwnProperty".to_string(),
-        JSValue::NativeFunction(object_has_own_property),
+        builtin_method(object_has_own_property),
     );
-    proto.set(
+    proto.define_property(
         "isPrototypeOf".to_string(),
-        JSValue::NativeFunction(object_is_prototype_of),
+        builtin_method(object_is_prototype_of),
     );
-    proto.set(
-        "toString".to_string(),
-        JSValue::NativeFunction(object_to_string),
-    );
-    proto.set(
+    proto.define_property("toString".to_string(), builtin_method(object_to_string));
+    proto.define_property(
         "propertyIsEnumerable".to_string(),
-        JSValue::NativeFunction(object_property_is_enumerable),
+        builtin_method(object_property_is_enumerable),
     );
 
     // Define __proto__ accessor on Object.prototype
@@ -636,4 +636,15 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         "Object".to_string(),
         JSValue::Object(Rc::new(RefCell::new(obj))),
     );
+}
+
+fn builtin_method(function: crate::NativeFunctionType) -> crate::value::jsobject::Property {
+    crate::value::jsobject::Property {
+        value: JSValue::NativeFunction(function),
+        enumerable: false,
+        writable: true,
+        configurable: true,
+        getter: None,
+        setter: None,
+    }
 }

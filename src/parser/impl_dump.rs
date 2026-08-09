@@ -1,4 +1,4 @@
-use crate::parser::{Expression, Literal, Program, Statement};
+use crate::parser::{Expression, Literal, ObjectProperty, Program, Statement};
 
 impl Program {
     pub fn dump(&self) {
@@ -21,6 +21,7 @@ impl Statement {
         };
 
         match self {
+            Statement::Empty => println!("{prefix}{branch}Empty"),
             Statement::Block(body) => {
                 println!("{prefix}{branch}Block");
                 for (index, statement) in body.iter().enumerate() {
@@ -135,6 +136,7 @@ impl Statement {
             }
             Statement::ForIn {
                 binding,
+                kind: _,
                 right,
                 body,
             } => {
@@ -342,14 +344,21 @@ impl Expression {
             Expression::ObjectLiteral(props) => {
                 println!("{prefix}{branch}Object");
 
-                for (i, (name, value)) in props.iter().enumerate() {
+                for (i, property) in props.iter().enumerate() {
                     let is_last = i == props.len() - 1;
-
                     let prop_branch = if is_last { "└─ " } else { "├─ " };
-
-                    println!("{next_prefix}{prop_branch}{name}");
-
-                    value.dump_impl(format!("{next_prefix}│  "), true);
+                    match property {
+                        ObjectProperty::Data { key, value } => {
+                            println!("{next_prefix}{prop_branch}{key}");
+                            value.dump_impl(format!("{next_prefix}│  "), true);
+                        }
+                        ObjectProperty::Getter { key, .. } => {
+                            println!("{next_prefix}{prop_branch}get {key}");
+                        }
+                        ObjectProperty::Setter { key, .. } => {
+                            println!("{next_prefix}{prop_branch}set {key}");
+                        }
+                    }
                 }
             }
 

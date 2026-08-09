@@ -34,7 +34,7 @@ fn test_vm_execute_variable() {
 #[test]
 fn test_vm_execute_add_function() {
     let source = r#"
-        function add(a,b) {a + b}
+        function add(a,b) { return a + b; }
 
         add(098,2)
         "#;
