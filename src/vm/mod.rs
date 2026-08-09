@@ -268,6 +268,25 @@ impl VM {
                             return Ok(ControlFlow::Continue);
                         }
 
+                        let host_getter = {
+                            obj_ref
+                                .borrow()
+                                .get(crate::value::jsobject::HOST_GET_PROPERTY)
+                        };
+
+                        if matches!(
+                            &host_getter,
+                            JSValue::Function(..)
+                                | JSValue::ArrowFunction(..)
+                                | JSValue::NativeFunction(..)
+                                | JSValue::BoundFunction(..)
+                        ) {
+                            let result = self.call(host_getter, obj.clone(), vec![key.clone()])?;
+                            self.stack.push(result);
+
+                            return Ok(ControlFlow::Continue);
+                        }
+
                         let value = obj_ref.borrow().get(&key_str);
 
                         self.stack.push(value);
@@ -303,6 +322,29 @@ impl VM {
 
                                 return Ok(ControlFlow::Continue);
                             }
+                        }
+
+                        let host_setter = {
+                            obj_ref
+                                .borrow()
+                                .get(crate::value::jsobject::HOST_SET_PROPERTY)
+                        };
+
+                        if matches!(
+                            &host_setter,
+                            JSValue::Function(..)
+                                | JSValue::ArrowFunction(..)
+                                | JSValue::NativeFunction(..)
+                                | JSValue::BoundFunction(..)
+                        ) {
+                            self.call(
+                                host_setter,
+                                obj.clone(),
+                                vec![key.clone(), value.clone()],
+                            )?;
+                            self.stack.push(obj.clone());
+
+                            return Ok(ControlFlow::Continue);
                         }
 
                         obj_ref.borrow_mut().set(key_str, value);

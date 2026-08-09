@@ -7,6 +7,12 @@ use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Property name used by host objects to handle otherwise missing reads.
+pub const HOST_GET_PROPERTY: &str = "__host_get_property__";
+
+/// Property name used by host objects to handle otherwise missing writes.
+pub const HOST_SET_PROPERTY: &str = "__host_set_property__";
+
 /// JavaScript オブジェクトの内部表現
 #[derive(Debug, Clone)]
 pub struct JSObject {

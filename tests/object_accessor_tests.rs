@@ -154,3 +154,58 @@ fn accessor_descriptor_enumeration() {
     let keys = target_rc.borrow().keys();
     assert!(keys.contains(&"a".to_string()));
 }
+
+#[test]
+fn host_property_hooks_handle_missing_properties() {
+    let mut vm = VM::new();
+
+    let mut target = pixi_byte::value::jsobject::JSObject::new();
+    target.set(
+        pixi_byte::value::jsobject::HOST_GET_PROPERTY.to_string(),
+        JSValue::NativeFunction(|_vm, args| {
+            Ok(JSValue::String(format!("read:{}", args[1].to_string())))
+        }),
+    );
+    target.set(
+        pixi_byte::value::jsobject::HOST_SET_PROPERTY.to_string(),
+        JSValue::NativeFunction(|_vm, args| {
+            if let JSValue::Object(receiver) = &args[0] {
+                receiver
+                    .borrow_mut()
+                    .set("observed_key".to_string(), args[1].clone());
+                receiver
+                    .borrow_mut()
+                    .set("observed_value".to_string(), args[2].clone());
+            }
+            Ok(JSValue::Undefined)
+        }),
+    );
+    let target = std::rc::Rc::new(std::cell::RefCell::new(target));
+
+    let mut write = pixi_byte::compiler::BytecodeChunk::new();
+    let object = write.add_constant(JSValue::Object(target.clone()));
+    let key = write.add_constant(JSValue::String("backgroundColor".to_string()));
+    let value = write.add_constant(JSValue::String("red".to_string()));
+    write.emit(pixi_byte::compiler::Opcode::LoadConst(object));
+    write.emit(pixi_byte::compiler::Opcode::LoadConst(key));
+    write.emit(pixi_byte::compiler::Opcode::LoadConst(value));
+    write.emit(pixi_byte::compiler::Opcode::SetProperty);
+    write.emit(pixi_byte::compiler::Opcode::Return);
+    vm.execute(&write).unwrap();
+
+    assert_eq!(
+        target.borrow().get("observed_key").to_string(),
+        "backgroundColor"
+    );
+    assert_eq!(target.borrow().get("observed_value").to_string(), "red");
+
+    let mut read = pixi_byte::compiler::BytecodeChunk::new();
+    let object = read.add_constant(JSValue::Object(target));
+    let key = read.add_constant(JSValue::String("color".to_string()));
+    read.emit(pixi_byte::compiler::Opcode::LoadConst(object));
+    read.emit(pixi_byte::compiler::Opcode::LoadConst(key));
+    read.emit(pixi_byte::compiler::Opcode::GetProperty);
+    read.emit(pixi_byte::compiler::Opcode::Return);
+
+    assert_eq!(vm.execute(&read).unwrap().to_string(), "read:color");
+}
