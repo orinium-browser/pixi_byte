@@ -346,7 +346,7 @@ impl Parser {
 
         loop {
             if self.eat(&TokenKind::Dot)? {
-                let property = self.expect_identifier("Expected property name")?;
+                let property = self.expect_identifier_name("Expected property name")?;
 
                 expr = Expression::MemberAccess {
                     object: Box::new(expr),
@@ -620,6 +620,56 @@ impl Parser {
                 self.current().span,
             )),
         }
+    }
+
+    fn expect_identifier_name(&mut self, message: &str) -> JSResult<String> {
+        let name = match &self.current().kind {
+            TokenKind::Identifier(name) => name.as_str(),
+            TokenKind::True => "true",
+            TokenKind::False => "false",
+            TokenKind::Null => "null",
+            TokenKind::Undefined => "undefined",
+            TokenKind::Let => "let",
+            TokenKind::Const => "const",
+            TokenKind::Var => "var",
+            TokenKind::Function => "function",
+            TokenKind::Return => "return",
+            TokenKind::If => "if",
+            TokenKind::Else => "else",
+            TokenKind::For => "for",
+            TokenKind::While => "while",
+            TokenKind::Break => "break",
+            TokenKind::Continue => "continue",
+            TokenKind::Class => "class",
+            TokenKind::New => "new",
+            TokenKind::This => "this",
+            TokenKind::Super => "super",
+            TokenKind::Import => "import",
+            TokenKind::Export => "export",
+            TokenKind::From => "from",
+            TokenKind::As => "as",
+            TokenKind::Async => "async",
+            TokenKind::Await => "await",
+            TokenKind::Try => "try",
+            TokenKind::Catch => "catch",
+            TokenKind::Finally => "finally",
+            TokenKind::Throw => "throw",
+            TokenKind::Typeof => "typeof",
+            TokenKind::Delete => "delete",
+            TokenKind::Void => "void",
+            TokenKind::In => "in",
+            TokenKind::Of => "of",
+            TokenKind::Instanceof => "instanceof",
+            _ => {
+                return Err(JSError::SyntaxError(
+                    format!("{}: found {}", message, self.current().kind),
+                    self.current().span,
+                ));
+            }
+        }
+        .to_string();
+        self.advance()?;
+        Ok(name)
     }
 }
 

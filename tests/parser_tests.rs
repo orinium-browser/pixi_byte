@@ -26,3 +26,12 @@ fn test_parse_var_declaration() {
 
     assert_eq!(program.body.len(), 1);
 }
+
+#[test]
+fn test_keyword_after_dot_is_an_identifier_name() {
+    let lexer = Lexer::new("promise.catch(handler)");
+    let mut parser = Parser::new(lexer).unwrap();
+    let program = parser.parse().unwrap();
+
+    assert_eq!(program.body.len(), 1);
+}
