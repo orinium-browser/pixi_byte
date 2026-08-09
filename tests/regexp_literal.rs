@@ -28,3 +28,18 @@ fn division_is_not_tokenized_as_a_regexp() {
     let mut engine = JSEngine::new();
     assert_eq!(engine.eval("12 / 3 / 2").unwrap(), JSValue::Number(2.0));
 }
+
+#[test]
+fn javascript_unicode_escapes_are_supported_in_regexp_literals() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            /^[\u00C0-\u00D6]+$/.test("ÀÖ")
+                && "a\0b�c".replace(/\u0000|\uFFFD/g, "-") === "a-b-c";
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::Boolean(true));
+}

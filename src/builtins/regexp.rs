@@ -13,9 +13,44 @@ use crate::vm::VM;
 const PATTERN: &str = "__regexp_pattern";
 const FLAGS: &str = "__regexp_flags";
 
+fn normalize_pattern(pattern: &str) -> String {
+    let characters: Vec<char> = pattern.chars().collect();
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0;
+    while index < characters.len() {
+        if characters[index] != '\\' {
+            output.push(characters[index]);
+            index += 1;
+            continue;
+        }
+        if characters.get(index + 1) == Some(&'\\') {
+            output.push('\\');
+            output.push('\\');
+            index += 2;
+            continue;
+        }
+        if characters.get(index + 1) == Some(&'u')
+            && index + 5 < characters.len()
+            && characters[index + 2..=index + 5]
+                .iter()
+                .all(|character| character.is_ascii_hexdigit())
+        {
+            output.push_str("\\x{");
+            output.extend(characters[index + 2..=index + 5].iter().copied());
+            output.push('}');
+            index += 6;
+            continue;
+        }
+        output.push('\\');
+        index += 1;
+    }
+    output
+}
+
 pub(crate) fn compile(object: &Rc<RefCell<JSObject>>) -> JSResult<regex::Regex> {
     let pattern = object.borrow().get(PATTERN).to_string();
     let flags = object.borrow().get(FLAGS).to_string();
+    let pattern = normalize_pattern(&pattern);
     let mut builder = RegexBuilder::new(&pattern);
     builder
         .case_insensitive(flags.contains('i'))
