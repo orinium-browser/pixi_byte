@@ -72,3 +72,37 @@ fn map_for_each_visits_values_and_keys_in_insertion_order() {
         .unwrap();
     assert_eq!(result, JSValue::String("a1trueb2true".to_string()));
 }
+
+#[test]
+fn set_exposes_the_iterator_protocol() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const iterator = new Set(["a", "b"])[Symbol.iterator]();
+            const first = iterator.next();
+            const second = iterator.next();
+            const end = iterator.next();
+            first.value + second.value + first.done + end.done;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("abfalsetrue".to_string()));
+}
+
+#[test]
+fn map_iterators_expose_keys_values_and_entries() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const values = new Map([["a", 1], ["b", 2]]);
+            const key = values.keys().next().value;
+            const value = values.values().next().value;
+            const entry = values[Symbol.iterator]().next().value;
+            key + value + entry[0] + entry[1];
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("a1a1".to_string()));
+}
