@@ -234,6 +234,16 @@ impl VM {
                     .ok_or_else(|| JSError::InternalError("Stack underflow".to_string()))?;
                 self.stack.push(value);
             }
+            Opcode::Dup2 => {
+                let length = self.stack.len();
+                if length < 2 {
+                    return Err(JSError::InternalError("Stack underflow".to_string()));
+                }
+                let first = self.stack[length - 2].clone();
+                let second = self.stack[length - 1].clone();
+                self.stack.push(first);
+                self.stack.push(second);
+            }
 
             Opcode::LoadThis => {
                 let value = self.current_frame().this.clone();
@@ -453,55 +463,16 @@ impl VM {
                 let value = self.pop()?;
                 let key = self.pop()?;
                 let obj = self.pop()?;
-
-                match &obj {
-                    JSValue::Object(obj_ref) => {
-                        let key_str = key.to_string();
-
-                        let maybe_prop = { obj_ref.borrow().get_property_descriptor(&key_str) };
-
-                        if let Some(prop) = maybe_prop {
-                            if let Some(setter) = prop.setter.clone() {
-                                self.call(setter, obj.clone(), vec![value.clone()])?;
-                                self.stack.push(obj.clone());
-
-                                return Ok(ControlFlow::Continue);
-                            }
-                        }
-
-                        let host_setter = {
-                            obj_ref
-                                .borrow()
-                                .get(crate::value::jsobject::HOST_SET_PROPERTY)
-                        };
-
-                        if matches!(
-                            &host_setter,
-                            JSValue::Function(..)
-                                | JSValue::ArrowFunction(..)
-                                | JSValue::NativeFunction(..)
-                                | JSValue::BoundFunction(..)
-                        ) {
-                            self.call(
-                                host_setter,
-                                obj.clone(),
-                                vec![key.clone(), value.clone()],
-                            )?;
-                            self.stack.push(obj.clone());
-
-                            return Ok(ControlFlow::Continue);
-                        }
-
-                        obj_ref.borrow_mut().set(key_str, value);
-
-                        self.stack.push(obj.clone());
-                    }
-                    _ => {
-                        return Err(JSError::TypeError(
-                            "Cannot set property on non-object".into(),
-                        ));
-                    }
-                }
+                self.set_object_property(&obj, key, value.clone())?;
+                self.stack.push(value);
+            }
+            Opcode::SetPropertyKeepOld => {
+                let value = self.pop()?;
+                let old_value = self.pop()?;
+                let key = self.pop()?;
+                let obj = self.pop()?;
+                self.set_object_property(&obj, key, value)?;
+                self.stack.push(old_value);
             }
             Opcode::DeleteProperty => {
                 let key = self.pop()?.to_string();
@@ -745,6 +716,42 @@ impl VM {
         self.stack
             .pop()
             .ok_or_else(|| JSError::InternalError("Stack underflow".to_string()))
+    }
+
+    fn set_object_property(
+        &mut self,
+        object: &JSValue,
+        key: JSValue,
+        value: JSValue,
+    ) -> JSResult<()> {
+        let JSValue::Object(object_ref) = object else {
+            return Err(JSError::TypeError(
+                "Cannot set property on non-object".to_string(),
+            ));
+        };
+        let key_string = key.to_string();
+        let property = object_ref.borrow().get_property_descriptor(&key_string);
+        if let Some(setter) = property.and_then(|property| property.setter) {
+            self.call(setter, object.clone(), vec![value])?;
+            return Ok(());
+        }
+
+        let host_setter = object_ref
+            .borrow()
+            .get(crate::value::jsobject::HOST_SET_PROPERTY);
+        if matches!(
+            &host_setter,
+            JSValue::Function(..)
+                | JSValue::ArrowFunction(..)
+                | JSValue::NativeFunction(..)
+                | JSValue::BoundFunction(..)
+        ) {
+            self.call(host_setter, object.clone(), vec![key, value])?;
+            return Ok(());
+        }
+
+        object_ref.borrow_mut().set(key_string, value);
+        Ok(())
     }
 
     /// Calls a function (native / JS / bound function).

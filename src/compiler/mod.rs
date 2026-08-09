@@ -11,6 +11,7 @@ pub enum Opcode {
     StoreVar(String), // スタックトップを変数に格納
     Pop,              // スタックトップを削除
     Dup,              // スタックトップを複製
+    Dup2,             // スタックトップの2値を複製
 
     LoadThis,
 
@@ -56,6 +57,7 @@ pub enum Opcode {
     NewObject,         // 空のオブジェクトを作成
     GetProperty,       // obj[key] - スタックから key, obj をポップ、結果をプッシュ
     SetProperty,       // obj[key] = value - スタックから value, key, obj をポップ
+    SetPropertyKeepOld, // postfix update用: obj, key, old, newからoldを残す
     DeleteProperty,    // delete obj[key] - スタックから key, obj をポップ
     ArrayPush,         // arr.push(value) - スタックから index, value をポップ、arr は残る
     ObjectSetProperty, // obj[key] = value - スタックから key, value をポップ、obj は残る
@@ -702,22 +704,43 @@ impl Compiler {
                 increment,
                 prefix,
             } => {
-                let Expression::Identifier(name) = *arg else {
-                    return Err(JSError::TypeError(
-                        "Update target must currently be an identifier".to_string(),
-                    ));
-                };
-                self.chunk.emit(Opcode::LoadVar(name.clone()));
-                if !prefix {
-                    self.chunk.emit(Opcode::Dup);
+                match *arg {
+                    Expression::Identifier(name) => {
+                        self.chunk.emit(Opcode::LoadVar(name.clone()));
+                        if !prefix {
+                            self.chunk.emit(Opcode::Dup);
+                        }
+                        let one = self.chunk.add_constant(JSValue::Number(1.0));
+                        self.chunk.emit(Opcode::LoadConst(one));
+                        self.chunk.emit(if increment { Opcode::Add } else { Opcode::Sub });
+                        if prefix {
+                            self.chunk.emit(Opcode::Dup);
+                        }
+                        self.chunk.emit(Opcode::StoreVar(name));
+                    }
+                    Expression::MemberAccess {
+                        object, property, ..
+                    } => {
+                        self.compile_expression(*object)?;
+                        self.compile_expression(*property)?;
+                        self.chunk.emit(Opcode::Dup2);
+                        self.chunk.emit(Opcode::GetProperty);
+                        if !prefix {
+                            self.chunk.emit(Opcode::Dup);
+                        }
+                        let one = self.chunk.add_constant(JSValue::Number(1.0));
+                        self.chunk.emit(Opcode::LoadConst(one));
+                        self.chunk.emit(if increment { Opcode::Add } else { Opcode::Sub });
+                        self.chunk.emit(if prefix {
+                            Opcode::SetProperty
+                        } else {
+                            Opcode::SetPropertyKeepOld
+                        });
+                    }
+                    _ => {
+                        return Err(JSError::TypeError("Invalid update target".to_string()));
+                    }
                 }
-                let one = self.chunk.add_constant(JSValue::Number(1.0));
-                self.chunk.emit(Opcode::LoadConst(one));
-                self.chunk.emit(if increment { Opcode::Add } else { Opcode::Sub });
-                if prefix {
-                    self.chunk.emit(Opcode::Dup);
-                }
-                self.chunk.emit(Opcode::StoreVar(name));
             }
             Expression::Conditional {
                 test,
