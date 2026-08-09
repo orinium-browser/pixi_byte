@@ -32,6 +32,8 @@ pub struct VM {
     pub function_prototype: Rc<RefCell<JSObject>>,
     /// String.prototype への参照（文字列プリミティブのメソッド検索に利用）
     pub string_prototype: Rc<RefCell<JSObject>>,
+    /// Number.prototype への参照（数値プリミティブのメソッド検索に利用）
+    pub number_prototype: Rc<RefCell<JSObject>>,
     /// Host data slot.
     ///
     /// A shared slot where the host (the embedding app) can store arbitrary state.
@@ -79,6 +81,17 @@ impl VM {
             }
             _ => Rc::new(RefCell::new(JSObject::new())),
         };
+        let number_constructor = global_rc.borrow().get("Number");
+        let number_prototype = match number_constructor {
+            JSValue::Object(constructor) => {
+                let prototype = constructor.borrow().get("prototype");
+                match prototype {
+                    JSValue::Object(prototype) => prototype,
+                    _ => Rc::new(RefCell::new(JSObject::new())),
+                }
+            }
+            _ => Rc::new(RefCell::new(JSObject::new())),
+        };
 
         let global_frame = CallFrame::new(
             Environment::with_object_env(global_rc.clone()),
@@ -91,6 +104,7 @@ impl VM {
             global_object: global_rc,
             function_prototype,
             string_prototype,
+            number_prototype,
             host: None,
             jobs: VecDeque::new(),
         }
@@ -490,6 +504,11 @@ impl VM {
                             self.stack.push(value);
                         }
                     }
+                    JSValue::Number(_) => {
+                        let key = key.to_string();
+                        let value = self.number_prototype.borrow().get(&key);
+                        self.stack.push(value);
+                    }
                     _ => {
                         self.stack.push(JSValue::Undefined);
                     }
@@ -624,6 +643,7 @@ impl VM {
                     | JSValue::NativeFunction(..)
                         | JSValue::BoundFunction(..) => self.function_prototype.borrow().get(&key),
                     JSValue::String(_) => self.string_prototype.borrow().get(&key),
+                    JSValue::Number(_) => self.number_prototype.borrow().get(&key),
                     _ => {
                         return Err(JSError::TypeError(
                             "CallMethod: receiver is not an object".into(),

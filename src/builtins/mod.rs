@@ -9,6 +9,8 @@ pub mod object;
 pub mod promise;
 pub mod regexp;
 pub mod string;
+pub mod number;
+pub mod math;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -33,6 +35,8 @@ impl Builtins {
         self::promise::install(global);
         self::regexp::install(global);
         self::string::install(global);
+        self::number::install(global);
+        self::math::install(global);
         // Function 関連の組み込みを登録
         self::function::install(global)
     }
