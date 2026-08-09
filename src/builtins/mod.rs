@@ -11,6 +11,7 @@ pub mod regexp;
 pub mod string;
 pub mod number;
 pub mod math;
+pub mod symbol;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -37,6 +38,7 @@ impl Builtins {
         self::string::install(global);
         self::number::install(global);
         self::math::install(global);
+        self::symbol::install(global);
         // Function 関連の組み込みを登録
         self::function::install(global)
     }
