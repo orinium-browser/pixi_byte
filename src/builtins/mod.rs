@@ -6,6 +6,7 @@
 pub mod array;
 pub mod date;
 pub mod function;
+pub mod json;
 pub mod object;
 pub mod promise;
 pub mod regexp;
@@ -45,6 +46,7 @@ impl Builtins {
         self::collection::install(global);
         self::error_object::install(global);
         self::date::install(global);
+        self::json::install(global);
         // Function 関連の組み込みを登録
         self::function::install(global)
     }
