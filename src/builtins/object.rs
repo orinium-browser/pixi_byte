@@ -507,6 +507,21 @@ fn object_assign(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue
     Ok(JSValue::Object(target))
 }
 
+/// Object.is(value1, value2)
+fn object_is(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let left = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let right = args.get(2).cloned().unwrap_or(JSValue::Undefined);
+    let same = match (&left, &right) {
+        (JSValue::Number(left), JSValue::Number(right)) => {
+            (left.is_nan() && right.is_nan())
+                || (left == right
+                    && (left != &0.0 || left.is_sign_positive() == right.is_sign_positive()))
+        }
+        _ => left.strict_equals(&right),
+    };
+    Ok(JSValue::Boolean(same))
+}
+
 /// Object.prototype.propertyIsEnumerable(prop)
 fn object_property_is_enumerable(
     _vm: &mut crate::vm::VM,
@@ -609,6 +624,7 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     );
     obj.set("keys".to_string(), JSValue::NativeFunction(object_keys));
     obj.set("assign".to_string(), JSValue::NativeFunction(object_assign));
+    obj.set("is".to_string(), JSValue::NativeFunction(object_is));
 
     // Set prototype property on constructor-like object
     obj.set(
