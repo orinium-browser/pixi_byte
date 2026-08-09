@@ -225,6 +225,147 @@ fn array_for_each(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::J
     Ok(JSValue::Undefined)
 }
 
+fn array_map(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let object = receiver(&args, "map")?;
+    let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
+    let array = JSValue::Object(Rc::clone(&object));
+    let length = length(&object);
+    let mut values = Vec::with_capacity(length);
+    for index in 0..length {
+        if object.borrow().has_property(&index.to_string()) {
+            let value = object.borrow().get(&index.to_string());
+            values.push(vm.call(
+                callback.clone(),
+                this_arg.clone(),
+                vec![value, JSValue::Number(index as f64), array.clone()],
+            )?);
+        } else {
+            values.push(JSValue::Undefined);
+        }
+    }
+    Ok(vm.array_from_values(values))
+}
+
+fn array_filter(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let object = receiver(&args, "filter")?;
+    let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
+    let array = JSValue::Object(Rc::clone(&object));
+    let mut values = Vec::new();
+    for index in 0..length(&object) {
+        if !object.borrow().has_property(&index.to_string()) {
+            continue;
+        }
+        let value = object.borrow().get(&index.to_string());
+        if vm
+            .call(
+                callback.clone(),
+                this_arg.clone(),
+                vec![
+                    value.clone(),
+                    JSValue::Number(index as f64),
+                    array.clone(),
+                ],
+            )?
+            .to_boolean()
+        {
+            values.push(value);
+        }
+    }
+    Ok(vm.array_from_values(values))
+}
+
+fn array_some(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let object = receiver(&args, "some")?;
+    let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
+    let array = JSValue::Object(Rc::clone(&object));
+    for index in 0..length(&object) {
+        if !object.borrow().has_property(&index.to_string()) {
+            continue;
+        }
+        let value = object.borrow().get(&index.to_string());
+        if vm
+            .call(
+                callback.clone(),
+                this_arg.clone(),
+                vec![value, JSValue::Number(index as f64), array.clone()],
+            )?
+            .to_boolean()
+        {
+            return Ok(JSValue::Boolean(true));
+        }
+    }
+    Ok(JSValue::Boolean(false))
+}
+
+fn array_every(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let object = receiver(&args, "every")?;
+    let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
+    let array = JSValue::Object(Rc::clone(&object));
+    for index in 0..length(&object) {
+        if !object.borrow().has_property(&index.to_string()) {
+            continue;
+        }
+        let value = object.borrow().get(&index.to_string());
+        if !vm
+            .call(
+                callback.clone(),
+                this_arg.clone(),
+                vec![value, JSValue::Number(index as f64), array.clone()],
+            )?
+            .to_boolean()
+        {
+            return Ok(JSValue::Boolean(false));
+        }
+    }
+    Ok(JSValue::Boolean(true))
+}
+
+fn array_reduce(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let object = receiver(&args, "reduce")?;
+    let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let array = JSValue::Object(Rc::clone(&object));
+    let length = length(&object);
+    let mut index = 0;
+    let mut accumulator = if let Some(initial) = args.get(2) {
+        initial.clone()
+    } else {
+        loop {
+            if index >= length {
+                return Err(crate::error::JSError::TypeError(
+                    "Reduce of empty array with no initial value".to_string(),
+                ));
+            }
+            if object.borrow().has_property(&index.to_string()) {
+                let value = object.borrow().get(&index.to_string());
+                index += 1;
+                break value;
+            }
+            index += 1;
+        }
+    };
+    while index < length {
+        if object.borrow().has_property(&index.to_string()) {
+            let value = object.borrow().get(&index.to_string());
+            accumulator = vm.call(
+                callback.clone(),
+                JSValue::Undefined,
+                vec![
+                    accumulator,
+                    value,
+                    JSValue::Number(index as f64),
+                    array.clone(),
+                ],
+            )?;
+        }
+        index += 1;
+    }
+    Ok(accumulator)
+}
+
 fn array_index_of(
     _vm: &mut crate::vm::VM,
     args: Vec<JSValue>,
@@ -331,6 +472,11 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         "forEach".to_string(),
         JSValue::NativeFunction(array_for_each),
     );
+    proto.set("map".to_string(), JSValue::NativeFunction(array_map));
+    proto.set("filter".to_string(), JSValue::NativeFunction(array_filter));
+    proto.set("some".to_string(), JSValue::NativeFunction(array_some));
+    proto.set("every".to_string(), JSValue::NativeFunction(array_every));
+    proto.set("reduce".to_string(), JSValue::NativeFunction(array_reduce));
     proto.set(
         "indexOf".to_string(),
         JSValue::NativeFunction(array_index_of),

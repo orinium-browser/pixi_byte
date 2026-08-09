@@ -51,3 +51,26 @@ fn array_for_each_calls_back_in_index_order() {
 
     assert_eq!(result, JSValue::String("0a1b2c".to_string()));
 }
+
+#[test]
+fn array_iteration_methods_support_component_data_transforms() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const values = [1, 2, 3, 4];
+            const mapped = values.map(function (value, index) { return value + index; });
+            const filtered = mapped.filter(function (value) { return value > 3; });
+            const total = filtered.reduce(function (sum, value) { return sum + value; }, 0);
+            mapped.join(",") + ":" + filtered.join(",") + ":" + total
+                + ":" + values.some(function (value) { return value === 3; })
+                + ":" + values.every(function (value) { return value > 0; });
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(
+        result,
+        JSValue::String("1,3,5,7:5,7:12:true:true".to_string())
+    );
+}
