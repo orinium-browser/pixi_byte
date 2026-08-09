@@ -527,6 +527,14 @@ impl VM {
                     return Ok(ControlFlow::Continue);
                 }
             }
+            Opcode::JumpIfTrue(offset) => {
+                let condition = self.pop()?;
+                if condition.to_boolean() {
+                    return Ok(ControlFlow::Jump(*offset));
+                } else {
+                    return Ok(ControlFlow::Continue);
+                }
+            }
             Opcode::Return => {
                 let value = self.pop()?;
                 return Ok(ControlFlow::Return(value));

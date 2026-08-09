@@ -66,6 +66,7 @@ pub enum Opcode {
     // 制御フロー
     Jump(usize),        // 無条件ジャンプ
     JumpIfFalse(usize), // false の場合ジャンプ
+    JumpIfTrue(usize),  // true の場合ジャンプ
     Return,             // 関数から戻る
 
     // その他
@@ -372,7 +373,9 @@ impl Compiler {
 
     fn patch_jump(&mut self, index: usize, target: usize) {
         match &mut self.chunk.code[index] {
-            Opcode::Jump(destination) | Opcode::JumpIfFalse(destination) => *destination = target,
+            Opcode::Jump(destination)
+            | Opcode::JumpIfFalse(destination)
+            | Opcode::JumpIfTrue(destination) => *destination = target,
             _ => unreachable!("attempted to patch a non-jump opcode"),
         }
     }
@@ -395,6 +398,22 @@ impl Compiler {
                 self.chunk.emit(Opcode::LoadVar(name));
             }
             Expression::Binary { op, left, right } => {
+                if matches!(op, BinaryOp::And | BinaryOp::Or) {
+                    self.compile_expression(*left)?;
+                    self.chunk.emit(Opcode::Dup);
+                    let branch = self.chunk.code.len();
+                    self.chunk.emit(match op {
+                        BinaryOp::And => Opcode::JumpIfFalse(usize::MAX),
+                        BinaryOp::Or => Opcode::JumpIfTrue(usize::MAX),
+                        _ => unreachable!(),
+                    });
+                    self.chunk.emit(Opcode::Pop);
+                    self.compile_expression(*right)?;
+                    let end = self.chunk.code.len();
+                    self.patch_jump(branch, end);
+                    return Ok(());
+                }
+
                 self.compile_expression(*left)?;
                 self.compile_expression(*right)?;
 
@@ -413,8 +432,7 @@ impl Compiler {
                     BinaryOp::Gt => Opcode::Gt,
                     BinaryOp::LtEq => Opcode::LtEq,
                     BinaryOp::GtEq => Opcode::GtEq,
-                    BinaryOp::And => Opcode::And,
-                    BinaryOp::Or => Opcode::Or,
+                    BinaryOp::And | BinaryOp::Or => unreachable!(),
                     BinaryOp::BitAnd => Opcode::BitAnd,
                     BinaryOp::BitOr => Opcode::BitOr,
                     BinaryOp::BitXor => Opcode::BitXor,
