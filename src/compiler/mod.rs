@@ -207,8 +207,17 @@ impl Compiler {
 
     /// ASTをバイトコードにコンパイル
     pub fn compile(mut self, program: Program) -> JSResult<BytecodeChunk> {
-        let len = program.body.len();
-        for (i, statement) in program.body.into_iter().enumerate() {
+        let mut executable = Vec::new();
+        for statement in program.body {
+            if matches!(&statement, Statement::FunctionDeclaration { .. }) {
+                self.compile_statement(statement, false)?;
+            } else {
+                executable.push(statement);
+            }
+        }
+
+        let len = executable.len();
+        for (i, statement) in executable.into_iter().enumerate() {
             let is_last = i == len - 1;
             self.compile_statement(statement, is_last)?;
         }
