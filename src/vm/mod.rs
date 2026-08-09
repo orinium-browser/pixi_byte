@@ -400,6 +400,10 @@ impl VM {
                 let obj = JSObject::new();
                 self.stack.push(JSValue::Object(Rc::new(RefCell::new(obj))));
             }
+            Opcode::NewRegExp(pattern, flags) => {
+                self.stack
+                    .push(crate::builtins::regexp::create(pattern, flags));
+            }
             Opcode::GetProperty => {
                 let key = self.pop()?;
                 let obj = self.pop()?;

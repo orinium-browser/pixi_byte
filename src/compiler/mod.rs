@@ -55,6 +55,7 @@ pub enum Opcode {
     // 配列・オブジェクト操作
     NewArray(usize),   // 空の配列を作成（サイズ指定）
     NewObject,         // 空のオブジェクトを作成
+    NewRegExp(String, String),
     GetProperty,       // obj[key] - スタックから key, obj をポップ、結果をプッシュ
     SetProperty,       // obj[key] = value - スタックから value, key, obj をポップ
     SetPropertyKeepOld, // postfix update用: obj, key, old, newからoldを残す
@@ -867,6 +868,9 @@ impl Compiler {
                     // スタック: [object, value, key]
                     self.chunk.emit(Opcode::ObjectSetProperty);
                 }
+            }
+            Expression::RegExpLiteral { pattern, flags } => {
+                self.chunk.emit(Opcode::NewRegExp(pattern, flags));
             }
             Expression::MemberAccess {
                 object,

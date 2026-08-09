@@ -12,6 +12,7 @@ harness = false
 name = "vm_bench"
 
 [dependencies]
+regex = "1.12"
 rustc-hash = "2.1"
 
 [dev-dependencies]

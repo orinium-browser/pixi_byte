@@ -103,6 +103,10 @@ pub enum Expression {
     This,
     ArrayLiteral(Vec<Expression>),
     ObjectLiteral(Vec<(String, Expression)>),
+    RegExpLiteral {
+        pattern: String,
+        flags: String,
+    },
     MemberAccess {
         object: Box<Expression>,
         property: Box<Expression>,
@@ -822,6 +826,12 @@ impl Parser {
                 self.advance()?;
 
                 Ok(Expression::Literal(Literal::String(s)))
+            }
+            TokenKind::RegExpLiteral(pattern, flags) => {
+                let pattern = pattern.clone();
+                let flags = flags.clone();
+                self.advance()?;
+                Ok(Expression::RegExpLiteral { pattern, flags })
             }
             TokenKind::True => {
                 self.advance()?;

@@ -254,6 +254,9 @@ impl Expression {
                     println!("{prefix}{branch}Undefined");
                 }
             },
+            Expression::RegExpLiteral { pattern, flags } => {
+                println!("{prefix}{branch}RegExp(/{pattern}/{flags})");
+            }
 
             Expression::Call { callee, args } => {
                 println!("{prefix}{branch}Call");

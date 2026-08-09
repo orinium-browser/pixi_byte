@@ -7,6 +7,7 @@ pub mod array;
 pub mod function;
 pub mod object;
 pub mod promise;
+pub mod regexp;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -29,6 +30,7 @@ impl Builtins {
         // Array 関連の組み込みを登録
         self::array::install(global);
         self::promise::install(global);
+        self::regexp::install(global);
         // Function 関連の組み込みを登録
         self::function::install(global)
     }

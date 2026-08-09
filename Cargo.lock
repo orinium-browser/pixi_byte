@@ -312,6 +312,7 @@ name = "pixi_byte"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "regex",
  "rustc-hash",
 ]
 

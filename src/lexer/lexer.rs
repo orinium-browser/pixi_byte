@@ -12,6 +12,8 @@ pub struct Lexer {
     line: usize,
     /// 現在の列番号
     column: usize,
+    /// 直前の有意なトークン。正規表現リテラルと除算の判別に使う。
+    previous: Option<TokenKind>,
 }
 
 impl Lexer {
@@ -22,6 +24,7 @@ impl Lexer {
             position: 0,
             line: 1,
             column: 1,
+            previous: None,
         }
     }
 
@@ -43,6 +46,9 @@ impl Iterator for Lexer {
             None
         } else {
             let token_result = self.next_token();
+            if let Ok(token) = &token_result {
+                self.previous = Some(token.kind.clone());
+            }
             if token_result
                 .as_ref()
                 .is_ok_and(|token| token.kind == TokenKind::Eof)
@@ -136,6 +142,8 @@ impl Lexer {
                     return self.next_token();
                 } else if self.match_char('=') {
                     TokenKind::SlashEq
+                } else if self.can_start_regular_expression() {
+                    return self.scan_regular_expression();
                 } else {
                     TokenKind::Slash
                 }
@@ -331,6 +339,81 @@ impl Lexer {
 
         let span = Span::new(start, self.position, start_line, start_column);
         Ok(Token::new(TokenKind::String(value), span))
+    }
+
+    fn scan_regular_expression(&mut self) -> JSResult<Token> {
+        let start = self.position - 1;
+        let start_line = self.line;
+        let start_column = self.column - 1;
+        let mut pattern = String::new();
+        let mut in_character_class = false;
+        let mut terminated = false;
+
+        while let Some(character) = self.peek() {
+            if character == '\n' || character == '\r' {
+                break;
+            }
+            self.advance();
+            match character {
+                '\\' => {
+                    pattern.push(character);
+                    let Some(escaped) = self.peek() else {
+                        break;
+                    };
+                    self.advance();
+                    pattern.push(escaped);
+                }
+                '[' => {
+                    in_character_class = true;
+                    pattern.push(character);
+                }
+                ']' => {
+                    in_character_class = false;
+                    pattern.push(character);
+                }
+                '/' if !in_character_class => {
+                    terminated = true;
+                    break;
+                }
+                _ => pattern.push(character),
+            }
+        }
+        if !terminated {
+            return Err(JSError::SyntaxError(
+                "Unterminated regular expression literal".to_string(),
+                Span::new(start, self.position, start_line, start_column),
+            ));
+        }
+
+        let mut flags = String::new();
+        while let Some(flag) = self.peek().filter(|flag| flag.is_ascii_alphabetic()) {
+            flags.push(flag);
+            self.advance();
+        }
+        let span = Span::new(start, self.position, start_line, start_column);
+        Ok(Token::new(TokenKind::RegExpLiteral(pattern, flags), span))
+    }
+
+    fn can_start_regular_expression(&self) -> bool {
+        !matches!(
+            self.previous.as_ref(),
+            Some(
+                TokenKind::NumberLiteral(_)
+                    | TokenKind::String(_)
+                    | TokenKind::RegExpLiteral(_, _)
+                    | TokenKind::True
+                    | TokenKind::False
+                    | TokenKind::Null
+                    | TokenKind::Undefined
+                    | TokenKind::Identifier(_)
+                    | TokenKind::This
+                    | TokenKind::RightParen
+                    | TokenKind::RightBracket
+                    | TokenKind::RightBrace
+                    | TokenKind::PlusPlus
+                    | TokenKind::MinusMinus
+            )
+        )
     }
 
     /// 識別子・キーワードのスキャン

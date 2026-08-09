@@ -6,6 +6,7 @@ pub enum TokenKind {
     // リテラル
     NumberLiteral(String),
     String(String),
+    RegExpLiteral(String, String),
     True,
     False,
     Null,
@@ -165,6 +166,9 @@ impl fmt::Display for TokenKind {
         match self {
             TokenKind::NumberLiteral(n) => write!(f, "JsNumberLiteral({})", n),
             TokenKind::String(s) => write!(f, "JsString(\"{}\")", s),
+            TokenKind::RegExpLiteral(pattern, flags) => {
+                write!(f, "JsRegExp(/{pattern}/{flags})")
+            }
             TokenKind::Identifier(s) => write!(f, "JsIdentifier({})", s),
             _ => write!(f, "{:?}", self),
         }
