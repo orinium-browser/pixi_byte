@@ -358,6 +358,7 @@ impl Lexer {
             "else" => TokenKind::Else,
             "for" => TokenKind::For,
             "while" => TokenKind::While,
+            "do" => TokenKind::Do,
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
             "switch" => TokenKind::Switch,

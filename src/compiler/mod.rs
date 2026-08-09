@@ -302,6 +302,38 @@ impl Compiler {
                     self.chunk.emit(Opcode::LoadConst(undefined));
                 }
             }
+            Statement::DoWhile { body, test } => {
+                let loop_start = self.chunk.code.len();
+                self.loops.push(LoopContext {
+                    continue_jumps: Vec::new(),
+                });
+                self.break_scopes.push(Vec::new());
+                self.compile_statements(body, false)?;
+
+                let condition_start = self.chunk.code.len();
+                let continue_jumps = {
+                    let loop_context = self.loops.last_mut().expect("loop context must exist");
+                    std::mem::take(&mut loop_context.continue_jumps)
+                };
+                for continue_jump in continue_jumps {
+                    self.patch_jump(continue_jump, condition_start);
+                }
+                self.compile_expression(test)?;
+                let exit_jump = self.chunk.code.len();
+                self.chunk.emit(Opcode::JumpIfFalse(usize::MAX));
+                self.chunk.emit(Opcode::Jump(loop_start));
+
+                let exit_target = self.chunk.code.len();
+                self.patch_jump(exit_jump, exit_target);
+                self.loops.pop().expect("loop context must exist");
+                for break_jump in self.break_scopes.pop().expect("break scope must exist") {
+                    self.patch_jump(break_jump, exit_target);
+                }
+                if is_last {
+                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    self.chunk.emit(Opcode::LoadConst(undefined));
+                }
+            }
             Statement::For {
                 init,
                 test,

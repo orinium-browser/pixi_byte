@@ -86,6 +86,13 @@ impl Statement {
                     stmt.dump_impl(next_prefix.clone(), index + 1 == body.len());
                 }
             }
+            Statement::DoWhile { body, test } => {
+                println!("{prefix}{branch}DoWhile");
+                for statement in body {
+                    statement.dump_impl(next_prefix.clone(), false);
+                }
+                test.dump_impl(next_prefix, true);
+            }
             Statement::For {
                 init,
                 test,

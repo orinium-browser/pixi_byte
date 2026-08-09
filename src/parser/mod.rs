@@ -33,6 +33,10 @@ pub enum Statement {
         test: Expression,
         body: Vec<Statement>,
     },
+    DoWhile {
+        body: Vec<Statement>,
+        test: Expression,
+    },
     For {
         init: Option<Box<Statement>>,
         test: Option<Expression>,
@@ -219,6 +223,7 @@ impl Parser {
             TokenKind::Function => self.parse_function_declaration(),
             TokenKind::If => self.parse_if_statement(),
             TokenKind::While => self.parse_while_statement(),
+            TokenKind::Do => self.parse_do_while_statement(),
             TokenKind::For => self.parse_for_statement(),
             TokenKind::Throw => self.parse_throw_statement(),
             TokenKind::Try => self.parse_try_statement(),
@@ -340,6 +345,21 @@ impl Parser {
             vec![self.parse_statement()?]
         };
         Ok(Statement::While { test, body })
+    }
+
+    fn parse_do_while_statement(&mut self) -> JSResult<Statement> {
+        self.expect(&TokenKind::Do, "Expected 'do'")?;
+        let body = if self.check(&TokenKind::LeftBrace) {
+            self.parse_block()?
+        } else {
+            vec![self.parse_statement()?]
+        };
+        self.expect(&TokenKind::While, "Expected 'while' after do body")?;
+        self.expect(&TokenKind::LeftParen, "Expected '(' after 'while'")?;
+        let test = self.parse_expression()?;
+        self.expect(&TokenKind::RightParen, "Expected ')' after condition")?;
+        self.consume_semicolon()?;
+        Ok(Statement::DoWhile { body, test })
     }
 
     fn parse_for_statement(&mut self) -> JSResult<Statement> {
@@ -989,6 +1009,7 @@ impl Parser {
             TokenKind::Else => "else",
             TokenKind::For => "for",
             TokenKind::While => "while",
+            TokenKind::Do => "do",
             TokenKind::Break => "break",
             TokenKind::Continue => "continue",
             TokenKind::Switch => "switch",
