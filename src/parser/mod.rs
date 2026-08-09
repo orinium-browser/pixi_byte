@@ -80,6 +80,7 @@ pub enum Expression {
         consequent: Box<Expression>,
         alternate: Box<Expression>,
     },
+    Sequence(Vec<Expression>),
     This,
     ArrayLiteral(Vec<Expression>),
     ObjectLiteral(Vec<(String, Expression)>),
@@ -374,7 +375,19 @@ impl Parser {
 
     /// 式をパース
     fn parse_expression(&mut self) -> JSResult<Expression> {
-        self.parse_assignment()
+        let first = self.parse_assignment()?;
+        if !self.eat(&TokenKind::Comma)? {
+            return Ok(first);
+        }
+
+        let mut expressions = vec![first];
+        loop {
+            expressions.push(self.parse_assignment()?);
+            if !self.eat(&TokenKind::Comma)? {
+                break;
+            }
+        }
+        Ok(Expression::Sequence(expressions))
     }
 
     fn parse_assignment(&mut self) -> JSResult<Expression> {
@@ -621,7 +634,7 @@ impl Parser {
         let mut args = Vec::new();
 
         while !self.check(&TokenKind::RightParen) {
-            args.push(self.parse_expression()?);
+            args.push(self.parse_assignment()?);
 
             if !self.eat(&TokenKind::Comma)? {
                 break;
@@ -730,7 +743,7 @@ impl Parser {
                 continue;
             }
 
-            elements.push(self.parse_expression()?);
+            elements.push(self.parse_assignment()?);
 
             if !self.check(&TokenKind::RightBracket) && !self.eat(&TokenKind::Comma)? {
                 return Err(JSError::SyntaxError(
@@ -757,7 +770,7 @@ impl Parser {
 
             self.expect(&TokenKind::Colon, "Expected ':' after property key")?;
 
-            let value = self.parse_expression()?;
+            let value = self.parse_assignment()?;
 
             properties.push((key, value));
 

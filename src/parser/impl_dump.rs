@@ -150,6 +150,12 @@ impl Expression {
                 consequent.dump_impl(next_prefix.clone(), false);
                 alternate.dump_impl(next_prefix, true);
             }
+            Expression::Sequence(expressions) => {
+                println!("{prefix}{branch}Sequence");
+                for (index, expression) in expressions.iter().enumerate() {
+                    expression.dump_impl(next_prefix.clone(), index + 1 == expressions.len());
+                }
+            }
 
             Expression::Identifier(name) => {
                 println!("{prefix}{branch}Identifier({name})");

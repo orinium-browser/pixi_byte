@@ -531,6 +531,15 @@ impl Compiler {
                 let end = self.chunk.code.len();
                 self.patch_jump(end_jump, end);
             }
+            Expression::Sequence(expressions) => {
+                let len = expressions.len();
+                for (index, expression) in expressions.into_iter().enumerate() {
+                    self.compile_expression(expression)?;
+                    if index + 1 < len {
+                        self.chunk.emit(Opcode::Pop);
+                    }
+                }
+            }
             Expression::This => {
                 self.chunk.emit(Opcode::LoadThis);
             }
