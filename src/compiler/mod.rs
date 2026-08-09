@@ -10,6 +10,7 @@ pub enum Opcode {
     LoadVar(String),  // 変数をスタックにロード
     StoreVar(String), // スタックトップを変数に格納
     Pop,              // スタックトップを削除
+    Dup,              // スタックトップを複製
 
     LoadThis,
 
@@ -364,6 +365,28 @@ impl Compiler {
                         return Err(JSError::TypeError("Invalid assignment target".to_string()));
                     }
                 }
+            }
+            Expression::Update {
+                arg,
+                increment,
+                prefix,
+            } => {
+                let Expression::Identifier(name) = *arg else {
+                    return Err(JSError::TypeError(
+                        "Update target must currently be an identifier".to_string(),
+                    ));
+                };
+                self.chunk.emit(Opcode::LoadVar(name.clone()));
+                if !prefix {
+                    self.chunk.emit(Opcode::Dup);
+                }
+                let one = self.chunk.add_constant(JSValue::Number(1.0));
+                self.chunk.emit(Opcode::LoadConst(one));
+                self.chunk.emit(if increment { Opcode::Add } else { Opcode::Sub });
+                if prefix {
+                    self.chunk.emit(Opcode::Dup);
+                }
+                self.chunk.emit(Opcode::StoreVar(name));
             }
             Expression::This => {
                 self.chunk.emit(Opcode::LoadThis);

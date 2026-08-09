@@ -59,6 +59,11 @@ pub enum Expression {
         left: Box<Expression>,
         right: Box<Expression>,
     },
+    Update {
+        arg: Box<Expression>,
+        increment: bool,
+        prefix: bool,
+    },
     This,
     ArrayLiteral(Vec<Expression>),
     ObjectLiteral(Vec<(String, Expression)>),
@@ -288,8 +293,27 @@ impl Parser {
 
         let left = self.parse_expression_bp(0)?;
 
-        if self.eat(&TokenKind::Eq)? {
+        let assignment = match self.current().kind {
+            TokenKind::Eq => Some(None),
+            TokenKind::PlusEq => Some(Some(BinaryOp::Add)),
+            TokenKind::MinusEq => Some(Some(BinaryOp::Sub)),
+            TokenKind::StarEq => Some(Some(BinaryOp::Mul)),
+            TokenKind::SlashEq => Some(Some(BinaryOp::Div)),
+            TokenKind::PercentEq => Some(Some(BinaryOp::Mod)),
+            _ => None,
+        };
+        if let Some(operator) = assignment {
+            self.advance()?;
             let right = self.parse_assignment()?; // right-associative
+            let right = if let Some(operator) = operator {
+                Expression::Binary {
+                    op: operator,
+                    left: Box::new(left.clone()),
+                    right: Box::new(right),
+                }
+            } else {
+                right
+            };
 
             return Ok(Expression::Assignment {
                 left: Box::new(left),
@@ -369,6 +393,15 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> JSResult<Expression> {
+        if self.check(&TokenKind::PlusPlus) || self.check(&TokenKind::MinusMinus) {
+            let increment = self.check(&TokenKind::PlusPlus);
+            self.advance()?;
+            return Ok(Expression::Update {
+                arg: Box::new(self.parse_unary()?),
+                increment,
+                prefix: true,
+            });
+        }
         let op = match &self.current().kind {
             TokenKind::Plus => UnaryOp::Plus,
             TokenKind::Minus => UnaryOp::Minus,
@@ -461,6 +494,16 @@ impl Parser {
             } else {
                 break;
             }
+        }
+
+        if self.check(&TokenKind::PlusPlus) || self.check(&TokenKind::MinusMinus) {
+            let increment = self.check(&TokenKind::PlusPlus);
+            self.advance()?;
+            return Ok(Expression::Update {
+                arg: Box::new(expr),
+                increment,
+                prefix: false,
+            });
         }
 
         Ok(expr)

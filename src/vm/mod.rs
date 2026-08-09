@@ -138,6 +138,14 @@ impl VM {
             Opcode::Pop => {
                 self.stack.pop();
             }
+            Opcode::Dup => {
+                let value = self
+                    .stack
+                    .last()
+                    .cloned()
+                    .ok_or_else(|| JSError::InternalError("Stack underflow".to_string()))?;
+                self.stack.push(value);
+            }
 
             Opcode::LoadThis => {
                 let value = self.current_frame().this.clone();

@@ -95,6 +95,16 @@ impl Expression {
 
                 right.dump_impl(next_prefix, true);
             }
+            Expression::Update {
+                arg,
+                increment,
+                prefix,
+            } => {
+                let operator = if *increment { "++" } else { "--" };
+                let position = if *prefix { "Prefix" } else { "Postfix" };
+                println!("{prefix}{branch}{position}Update({operator})");
+                arg.dump_impl(next_prefix, true);
+            }
 
             Expression::Identifier(name) => {
                 println!("{prefix}{branch}Identifier({name})");
