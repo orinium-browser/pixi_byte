@@ -44,6 +44,18 @@ enum ControlFlow {
     Continue,
     Jump(usize),
     Return(JSValue),
+    PushTry {
+        catch_target: Option<usize>,
+        finally_target: Option<usize>,
+    },
+    PopTry,
+    BeginFinally,
+    EndFinally,
+}
+
+struct TryHandler {
+    catch_target: Option<usize>,
+    finally_target: Option<usize>,
 }
 
 impl VM {
@@ -89,12 +101,26 @@ impl VM {
 
     pub fn execute(&mut self, chunk: &BytecodeChunk) -> JSResult<JSValue> {
         let mut pc = 0; // プログラムカウンタ
+        let mut handlers = Vec::new();
+        let mut pending_finally = Vec::new();
 
         while pc < chunk.code.len() {
             let opcode = &chunk.code[pc];
             pc += 1;
 
-            match self.execute_opcode(opcode, &chunk)? {
+            let control = match self.execute_opcode(opcode, &chunk) {
+                Ok(control) => control,
+                Err(error) => {
+                    self.redirect_exception(
+                        error,
+                        &mut handlers,
+                        &mut pending_finally,
+                        &mut pc,
+                    )?;
+                    continue;
+                }
+            };
+            match control {
                 ControlFlow::Continue => {}
 
                 ControlFlow::Jump(target) => {
@@ -104,10 +130,58 @@ impl VM {
                 ControlFlow::Return(value) => {
                     return Ok(value);
                 }
+                ControlFlow::PushTry {
+                    catch_target,
+                    finally_target,
+                } => handlers.push(TryHandler {
+                    catch_target,
+                    finally_target,
+                }),
+                ControlFlow::PopTry => {
+                    handlers.pop();
+                }
+                ControlFlow::BeginFinally => pending_finally.push(None),
+                ControlFlow::EndFinally => {
+                    if let Some(Some(error)) = pending_finally.pop() {
+                        self.redirect_exception(
+                            error,
+                            &mut handlers,
+                            &mut pending_finally,
+                            &mut pc,
+                        )?;
+                    }
+                }
             }
         }
 
         Ok(self.stack.pop().unwrap_or(JSValue::Undefined))
+    }
+
+    fn redirect_exception(
+        &mut self,
+        error: JSError,
+        handlers: &mut Vec<TryHandler>,
+        pending_finally: &mut Vec<Option<JSError>>,
+        pc: &mut usize,
+    ) -> JSResult<()> {
+        let Some(handler) = handlers.pop() else {
+            return Err(error);
+        };
+        if let Some(catch_target) = handler.catch_target {
+            let value = match &error {
+                JSError::Thrown(value) => value.clone(),
+                _ => JSValue::String(error.to_string()),
+            };
+            self.stack.push(value);
+            *pc = catch_target;
+            return Ok(());
+        }
+        if let Some(finally_target) = handler.finally_target {
+            pending_finally.push(Some(error));
+            *pc = finally_target;
+            return Ok(());
+        }
+        Err(error)
     }
 
     /// バイトコードを実行（トップレベルはグローバル環境を使用）
@@ -546,6 +620,19 @@ impl VM {
                     return Ok(ControlFlow::Continue);
                 }
             }
+            Opcode::PushTry {
+                catch_target,
+                finally_target,
+            } => {
+                return Ok(ControlFlow::PushTry {
+                    catch_target: *catch_target,
+                    finally_target: *finally_target,
+                });
+            }
+            Opcode::PopTry => return Ok(ControlFlow::PopTry),
+            Opcode::BeginFinally => return Ok(ControlFlow::BeginFinally),
+            Opcode::EndFinally => return Ok(ControlFlow::EndFinally),
+            Opcode::Throw => return Err(JSError::Thrown(self.pop()?)),
             Opcode::Return => {
                 let value = self.pop()?;
                 return Ok(ControlFlow::Return(value));

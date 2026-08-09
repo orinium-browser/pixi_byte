@@ -39,6 +39,12 @@ pub enum Statement {
         update: Vec<Expression>,
         body: Vec<Statement>,
     },
+    Throw(Expression),
+    Try {
+        block: Vec<Statement>,
+        handler: Option<(Option<String>, Vec<Statement>)>,
+        finalizer: Option<Vec<Statement>>,
+    },
     Break,
     Continue,
     // TODO: 他の文を追加
@@ -210,6 +216,8 @@ impl Parser {
             TokenKind::If => self.parse_if_statement(),
             TokenKind::While => self.parse_while_statement(),
             TokenKind::For => self.parse_for_statement(),
+            TokenKind::Throw => self.parse_throw_statement(),
+            TokenKind::Try => self.parse_try_statement(),
             TokenKind::Break => {
                 self.advance()?;
                 self.consume_semicolon()?;
@@ -226,6 +234,46 @@ impl Parser {
                 Ok(Statement::Expression(expr))
             }
         }
+    }
+
+    fn parse_throw_statement(&mut self) -> JSResult<Statement> {
+        self.expect(&TokenKind::Throw, "Expected 'throw'")?;
+        let value = self.parse_expression()?;
+        self.consume_semicolon()?;
+        Ok(Statement::Throw(value))
+    }
+
+    fn parse_try_statement(&mut self) -> JSResult<Statement> {
+        self.expect(&TokenKind::Try, "Expected 'try'")?;
+        let block = self.parse_block()?;
+        let handler = if self.eat(&TokenKind::Catch)? {
+            let binding = if self.eat(&TokenKind::LeftParen)? {
+                let binding = self.expect_identifier("Expected catch binding")?;
+                self.expect(&TokenKind::RightParen, "Expected ')' after catch binding")?;
+                Some(binding)
+            } else {
+                None
+            };
+            Some((binding, self.parse_block()?))
+        } else {
+            None
+        };
+        let finalizer = if self.eat(&TokenKind::Finally)? {
+            Some(self.parse_block()?)
+        } else {
+            None
+        };
+        if handler.is_none() && finalizer.is_none() {
+            return Err(JSError::SyntaxError(
+                "try statement requires catch or finally".to_string(),
+                self.current().span,
+            ));
+        }
+        Ok(Statement::Try {
+            block,
+            handler,
+            finalizer,
+        })
     }
 
     fn parse_while_statement(&mut self) -> JSResult<Statement> {

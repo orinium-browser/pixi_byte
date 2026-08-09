@@ -1,6 +1,7 @@
 use std::fmt;
 
 use crate::lexer::Span;
+use crate::value::JSValue;
 
 pub type JSResult<T> = Result<T, JSError>;
 
@@ -17,6 +18,8 @@ pub enum JSError {
     RangeError(String),
     /// 内部エラー
     InternalError(String),
+    /// JavaScriptのthrow文によって送出された値
+    Thrown(JSValue),
 }
 
 impl fmt::Display for JSError {
@@ -28,6 +31,7 @@ impl fmt::Display for JSError {
             JSError::TypeError(msg) => write!(f, "TypeError: {}", msg),
             JSError::RangeError(msg) => write!(f, "RangeError: {}", msg),
             JSError::InternalError(msg) => write!(f, "InternalError: {}", msg),
+            JSError::Thrown(value) => write!(f, "Uncaught {}", value.to_console_string()),
         }
     }
 }

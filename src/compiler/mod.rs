@@ -68,6 +68,14 @@ pub enum Opcode {
     Jump(usize),        // 無条件ジャンプ
     JumpIfFalse(usize), // false の場合ジャンプ
     JumpIfTrue(usize),  // true の場合ジャンプ
+    PushTry {
+        catch_target: Option<usize>,
+        finally_target: Option<usize>,
+    },
+    PopTry,
+    BeginFinally,
+    EndFinally,
+    Throw,
     Return,             // 関数から戻る
 
     // その他
@@ -340,6 +348,81 @@ impl Compiler {
                     self.chunk.emit(Opcode::LoadConst(undefined));
                 }
             }
+            Statement::Throw(expression) => {
+                self.compile_expression(expression)?;
+                self.chunk.emit(Opcode::Throw);
+            }
+            Statement::Try {
+                block,
+                handler,
+                finalizer,
+            } => {
+                let try_start = self.chunk.code.len();
+                self.chunk.emit(Opcode::PushTry {
+                    catch_target: None,
+                    finally_target: None,
+                });
+                self.compile_statements(block, false)?;
+                self.chunk.emit(Opcode::PopTry);
+                let try_exit = self.chunk.code.len();
+                self.chunk.emit(Opcode::Jump(usize::MAX));
+
+                let catch_start = handler.as_ref().map(|_| self.chunk.code.len());
+                let mut catch_try = None;
+                let mut catch_exit = None;
+                if let Some((binding, body)) = handler {
+                    if finalizer.is_some() {
+                        catch_try = Some(self.chunk.code.len());
+                        self.chunk.emit(Opcode::PushTry {
+                            catch_target: None,
+                            finally_target: None,
+                        });
+                    }
+                    if let Some(binding) = binding {
+                        self.chunk.emit(Opcode::StoreVar(binding));
+                    } else {
+                        self.chunk.emit(Opcode::Pop);
+                    }
+                    self.compile_statements(body, false)?;
+                    if finalizer.is_some() {
+                        self.chunk.emit(Opcode::PopTry);
+                    }
+                    catch_exit = Some(self.chunk.code.len());
+                    self.chunk.emit(Opcode::Jump(usize::MAX));
+                }
+
+                if let Some(finalizer) = finalizer {
+                    let normal_finally = self.chunk.code.len();
+                    self.chunk.emit(Opcode::BeginFinally);
+                    let finally_start = self.chunk.code.len();
+                    self.compile_statements(finalizer, false)?;
+                    self.chunk.emit(Opcode::EndFinally);
+
+                    self.patch_jump(try_exit, normal_finally);
+                    if let Some(catch_exit) = catch_exit {
+                        self.patch_jump(catch_exit, normal_finally);
+                    }
+                    self.patch_try(try_start, catch_start, Some(finally_start));
+                    if let Some(catch_try) = catch_try {
+                        self.patch_try(catch_try, None, Some(finally_start));
+                    }
+                    if is_last {
+                        let undefined = self.chunk.add_constant(JSValue::Undefined);
+                        self.chunk.emit(Opcode::LoadConst(undefined));
+                    }
+                } else {
+                    let end = self.chunk.code.len();
+                    self.patch_jump(try_exit, end);
+                    if let Some(catch_exit) = catch_exit {
+                        self.patch_jump(catch_exit, end);
+                    }
+                    self.patch_try(try_start, catch_start, None);
+                    if is_last {
+                        let undefined = self.chunk.add_constant(JSValue::Undefined);
+                        self.chunk.emit(Opcode::LoadConst(undefined));
+                    }
+                }
+            }
             Statement::Break => {
                 let jump = self.chunk.code.len();
                 self.chunk.emit(Opcode::Jump(usize::MAX));
@@ -379,6 +462,23 @@ impl Compiler {
             | Opcode::JumpIfTrue(destination) => *destination = target,
             _ => unreachable!("attempted to patch a non-jump opcode"),
         }
+    }
+
+    fn patch_try(
+        &mut self,
+        index: usize,
+        catch_target: Option<usize>,
+        finally_target: Option<usize>,
+    ) {
+        let Opcode::PushTry {
+            catch_target: catch,
+            finally_target: finally,
+        } = &mut self.chunk.code[index]
+        else {
+            unreachable!("attempted to patch a non-try opcode");
+        };
+        *catch = catch_target;
+        *finally = finally_target;
     }
 
     /// 式をコンパイル

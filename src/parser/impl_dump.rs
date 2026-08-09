@@ -106,6 +106,38 @@ impl Statement {
                     stmt.dump_impl(next_prefix.clone(), index + 1 == body.len());
                 }
             }
+            Statement::Throw(expression) => {
+                println!("{prefix}{branch}Throw");
+                expression.dump_impl(next_prefix, true);
+            }
+            Statement::Try {
+                block,
+                handler,
+                finalizer,
+            } => {
+                println!("{prefix}{branch}Try");
+                for statement in block {
+                    statement.dump_impl(next_prefix.clone(), false);
+                }
+                if let Some((binding, body)) = handler {
+                    println!(
+                        "{next_prefix}├─ Catch{}",
+                        binding
+                            .as_ref()
+                            .map(|binding| format!("({binding})"))
+                            .unwrap_or_default()
+                    );
+                    for statement in body {
+                        statement.dump_impl(next_prefix.clone(), false);
+                    }
+                }
+                if let Some(body) = finalizer {
+                    println!("{next_prefix}└─ Finally");
+                    for (index, statement) in body.iter().enumerate() {
+                        statement.dump_impl(next_prefix.clone(), index + 1 == body.len());
+                    }
+                }
+            }
             Statement::Break => println!("{prefix}{branch}Break"),
             Statement::Continue => println!("{prefix}{branch}Continue"),
         }
