@@ -30,6 +30,8 @@ pub struct VM {
     pub global_object: Rc<RefCell<crate::value::jsobject::JSObject>>,
     /// Function.prototype への参照（関数値のプロパティ検索に利用）
     pub function_prototype: Rc<RefCell<JSObject>>,
+    /// Object.prototype used by ordinary and host-created objects.
+    pub object_prototype: Rc<RefCell<JSObject>>,
     /// String.prototype への参照（文字列プリミティブのメソッド検索に利用）
     pub string_prototype: Rc<RefCell<JSObject>>,
     /// Number.prototype への参照（数値プリミティブのメソッド検索に利用）
@@ -78,6 +80,14 @@ impl VM {
         let global_rc = Rc::new(RefCell::new(global_obj));
         // builtins を初期化してグローバルに組み込みを登録
         let function_prototype = crate::builtins::Builtins::new().init(&global_rc);
+        let object_constructor = global_rc.borrow().get("Object");
+        let object_prototype = match object_constructor {
+            JSValue::Object(constructor) => match constructor.borrow().get("prototype") {
+                JSValue::Object(prototype) => prototype,
+                _ => Rc::new(RefCell::new(JSObject::new())),
+            },
+            _ => Rc::new(RefCell::new(JSObject::new())),
+        };
         let string_constructor = global_rc.borrow().get("String");
         let string_prototype = match string_constructor {
             JSValue::Object(constructor) => {
@@ -111,6 +121,7 @@ impl VM {
             frames: vec![global_frame],
             global_object: global_rc,
             function_prototype,
+            object_prototype,
             string_prototype,
             number_prototype,
             callable_objects: HashMap::new(),
@@ -159,7 +170,8 @@ impl VM {
             JSValue::String(name.unwrap_or("").to_string()),
         );
         if constructible {
-            let mut prototype = JSObject::new();
+            let mut prototype =
+                JSObject::with_prototype(Some(Rc::clone(&self.object_prototype)));
             prototype.set("constructor".to_string(), function.clone());
             properties.set(
                 "prototype".to_string(),
@@ -520,7 +532,7 @@ impl VM {
                 use crate::value::JSObject;
                 use std::cell::RefCell;
                 use std::rc::Rc;
-                let obj = JSObject::new();
+                let obj = JSObject::with_prototype(Some(Rc::clone(&self.object_prototype)));
                 self.stack.push(JSValue::Object(Rc::new(RefCell::new(obj))));
             }
             Opcode::NewRegExp(pattern, flags) => {
@@ -569,7 +581,14 @@ impl VM {
                             return Ok(ControlFlow::Continue);
                         }
 
-                        let value = obj_ref.borrow().get(&key_str);
+                        let value = {
+                            let object = obj_ref.borrow();
+                            if object.has_property(&key_str) {
+                                object.get(&key_str)
+                            } else {
+                                self.object_prototype.borrow().get(&key_str)
+                            }
+                        };
 
                         self.stack.push(value);
                     }
@@ -764,7 +783,14 @@ impl VM {
                 let key = property.to_string();
 
                 let method = match &object {
-                    JSValue::Object(obj_ref) => obj_ref.borrow().get(&key),
+                    JSValue::Object(obj_ref) => {
+                        let object = obj_ref.borrow();
+                        if object.has_property(&key) {
+                            object.get(&key)
+                        } else {
+                            self.object_prototype.borrow().get(&key)
+                        }
+                    }
                     JSValue::Function(..)
                     | JSValue::ArrowFunction(..) => self
                         .user_function_object(&object)
@@ -822,7 +848,7 @@ impl VM {
                         JSValue::Object(prototype) => Some(prototype),
                         _ => None,
                     },
-                    _ => None,
+                    _ => Some(Rc::clone(&self.object_prototype)),
                 };
                 let this = JSValue::Object(Rc::new(RefCell::new(JSObject::with_prototype(
                     prototype,
