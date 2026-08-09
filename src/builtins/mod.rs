@@ -6,6 +6,7 @@
 pub mod array;
 pub mod function;
 pub mod object;
+pub mod promise;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -27,6 +28,7 @@ impl Builtins {
         self::object::install(global);
         // Array 関連の組み込みを登録
         self::array::install(global);
+        self::promise::install(global);
         // Function 関連の組み込みを登録
         self::function::install(global)
     }
