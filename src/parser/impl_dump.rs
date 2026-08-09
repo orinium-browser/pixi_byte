@@ -43,11 +43,17 @@ impl Statement {
                 expr.dump_impl(prefix, last);
             }
 
-            Statement::VariableDeclaration { name, init, .. } => {
-                println!("{prefix}{branch}Var {name}");
-
-                if let Some(expr) = init {
-                    expr.dump_impl(next_prefix, true);
+            Statement::VariableDeclaration { declarations, .. } => {
+                println!("{prefix}{branch}Var");
+                for (index, (name, init)) in declarations.iter().enumerate() {
+                    let declaration_last = index + 1 == declarations.len();
+                    println!("{next_prefix}{}{name}", if declaration_last { "└─ " } else { "├─ " });
+                    if let Some(expr) = init {
+                        expr.dump_impl(
+                            format!("{next_prefix}{}", if declaration_last { "   " } else { "│  " }),
+                            true,
+                        );
+                    }
                 }
             }
             Statement::If {

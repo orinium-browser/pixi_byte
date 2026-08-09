@@ -16,8 +16,7 @@ pub enum Statement {
     Expression(Expression),
     VariableDeclaration {
         kind: VarKind,
-        name: String,
-        init: Option<Expression>,
+        declarations: Vec<(String, Option<Expression>)>,
     },
     Return(Option<Expression>),
     FunctionDeclaration {
@@ -455,17 +454,23 @@ impl Parser {
     fn parse_var_declaration(&mut self, kind: VarKind) -> JSResult<Statement> {
         self.advance()?; // var/let/const
 
-        let name = self.expect_identifier("Expected variable name")?;
-
-        let init = if self.eat(&TokenKind::Eq)? {
-            Some(self.parse_expression()?)
-        } else {
-            None
-        };
+        let mut declarations = Vec::new();
+        loop {
+            let name = self.expect_identifier("Expected variable name")?;
+            let init = if self.eat(&TokenKind::Eq)? {
+                Some(self.parse_assignment()?)
+            } else {
+                None
+            };
+            declarations.push((name, init));
+            if !self.eat(&TokenKind::Comma)? {
+                break;
+            }
+        }
 
         self.consume_semicolon()?;
 
-        Ok(Statement::VariableDeclaration { kind, name, init })
+        Ok(Statement::VariableDeclaration { kind, declarations })
     }
 
     fn parse_function_expression(&mut self) -> JSResult<Expression> {

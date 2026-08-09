@@ -192,17 +192,17 @@ impl Compiler {
             }
             Statement::VariableDeclaration {
                 kind: _,
-                name,
-                init,
+                declarations,
             } => {
-                if let Some(expr) = init {
-                    self.compile_expression(expr)?;
-                } else {
-                    // 初期化なしの場合はundefined
-                    let idx = self.chunk.add_constant(JSValue::Undefined);
-                    self.chunk.emit(Opcode::LoadConst(idx));
+                for (name, init) in declarations {
+                    if let Some(expr) = init {
+                        self.compile_expression(expr)?;
+                    } else {
+                        let idx = self.chunk.add_constant(JSValue::Undefined);
+                        self.chunk.emit(Opcode::LoadConst(idx));
+                    }
+                    self.chunk.emit(Opcode::StoreVar(name));
                 }
-                self.chunk.emit(Opcode::StoreVar(name));
 
                 // 変数宣言の文は常にundefinedを返す
                 if is_last {
