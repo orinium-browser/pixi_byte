@@ -389,6 +389,13 @@ impl Compiler {
                 let idx = self.chunk.add_constant(func_value);
                 self.chunk.emit(Opcode::CreateFunction(idx));
             }
+            Expression::ArrowFunction { params, body } => {
+                let program = Program { body };
+                let function_chunk = Compiler::new().compile(program)?;
+                let func_value = JSValue::ArrowFunction(function_chunk, params.clone(), None, None);
+                let idx = self.chunk.add_constant(func_value);
+                self.chunk.emit(Opcode::CreateFunction(idx));
+            }
             Expression::Call { callee, args } => {
                 // MemberAccess (obj.prop(args)) は receiver を使うので専用の CallMethod を出す
                 if let Expression::MemberAccess {

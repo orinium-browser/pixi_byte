@@ -41,6 +41,13 @@ pub enum JSValue {
         Option<Rc<RefCell<Environment>>>,
         Option<String>,
     ),
+    /// Arrow function with a captured lexical environment and lexical `this`.
+    ArrowFunction(
+        BytecodeChunk,
+        Vec<String>,
+        Option<Rc<RefCell<Environment>>>,
+        Option<Box<JSValue>>,
+    ),
     /// ネイティブ（Rust側）で実装された関数を表す。テストなどでクロージャを渡すために使用する。
     NativeFunction(NativeFunctionType),
     /// Bound function created by Function.prototype.bind
@@ -81,6 +88,7 @@ impl JSValue {
             JSValue::String(s) => s.clone(),
             JSValue::Object(_) => "[object Object]".to_string(),
             JSValue::Function(_, _, _, _) => "[function]".to_string(),
+            JSValue::ArrowFunction(_, _, _, _) => "[function]".to_string(),
             JSValue::NativeFunction(_) => "[native function]".to_string(),
             JSValue::BoundFunction(_) => "[bound function]".to_string(),
         }
@@ -103,6 +111,7 @@ impl JSValue {
             }
             JSValue::Object(_) => f64::NAN, // オブジェクトはNaN（簡易）
             JSValue::Function(_, _, _, _) => f64::NAN,
+            JSValue::ArrowFunction(_, _, _, _) => f64::NAN,
             JSValue::NativeFunction(_) => f64::NAN,
             JSValue::BoundFunction(data) => data.target.to_number(),
         }
@@ -117,6 +126,7 @@ impl JSValue {
             JSValue::String(s) => !s.is_empty(),
             JSValue::Object(_) => true, // オブジェクトは常にtrue
             JSValue::Function(_, _, _, _) => true,
+            JSValue::ArrowFunction(_, _, _, _) => true,
             JSValue::NativeFunction(_) => true,
             JSValue::BoundFunction(_) => true,
         }
@@ -132,6 +142,7 @@ impl JSValue {
             JSValue::String(_) => "string",
             JSValue::Object(_) => "object",
             JSValue::Function(_, _, _, _) => "function",
+            JSValue::ArrowFunction(_, _, _, _) => "function",
             JSValue::NativeFunction(_) => "function",
             JSValue::BoundFunction(_) => "function",
         }
@@ -201,6 +212,7 @@ impl fmt::Debug for JSValue {
             JSValue::String(s) => write!(f, "String(\"{}\")", s),
             JSValue::Object(_) => write!(f, "Object(...)"),
             JSValue::Function(_, _, _, _) => write!(f, "Function(...)"),
+            JSValue::ArrowFunction(_, _, _, _) => write!(f, "ArrowFunction(...)"),
             JSValue::NativeFunction(_) => write!(f, "NativeFunction(...)"),
             JSValue::BoundFunction(_) => write!(f, "BoundFunction(...)"),
         }
@@ -221,6 +233,12 @@ impl Clone for JSValue {
                 params.clone(),
                 env_opt.clone(),
                 name_opt.clone(),
+            ),
+            JSValue::ArrowFunction(chunk, params, env_opt, this_opt) => JSValue::ArrowFunction(
+                chunk.clone(),
+                params.clone(),
+                env_opt.clone(),
+                this_opt.clone(),
             ),
             JSValue::NativeFunction(f) => JSValue::NativeFunction(*f),
             JSValue::BoundFunction(b) => JSValue::BoundFunction(Box::new((**b).clone())),

@@ -75,6 +75,10 @@ pub enum Expression {
         params: Vec<String>,
         body: Vec<Statement>,
     },
+    ArrowFunction {
+        params: Vec<String>,
+        body: Vec<Statement>,
+    },
     // TODO: 他の式を追加
 }
 
@@ -128,6 +132,7 @@ pub enum UnaryOp {
 }
 
 /// パーサー
+#[derive(Clone)]
 pub struct Parser {
     lexer: Lexer,
 
@@ -245,6 +250,10 @@ impl Parser {
     }
 
     fn parse_assignment(&mut self) -> JSResult<Expression> {
+        if let Some(arrow) = self.try_parse_arrow_function()? {
+            return Ok(arrow);
+        }
+
         let left = self.parse_expression_bp(0)?;
 
         if self.eat(&TokenKind::Eq)? {
@@ -257,6 +266,51 @@ impl Parser {
         }
 
         Ok(left)
+    }
+
+    fn try_parse_arrow_function(&mut self) -> JSResult<Option<Expression>> {
+        if let TokenKind::Identifier(param) = &self.current().kind
+            && matches!(self.next.kind, TokenKind::Arrow)
+        {
+            let param = param.clone();
+            self.advance()?;
+            self.advance()?;
+            return self.parse_arrow_body(vec![param]).map(Some);
+        }
+
+        if !self.check(&TokenKind::LeftParen) {
+            return Ok(None);
+        }
+        let mut candidate = self.clone();
+        candidate.advance()?;
+        let mut params = Vec::new();
+        while !candidate.check(&TokenKind::RightParen) {
+            let TokenKind::Identifier(param) = &candidate.current().kind else {
+                return Ok(None);
+            };
+            params.push(param.clone());
+            candidate.advance()?;
+            if !candidate.check(&TokenKind::RightParen) && !candidate.eat(&TokenKind::Comma)? {
+                return Ok(None);
+            }
+        }
+        candidate.advance()?;
+        if !candidate.eat(&TokenKind::Arrow)? {
+            return Ok(None);
+        }
+
+        let arrow = candidate.parse_arrow_body(params)?;
+        *self = candidate;
+        Ok(Some(arrow))
+    }
+
+    fn parse_arrow_body(&mut self, params: Vec<String>) -> JSResult<Expression> {
+        let body = if self.check(&TokenKind::LeftBrace) {
+            self.parse_block()?
+        } else {
+            vec![Statement::Return(Some(self.parse_assignment()?))]
+        };
+        Ok(Expression::ArrowFunction { params, body })
     }
 
     fn parse_expression_bp(&mut self, min_bp: u8) -> JSResult<Expression> {

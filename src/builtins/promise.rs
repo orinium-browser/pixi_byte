@@ -16,7 +16,10 @@ const REACTION_COUNT: &str = "__promise_reaction_count";
 fn is_callable(value: &JSValue) -> bool {
     matches!(
         value,
-        JSValue::Function(..) | JSValue::NativeFunction(..) | JSValue::BoundFunction(..)
+        JSValue::Function(..)
+            | JSValue::ArrowFunction(..)
+            | JSValue::NativeFunction(..)
+            | JSValue::BoundFunction(..)
     )
 }
 

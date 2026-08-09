@@ -265,6 +265,7 @@ impl VM {
                         self.stack.push(value);
                     }
                     JSValue::Function(..)
+                    | JSValue::ArrowFunction(..)
                     | JSValue::NativeFunction(..)
                     | JSValue::BoundFunction(..) => {
                         let key_str = key.to_string();
@@ -353,6 +354,15 @@ impl VM {
                             JSValue::Function(func_chunk, params, captured, name_opt.clone());
                         self.stack.push(func);
                     }
+                    JSValue::ArrowFunction(func_chunk, params, _maybe_env, _maybe_this) => {
+                        let func = JSValue::ArrowFunction(
+                            func_chunk,
+                            params,
+                            Some(self.current_env()),
+                            Some(Box::new(self.current_frame().this.clone())),
+                        );
+                        self.stack.push(func);
+                    }
                     _other => {
                         // 不正な定数タイプ
                         return Err(JSError::TypeError(
@@ -397,6 +407,7 @@ impl VM {
                 let method = match &object {
                     JSValue::Object(obj_ref) => obj_ref.borrow().get(&key),
                     JSValue::Function(..)
+                    | JSValue::ArrowFunction(..)
                     | JSValue::NativeFunction(..)
                     | JSValue::BoundFunction(..) => self.function_prototype.borrow().get(&key),
                     _ => {
@@ -419,6 +430,11 @@ impl VM {
 
                 let constructor = self.pop()?;
                 let constructor = match constructor {
+                    JSValue::ArrowFunction(..) => {
+                        return Err(JSError::TypeError(
+                            "arrow function is not a constructor".to_string(),
+                        ));
+                    }
                     JSValue::Object(object) => {
                         let callable = object.borrow().get("__construct__");
                         if matches!(callable, JSValue::Undefined) {
@@ -535,6 +551,12 @@ impl VM {
             JSValue::Function(chunk, params, env, name) => {
                 let env = self.create_function_env(callee_clone, env, params, args, name);
 
+                self.with_call_frame(env, this, chunk)
+            }
+
+            JSValue::ArrowFunction(chunk, params, env, lexical_this) => {
+                let env = self.create_function_env(callee_clone, env, params, args, None);
+                let this = lexical_this.map(|this| *this).unwrap_or(this);
                 self.with_call_frame(env, this, chunk)
             }
 

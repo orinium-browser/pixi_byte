@@ -181,6 +181,14 @@ impl Expression {
                     stmt.dump_impl(next_prefix.clone(), i == body.len() - 1);
                 }
             }
+
+            Expression::ArrowFunction { params, body } => {
+                println!("{prefix}{branch}ArrowFunction({})", params.join(", "));
+
+                for (i, statement) in body.iter().enumerate() {
+                    statement.dump_impl(next_prefix.clone(), i == body.len() - 1);
+                }
+            }
         }
     }
 }

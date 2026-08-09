@@ -60,3 +60,9 @@ fn object_can_expose_an_internal_constructor_entry_point() {
         JSValue::Number(9.0)
     );
 }
+
+#[test]
+fn arrow_function_is_not_a_constructor() {
+    let mut engine = JSEngine::new();
+    assert!(engine.eval("new (() => 1)()").is_err());
+}

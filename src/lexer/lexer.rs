@@ -2,6 +2,7 @@ use super::token::{Span, Token, TokenKind};
 use crate::error::{JSError, JSResult};
 
 /// 字句解析器
+#[derive(Clone)]
 pub struct Lexer {
     /// ソースコードの文字列
     source: Vec<char>,

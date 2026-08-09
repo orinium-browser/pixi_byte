@@ -1,4 +1,3 @@
-use crate::runtime::CallFrame;
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
 use crate::value::jsvalue::BoundFunctionData;
@@ -24,65 +23,7 @@ fn function_call(
         JSValue::Undefined
     };
 
-    match func {
-        JSValue::NativeFunction(native_fn) => {
-            // call native with thisArg as first arg, then provided args
-            let mut call_args = Vec::new();
-            call_args.push(this_arg);
-            call_args.extend(args);
-            let res = native_fn(vm, call_args)?;
-            Ok(res)
-        }
-        JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
-            // Prepare outer environment (captured or current)
-            let outer = match captured_env_opt {
-                Some(env_rc) => env_rc,
-                None => vm.current_env().clone(),
-            };
-
-            let new_env = Rc::new(RefCell::new(crate::runtime::Environment::with_outer(outer)));
-
-            // Bind parameters from args (args currently contains the function args, not thisArg)
-            for (i, param_name) in params.iter().enumerate() {
-                if i < args.len() {
-                    new_env.borrow().define(param_name.clone(), args[i].clone());
-                } else {
-                    // missing args -> undefined
-                    new_env
-                        .borrow()
-                        .define(param_name.clone(), JSValue::Undefined);
-                }
-            }
-
-            // If extra args exist, store as argN
-            for i in params.len()..args.len() {
-                new_env
-                    .borrow()
-                    .define(format!("arg{}", i), args[i].clone());
-            }
-
-            // Named function expression handling: define name in env if present
-            if let Some(name) = name_opt.clone() {
-                new_env.borrow().define(name, JSValue::Undefined);
-            }
-
-            vm.frames.push(CallFrame {
-                env: new_env,
-                this: this_arg,
-            });
-            let old_stack = std::mem::take(&mut vm.stack);
-
-            let res = vm.execute(&func_chunk)?;
-
-            vm.stack = old_stack;
-            vm.frames.pop();
-
-            Ok(res)
-        }
-        _ => Err(crate::error::JSError::TypeError(
-            "Function.prototype.call: receiver is not a function".to_string(),
-        )),
-    }
+    vm.call(func, this_arg, args)
 }
 
 fn function_apply(
@@ -131,64 +72,7 @@ fn function_apply(
         }
     }
 
-    match func {
-        JSValue::NativeFunction(native_fn) => {
-            let mut call_args = Vec::new();
-            call_args.push(this_arg);
-            for v in call_args_vec.into_iter() {
-                call_args.push(v);
-            }
-            let res = native_fn(vm, call_args)?;
-            Ok(res)
-        }
-        JSValue::Function(func_chunk, params, captured_env_opt, name_opt) => {
-            // Prepare outer environment (captured or current)
-            let outer = match captured_env_opt {
-                Some(env_rc) => env_rc,
-                None => vm.current_env(),
-            };
-            let new_env = Rc::new(RefCell::new(crate::runtime::Environment::with_outer(outer)));
-
-            // Bind parameters from call_args_vec
-            for (i, param_name) in params.iter().enumerate() {
-                if i < call_args_vec.len() {
-                    new_env
-                        .borrow()
-                        .define(param_name.clone(), call_args_vec[i].clone());
-                } else {
-                    new_env
-                        .borrow()
-                        .define(param_name.clone(), JSValue::Undefined);
-                }
-            }
-
-            // Extra args
-            for (i, value) in call_args_vec.iter().enumerate().skip(params.len()) {
-                new_env.borrow().define(format!("arg{}", i), value.clone());
-            }
-
-            // Named function expression handling
-            if let Some(name) = name_opt.clone() {
-                new_env.borrow().define(name, JSValue::Undefined);
-            }
-
-            vm.frames.push(CallFrame {
-                env: new_env,
-                this: this_arg,
-            });
-            let old_stack = std::mem::take(&mut vm.stack);
-
-            let res = vm.execute(&func_chunk)?;
-
-            vm.stack = old_stack;
-            vm.frames.pop();
-
-            Ok(res)
-        }
-        _ => Err(crate::error::JSError::TypeError(
-            "Function.prototype.apply: receiver is not a function".to_string(),
-        )),
-    }
+    vm.call(func, this_arg, call_args_vec)
 }
 
 fn function_bind(
@@ -221,7 +105,9 @@ fn function_bind(
             };
             Ok(JSValue::BoundFunction(Box::new(bf)))
         }
-        JSValue::Function(_, _, _, _) | JSValue::NativeFunction(_) => {
+        JSValue::Function(_, _, _, _)
+        | JSValue::ArrowFunction(_, _, _, _)
+        | JSValue::NativeFunction(_) => {
             // create bound function wrapper
             let bf = BoundFunctionData {
                 target: Box::new(func.clone()),
