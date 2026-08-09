@@ -91,6 +91,20 @@ impl VM {
         });
     }
 
+    /// Creates an Array object connected to the realm's `Array.prototype`.
+    pub fn array_from_values(&self, values: Vec<JSValue>) -> JSValue {
+        let array = crate::value::JSArray::from_vec(values).to_object();
+        let JSValue::Object(array_object) = &array else {
+            unreachable!("JSArray must produce an object");
+        };
+        if let JSValue::Object(constructor) = self.global_object.borrow().get("Array")
+            && let JSValue::Object(prototype) = constructor.borrow().get("prototype")
+        {
+            array_object.borrow_mut().set_prototype(Some(prototype));
+        }
+        array
+    }
+
     /// Runs queued jobs in FIFO order until the queue is empty.
     pub fn run_jobs(&mut self) -> JSResult<()> {
         while let Some(job) = self.jobs.pop_front() {
@@ -367,9 +381,7 @@ impl VM {
 
             // 配列・オブジェクト操作
             Opcode::NewArray(_size) => {
-                use crate::value::JSArray;
-                let arr = JSArray::new();
-                self.stack.push(arr.to_object());
+                self.stack.push(self.array_from_values(Vec::new()));
             }
             Opcode::NewObject => {
                 use crate::value::JSObject;

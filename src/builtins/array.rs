@@ -82,6 +82,23 @@ fn array_pop(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::J
     }
 }
 
+fn array_is_array(
+    _vm: &mut crate::vm::VM,
+    args: Vec<JSValue>,
+) -> crate::error::JSResult<JSValue> {
+    let value = if args.len() > 1 {
+        args.get(1)
+    } else {
+        args.first()
+    };
+    let is_array = matches!(
+        value,
+        Some(JSValue::Object(object))
+            if object.borrow().has_own_property("__pixi_array__")
+    );
+    Ok(JSValue::Boolean(is_array))
+}
+
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     // Array コンストラクタオブジェクト（最小実装）
     let mut array_ctor = JSObject::new();
@@ -96,6 +113,10 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     array_ctor.set(
         "prototype".to_string(),
         JSValue::Object(Rc::new(RefCell::new(proto))),
+    );
+    array_ctor.set(
+        "isArray".to_string(),
+        JSValue::NativeFunction(array_is_array),
     );
 
     global.borrow_mut().set(

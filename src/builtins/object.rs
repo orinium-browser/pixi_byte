@@ -4,7 +4,7 @@
 //! `setPrototypeOf`, and helpers like `defineProperty` and `getOwnPropertyDescriptor`.
 
 use crate::error::{JSError, JSResult};
-use crate::value::{JSArray, JSValue};
+use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -480,7 +480,7 @@ fn object_keys(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> 
         .into_iter()
         .map(JSValue::String)
         .collect();
-    Ok(JSArray::from_vec(keys).to_object())
+    Ok(vm.array_from_values(keys))
 }
 
 /// Object.assign(target, ...sources)

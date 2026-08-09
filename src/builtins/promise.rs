@@ -6,7 +6,7 @@ use std::rc::Rc;
 use crate::error::{JSError, JSResult};
 use crate::value::jsobject::JSObject;
 use crate::value::jsvalue::BoundFunctionData;
-use crate::value::{JSArray, JSValue};
+use crate::value::JSValue;
 use crate::vm::VM;
 
 const STATE: &str = "__promise_state";
@@ -104,7 +104,8 @@ fn promise_all(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let length = values.borrow().get("length").to_number() as usize;
     let result = new_promise();
     if length == 0 {
-        resolve_promise(vm, &result, JSArray::from_vec(Vec::new()).to_object());
+        let values = vm.array_from_values(Vec::new());
+        resolve_promise(vm, &result, values);
         return Ok(JSValue::Object(result));
     }
 
@@ -113,7 +114,7 @@ fn promise_all(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     tracker.set("result".to_string(), JSValue::Object(Rc::clone(&result)));
     tracker.set(
         "values".to_string(),
-        JSArray::from_vec(vec![JSValue::Undefined; length]).to_object(),
+        vm.array_from_values(vec![JSValue::Undefined; length]),
     );
     let tracker = Rc::new(RefCell::new(tracker));
 

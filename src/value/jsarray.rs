@@ -1,4 +1,4 @@
-use super::{JSObject, JSValue};
+use super::{JSObject, JSValue, Property};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -86,8 +86,28 @@ impl JSArray {
             obj.set(i.to_string(), value);
         }
 
-        // lengthプロパティを設定
-        obj.set("length".to_string(), JSValue::Number(len as f64));
+        obj.define_property(
+            "__pixi_array__".to_string(),
+            Property {
+                value: JSValue::Boolean(true),
+                enumerable: false,
+                writable: false,
+                configurable: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        obj.define_property(
+            "length".to_string(),
+            Property {
+                value: JSValue::Number(len as f64),
+                enumerable: false,
+                writable: true,
+                configurable: false,
+                getter: None,
+                setter: None,
+            },
+        );
 
         JSValue::Object(Rc::new(RefCell::new(obj)))
     }
