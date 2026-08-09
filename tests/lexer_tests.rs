@@ -80,6 +80,24 @@ fn test_tokenize_strings() {
 }
 
 #[test]
+fn test_tokenize_string_escape_sequences() {
+    let lexer = Lexer::new(r#""\x3cscript\x3e \u65E5\u672C\b\f\v\0""#);
+    let tokens = lexer.iter().map(|value| value.unwrap()).collect::<Vec<_>>();
+
+    assert!(matches!(
+        tokens[0].kind,
+        TokenKind::String(ref value)
+            if value == "<script> 日本\u{0008}\u{000C}\u{000B}\0"
+    ));
+}
+
+#[test]
+fn invalid_hexadecimal_string_escape_is_a_syntax_error() {
+    let mut lexer = Lexer::new(r#""\xZZ""#);
+    assert!(lexer.next().unwrap().is_err());
+}
+
+#[test]
 fn test_tokenize_identifiers() {
     let lexer = Lexer::new("foo bar123 _test $value");
     let tokens = lexer.iter().map(|v| v.unwrap()).collect::<Vec<_>>();

@@ -334,17 +334,29 @@ impl Lexer {
             } else if ch == '\\' {
                 self.advance();
                 if let Some(escaped) = self.peek() {
-                    let escaped_char = match escaped {
-                        'n' => '\n',
-                        'r' => '\r',
-                        't' => '\t',
-                        '\\' => '\\',
-                        '\'' => '\'',
-                        '"' => '"',
-                        _ => escaped,
-                    };
-                    value.push(escaped_char);
                     self.advance();
+                    match escaped {
+                        'b' => value.push('\u{0008}'),
+                        'f' => value.push('\u{000C}'),
+                        'n' => value.push('\n'),
+                        'r' => value.push('\r'),
+                        't' => value.push('\t'),
+                        'v' => value.push('\u{000B}'),
+                        '0' => value.push('\0'),
+                        'x' => {
+                            let code = self.scan_hex_escape(2, start, start_line, start_column)?;
+                            value.push(char::from_u32(code).unwrap_or('\u{FFFD}'));
+                        }
+                        'u' => {
+                            let code = self.scan_hex_escape(4, start, start_line, start_column)?;
+                            value.push(char::from_u32(code).unwrap_or('\u{FFFD}'));
+                        }
+                        '\n' => {}
+                        '\\' => value.push('\\'),
+                        '\'' => value.push('\''),
+                        '"' => value.push('"'),
+                        _ => value.push(escaped),
+                    }
                 }
             } else if ch == '\n' {
                 return Err(JSError::SyntaxError(
@@ -359,6 +371,43 @@ impl Lexer {
 
         let span = Span::new(start, self.position, start_line, start_column);
         Ok(Token::new(TokenKind::String(value), span))
+    }
+
+    fn scan_hex_escape(
+        &mut self,
+        digits: usize,
+        literal_start: usize,
+        start_line: usize,
+        start_column: usize,
+    ) -> JSResult<u32> {
+        let mut value = 0_u32;
+        for _ in 0..digits {
+            let Some(character) = self.peek() else {
+                return Err(JSError::SyntaxError(
+                    "Invalid hexadecimal escape sequence".to_string(),
+                    Span::new(
+                        literal_start,
+                        self.position,
+                        start_line,
+                        start_column,
+                    ),
+                ));
+            };
+            let Some(digit) = character.to_digit(16) else {
+                return Err(JSError::SyntaxError(
+                    "Invalid hexadecimal escape sequence".to_string(),
+                    Span::new(
+                        literal_start,
+                        self.position,
+                        start_line,
+                        start_column,
+                    ),
+                ));
+            };
+            self.advance();
+            value = value * 16 + digit;
+        }
+        Ok(value)
     }
 
     fn scan_regular_expression(&mut self) -> JSResult<Token> {
