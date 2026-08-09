@@ -104,6 +104,53 @@ fn collection_delete(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::Boolean(true))
 }
 
+fn set_for_each(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let set = receiver(&args, "Set.forEach")?;
+    let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
+    let set_value = JSValue::Object(Rc::clone(&set));
+    let mut index = 0;
+    while index < count(&set) {
+        if matches!(
+            set.borrow().get(&format!("__collection_present_{index}")),
+            JSValue::Boolean(true)
+        ) {
+            let value = set.borrow().get(&format!("__collection_key_{index}"));
+            vm.call(
+                callback.clone(),
+                this_arg.clone(),
+                vec![value.clone(), value, set_value.clone()],
+            )?;
+        }
+        index += 1;
+    }
+    Ok(JSValue::Undefined)
+}
+
+fn map_for_each(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let map = receiver(&args, "Map.forEach")?;
+    let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
+    let map_value = JSValue::Object(Rc::clone(&map));
+    let mut index = 0;
+    while index < count(&map) {
+        if matches!(
+            map.borrow().get(&format!("__collection_present_{index}")),
+            JSValue::Boolean(true)
+        ) {
+            let key = map.borrow().get(&format!("__collection_key_{index}"));
+            let value = map.borrow().get(&format!("__collection_value_{index}"));
+            vm.call(
+                callback.clone(),
+                this_arg.clone(),
+                vec![value, key, map_value.clone()],
+            )?;
+        }
+        index += 1;
+    }
+    Ok(JSValue::Undefined)
+}
+
 fn map_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let map = create_collection(vm, "Map");
     if let Some(JSValue::Object(iterable)) = args.get(1) {
@@ -154,6 +201,7 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut set_prototype = JSObject::new();
     set_prototype.set("add".to_string(), JSValue::NativeFunction(set_add));
     set_prototype.set("has".to_string(), JSValue::NativeFunction(collection_has));
+    set_prototype.set("forEach".to_string(), JSValue::NativeFunction(set_for_each));
     set_prototype.set(
         "delete".to_string(),
         JSValue::NativeFunction(collection_delete),
@@ -162,6 +210,7 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     map_prototype.set("set".to_string(), JSValue::NativeFunction(map_set));
     map_prototype.set("get".to_string(), JSValue::NativeFunction(map_get));
     map_prototype.set("has".to_string(), JSValue::NativeFunction(collection_has));
+    map_prototype.set("forEach".to_string(), JSValue::NativeFunction(map_for_each));
     map_prototype.set(
         "delete".to_string(),
         JSValue::NativeFunction(collection_delete),

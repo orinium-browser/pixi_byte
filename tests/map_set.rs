@@ -32,3 +32,43 @@ fn map_supports_identity_keys_and_chained_set() {
         .unwrap();
     assert_eq!(result, JSValue::Boolean(true));
 }
+
+#[test]
+fn set_for_each_uses_web_compatible_arguments_and_this_value() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const values = new Set(["a", "b"]);
+            const receiver = { prefix: "set:" };
+            let result = "";
+            values.forEach(function (value, key, collection) {
+                result += this.prefix + value + key + (collection === values);
+            }, receiver);
+            result;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        JSValue::String("set:aatrueset:bbtrue".to_string())
+    );
+}
+
+#[test]
+fn map_for_each_visits_values_and_keys_in_insertion_order() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const values = new Map([["a", 1], ["b", 2]]);
+            let result = "";
+            values.forEach(function (value, key, collection) {
+                result += key + value + (collection === values);
+            });
+            result;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("a1trueb2true".to_string()));
+}
