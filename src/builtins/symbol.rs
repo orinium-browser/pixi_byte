@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::JSResult;
-use crate::value::jsobject::{JSObject, Property};
 use crate::value::JSValue;
+use crate::value::jsobject::{JSObject, Property};
 use crate::vm::VM;
 
 fn symbol_for(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {

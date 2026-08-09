@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::{JSError, JSResult};
-use crate::value::jsobject::JSObject;
 use crate::value::JSValue;
+use crate::value::jsobject::JSObject;
 use crate::vm::VM;
 
 fn error_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {

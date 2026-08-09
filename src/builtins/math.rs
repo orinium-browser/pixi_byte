@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::JSResult;
-use crate::value::jsobject::{JSObject, Property};
 use crate::value::JSValue;
+use crate::value::jsobject::{JSObject, Property};
 use crate::vm::VM;
 
 static RANDOM_STATE: AtomicU64 = AtomicU64::new(0);
@@ -29,7 +29,7 @@ fn math_min(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 
 fn math_clz32(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::Number(
-        (argument(&args, 0) as u32).leading_zeros() as f64,
+        (argument(&args, 0) as u32).leading_zeros() as f64
     ))
 }
 

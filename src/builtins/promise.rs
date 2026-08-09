@@ -4,9 +4,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::{JSError, JSResult};
+use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
 use crate::value::jsvalue::BoundFunctionData;
-use crate::value::JSValue;
 use crate::vm::VM;
 
 const STATE: &str = "__promise_state";

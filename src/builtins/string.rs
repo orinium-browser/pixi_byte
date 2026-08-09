@@ -5,8 +5,8 @@ use std::rc::Rc;
 
 use crate::builtins::regexp;
 use crate::error::{JSError, JSResult};
-use crate::value::jsobject::JSObject;
 use crate::value::JSValue;
+use crate::value::jsobject::JSObject;
 use crate::vm::VM;
 
 fn receiver(args: &[JSValue], method: &str) -> JSResult<String> {
@@ -94,14 +94,7 @@ fn string_replace(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         return Ok(JSValue::String(input));
     };
     let end = start + needle.len();
-    let replacement = replacement_text(
-        vm,
-        &replacement,
-        &input,
-        start,
-        end,
-        vec![Some(needle)],
-    )?;
+    let replacement = replacement_text(vm, &replacement, &input, start, end, vec![Some(needle)])?;
     Ok(JSValue::String(format!(
         "{}{}{}",
         &input[..start],
@@ -189,7 +182,11 @@ fn string_split(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
                     .map(|character| character.to_string())
                     .collect()
             } else {
-                input.split(&separator).take(limit).map(str::to_string).collect()
+                input
+                    .split(&separator)
+                    .take(limit)
+                    .map(str::to_string)
+                    .collect()
             }
         }
     };
@@ -247,11 +244,15 @@ fn string_includes(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 }
 
 fn string_to_lower_case(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(JSValue::String(receiver(&args, "toLowerCase")?.to_lowercase()))
+    Ok(JSValue::String(
+        receiver(&args, "toLowerCase")?.to_lowercase(),
+    ))
 }
 
 fn string_to_upper_case(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(JSValue::String(receiver(&args, "toUpperCase")?.to_uppercase()))
+    Ok(JSValue::String(
+        receiver(&args, "toUpperCase")?.to_uppercase(),
+    ))
 }
 
 fn string_to_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -262,7 +263,11 @@ fn string_char_at(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = receiver(&args, "charAt")?;
     let index = args.get(1).map(JSValue::to_number).unwrap_or(0.0) as usize;
     Ok(JSValue::String(
-        input.chars().nth(index).map(|value| value.to_string()).unwrap_or_default(),
+        input
+            .chars()
+            .nth(index)
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
     ))
 }
 
@@ -270,13 +275,19 @@ fn string_substring(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = receiver(&args, "substring")?;
     let length = input.chars().count();
     let mut start = args.get(1).map(JSValue::to_number).unwrap_or(0.0).max(0.0) as usize;
-    let mut end = args.get(2).map(JSValue::to_number).unwrap_or(length as f64).max(0.0) as usize;
+    let mut end = args
+        .get(2)
+        .map(JSValue::to_number)
+        .unwrap_or(length as f64)
+        .max(0.0) as usize;
     start = start.min(length);
     end = end.min(length);
     if start > end {
         std::mem::swap(&mut start, &mut end);
     }
-    Ok(JSValue::String(input.chars().skip(start).take(end - start).collect()))
+    Ok(JSValue::String(
+        input.chars().skip(start).take(end - start).collect(),
+    ))
 }
 
 fn string_slice(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -284,11 +295,21 @@ fn string_slice(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let length = input.chars().count() as isize;
     let normalize = |value: Option<&JSValue>, default: isize| {
         let value = value.map(JSValue::to_number).unwrap_or(default as f64) as isize;
-        if value < 0 { (length + value).max(0) } else { value.min(length) }
+        if value < 0 {
+            (length + value).max(0)
+        } else {
+            value.min(length)
+        }
     };
     let start = normalize(args.get(1), 0);
     let end = normalize(args.get(2), length).max(start);
-    Ok(JSValue::String(input.chars().skip(start as usize).take((end - start) as usize).collect()))
+    Ok(JSValue::String(
+        input
+            .chars()
+            .skip(start as usize)
+            .take((end - start) as usize)
+            .collect(),
+    ))
 }
 
 fn string_index_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -307,24 +328,66 @@ fn string_index_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 /// Installs String and the methods used by React's production bundle.
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut prototype = JSObject::new();
-    prototype.set("replace".to_string(), JSValue::NativeFunction(string_replace));
+    prototype.set(
+        "replace".to_string(),
+        JSValue::NativeFunction(string_replace),
+    );
     prototype.set("split".to_string(), JSValue::NativeFunction(string_split));
     prototype.set("trim".to_string(), JSValue::NativeFunction(string_trim));
     prototype.set("match".to_string(), JSValue::NativeFunction(string_match));
-    prototype.set("includes".to_string(), JSValue::NativeFunction(string_includes));
-    prototype.set("toLowerCase".to_string(), JSValue::NativeFunction(string_to_lower_case));
-    prototype.set("toUpperCase".to_string(), JSValue::NativeFunction(string_to_upper_case));
-    prototype.set("toString".to_string(), JSValue::NativeFunction(string_to_string));
-    prototype.set("valueOf".to_string(), JSValue::NativeFunction(string_to_string));
-    prototype.set("charAt".to_string(), JSValue::NativeFunction(string_char_at));
-    prototype.set("substring".to_string(), JSValue::NativeFunction(string_substring));
+    prototype.set(
+        "includes".to_string(),
+        JSValue::NativeFunction(string_includes),
+    );
+    prototype.set(
+        "toLowerCase".to_string(),
+        JSValue::NativeFunction(string_to_lower_case),
+    );
+    prototype.set(
+        "toUpperCase".to_string(),
+        JSValue::NativeFunction(string_to_upper_case),
+    );
+    prototype.set(
+        "toString".to_string(),
+        JSValue::NativeFunction(string_to_string),
+    );
+    prototype.set(
+        "valueOf".to_string(),
+        JSValue::NativeFunction(string_to_string),
+    );
+    prototype.set(
+        "charAt".to_string(),
+        JSValue::NativeFunction(string_char_at),
+    );
+    prototype.set(
+        "substring".to_string(),
+        JSValue::NativeFunction(string_substring),
+    );
     prototype.set("slice".to_string(), JSValue::NativeFunction(string_slice));
-    prototype.set("indexOf".to_string(), JSValue::NativeFunction(string_index_of));
+    prototype.set(
+        "indexOf".to_string(),
+        JSValue::NativeFunction(string_index_of),
+    );
 
     let mut constructor = JSObject::new();
-    constructor.set("__call__".to_string(), JSValue::NativeFunction(string_constructor));
-    constructor.set("__construct__".to_string(), JSValue::NativeFunction(string_constructor));
-    constructor.set("fromCharCode".to_string(), JSValue::NativeFunction(string_from_char_code));
-    constructor.set("prototype".to_string(), JSValue::Object(Rc::new(RefCell::new(prototype))));
-    global.borrow_mut().set("String".to_string(), JSValue::Object(Rc::new(RefCell::new(constructor))));
+    constructor.set(
+        "__call__".to_string(),
+        JSValue::NativeFunction(string_constructor),
+    );
+    constructor.set(
+        "__construct__".to_string(),
+        JSValue::NativeFunction(string_constructor),
+    );
+    constructor.set(
+        "fromCharCode".to_string(),
+        JSValue::NativeFunction(string_from_char_code),
+    );
+    constructor.set(
+        "prototype".to_string(),
+        JSValue::Object(Rc::new(RefCell::new(prototype))),
+    );
+    global.borrow_mut().set(
+        "String".to_string(),
+        JSValue::Object(Rc::new(RefCell::new(constructor))),
+    );
 }
