@@ -13,6 +13,7 @@ pub mod number;
 pub mod math;
 pub mod symbol;
 pub mod collection;
+pub mod error_object;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -41,6 +42,7 @@ impl Builtins {
         self::math::install(global);
         self::symbol::install(global);
         self::collection::install(global);
+        self::error_object::install(global);
         // Function 関連の組み込みを登録
         self::function::install(global)
     }
