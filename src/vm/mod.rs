@@ -30,6 +30,8 @@ pub struct VM {
     pub global_object: Rc<RefCell<crate::value::jsobject::JSObject>>,
     /// Function.prototype への参照（関数値のプロパティ検索に利用）
     pub function_prototype: Rc<RefCell<JSObject>>,
+    /// String.prototype への参照（文字列プリミティブのメソッド検索に利用）
+    pub string_prototype: Rc<RefCell<JSObject>>,
     /// Host data slot.
     ///
     /// A shared slot where the host (the embedding app) can store arbitrary state.
@@ -66,6 +68,17 @@ impl VM {
         let global_rc = Rc::new(RefCell::new(global_obj));
         // builtins を初期化してグローバルに組み込みを登録
         let function_prototype = crate::builtins::Builtins::new().init(&global_rc);
+        let string_constructor = global_rc.borrow().get("String");
+        let string_prototype = match string_constructor {
+            JSValue::Object(constructor) => {
+                let prototype = constructor.borrow().get("prototype");
+                match prototype {
+                    JSValue::Object(prototype) => prototype,
+                    _ => Rc::new(RefCell::new(JSObject::new())),
+                }
+            }
+            _ => Rc::new(RefCell::new(JSObject::new())),
+        };
 
         let global_frame = CallFrame::new(
             Environment::with_object_env(global_rc.clone()),
@@ -77,6 +90,7 @@ impl VM {
             frames: vec![global_frame],
             global_object: global_rc,
             function_prototype,
+            string_prototype,
             host: None,
             jobs: VecDeque::new(),
         }
@@ -458,6 +472,24 @@ impl VM {
                         let value = self.function_prototype.borrow().get(&key_str);
                         self.stack.push(value);
                     }
+                    JSValue::String(string) => {
+                        let key = key.to_string();
+                        if key == "length" {
+                            self.stack.push(JSValue::Number(
+                                string.encode_utf16().count() as f64,
+                            ));
+                        } else if let Ok(index) = key.parse::<usize>() {
+                            let value = string
+                                .chars()
+                                .nth(index)
+                                .map(|character| JSValue::String(character.to_string()))
+                                .unwrap_or(JSValue::Undefined);
+                            self.stack.push(value);
+                        } else {
+                            let value = self.string_prototype.borrow().get(&key);
+                            self.stack.push(value);
+                        }
+                    }
                     _ => {
                         self.stack.push(JSValue::Undefined);
                     }
@@ -590,7 +622,8 @@ impl VM {
                     JSValue::Function(..)
                     | JSValue::ArrowFunction(..)
                     | JSValue::NativeFunction(..)
-                    | JSValue::BoundFunction(..) => self.function_prototype.borrow().get(&key),
+                        | JSValue::BoundFunction(..) => self.function_prototype.borrow().get(&key),
+                    JSValue::String(_) => self.string_prototype.borrow().get(&key),
                     _ => {
                         return Err(JSError::TypeError(
                             "CallMethod: receiver is not an object".into(),
@@ -810,6 +843,14 @@ impl VM {
                 let env = self.create_function_env(callee_clone, env, params, args, None, false);
                 let this = lexical_this.map(|this| *this).unwrap_or(this);
                 self.with_call_frame(env, this, chunk)
+            }
+
+            JSValue::Object(object) => {
+                let callable = object.borrow().get("__call__");
+                if matches!(callable, JSValue::Undefined) {
+                    return Err(JSError::TypeError("object is not callable".to_string()));
+                }
+                self.call(callable, this, args)
             }
 
             _ => Err(JSError::TypeError(

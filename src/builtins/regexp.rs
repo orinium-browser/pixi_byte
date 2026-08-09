@@ -13,7 +13,7 @@ use crate::vm::VM;
 const PATTERN: &str = "__regexp_pattern";
 const FLAGS: &str = "__regexp_flags";
 
-fn compile(object: &Rc<RefCell<JSObject>>) -> JSResult<regex::Regex> {
+pub(crate) fn compile(object: &Rc<RefCell<JSObject>>) -> JSResult<regex::Regex> {
     let pattern = object.borrow().get(PATTERN).to_string();
     let flags = object.borrow().get(FLAGS).to_string();
     let mut builder = RegexBuilder::new(&pattern);
@@ -29,6 +29,14 @@ fn compile(object: &Rc<RefCell<JSObject>>) -> JSResult<regex::Regex> {
                 crate::lexer::Span::new(0, 0, 0, 0),
             )
         })
+}
+
+pub(crate) fn flags(object: &Rc<RefCell<JSObject>>) -> String {
+    object.borrow().get(FLAGS).to_string()
+}
+
+pub(crate) fn is_regexp(object: &Rc<RefCell<JSObject>>) -> bool {
+    object.borrow().has_own_property(PATTERN)
 }
 
 fn regexp_test(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
