@@ -581,6 +581,12 @@ impl Parser {
             TokenKind::StarEq => Some(Some(BinaryOp::Mul)),
             TokenKind::SlashEq => Some(Some(BinaryOp::Div)),
             TokenKind::PercentEq => Some(Some(BinaryOp::Mod)),
+            TokenKind::BitAndEq => Some(Some(BinaryOp::BitAnd)),
+            TokenKind::BitOrEq => Some(Some(BinaryOp::BitOr)),
+            TokenKind::BitXorEq => Some(Some(BinaryOp::BitXor)),
+            TokenKind::LeftShiftEq => Some(Some(BinaryOp::LeftShift)),
+            TokenKind::RightShiftEq => Some(Some(BinaryOp::RightShift)),
+            TokenKind::UnsignedRightShiftEq => Some(Some(BinaryOp::UnsignedRightShift)),
             _ => None,
         };
         if let Some(operator) = assignment {

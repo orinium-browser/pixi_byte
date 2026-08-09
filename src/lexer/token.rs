@@ -95,6 +95,12 @@ pub enum TokenKind {
     StarEq,    // *=
     SlashEq,   // /=
     PercentEq, // %=
+    BitAndEq,  // &=
+    BitOrEq,   // |=
+    BitXorEq,  // ^=
+    LeftShiftEq,          // <<=
+    RightShiftEq,         // >>=
+    UnsignedRightShiftEq, // >>>=
 
     // 区切り文字
     LeftParen,    // (

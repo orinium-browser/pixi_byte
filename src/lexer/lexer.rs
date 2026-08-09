@@ -183,7 +183,11 @@ impl Lexer {
             }
             '<' => {
                 if self.match_char('<') {
-                    TokenKind::LeftShift
+                    if self.match_char('=') {
+                        TokenKind::LeftShiftEq
+                    } else {
+                        TokenKind::LeftShift
+                    }
                 } else if self.match_char('=') {
                     TokenKind::LtEq
                 } else {
@@ -193,7 +197,13 @@ impl Lexer {
             '>' => {
                 if self.match_char('>') {
                     if self.match_char('>') {
-                        TokenKind::UnsignedRightShift
+                        if self.match_char('=') {
+                            TokenKind::UnsignedRightShiftEq
+                        } else {
+                            TokenKind::UnsignedRightShift
+                        }
+                    } else if self.match_char('=') {
+                        TokenKind::RightShiftEq
                     } else {
                         TokenKind::RightShift
                     }
@@ -208,6 +218,8 @@ impl Lexer {
             '&' => {
                 if self.match_char('&') {
                     TokenKind::And
+                } else if self.match_char('=') {
+                    TokenKind::BitAndEq
                 } else {
                     TokenKind::BitAnd
                 }
@@ -215,11 +227,19 @@ impl Lexer {
             '|' => {
                 if self.match_char('|') {
                     TokenKind::Or
+                } else if self.match_char('=') {
+                    TokenKind::BitOrEq
                 } else {
                     TokenKind::BitOr
                 }
             }
-            '^' => TokenKind::BitXor,
+            '^' => {
+                if self.match_char('=') {
+                    TokenKind::BitXorEq
+                } else {
+                    TokenKind::BitXor
+                }
+            }
 
             // 文字列リテラル
             '"' | '\'' => return self.scan_string(ch),
