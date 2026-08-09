@@ -55,6 +55,7 @@ pub enum Opcode {
     NewObject,         // 空のオブジェクトを作成
     GetProperty,       // obj[key] - スタックから key, obj をポップ、結果をプッシュ
     SetProperty,       // obj[key] = value - スタックから value, key, obj をポップ
+    DeleteProperty,    // delete obj[key] - スタックから key, obj をポップ
     ArrayPush,         // arr.push(value) - スタックから index, value をポップ、arr は残る
     ObjectSetProperty, // obj[key] = value - スタックから key, value をポップ、obj は残る
 
@@ -630,6 +631,28 @@ impl Compiler {
                 self.chunk.emit(opcode);
             }
             Expression::Unary { op, arg } => {
+                if op == UnaryOp::Delete {
+                    match *arg {
+                        Expression::MemberAccess {
+                            object, property, ..
+                        } => {
+                            self.compile_expression(*object)?;
+                            self.compile_expression(*property)?;
+                            self.chunk.emit(Opcode::DeleteProperty);
+                        }
+                        Expression::Identifier(_) => {
+                            let value = self.chunk.add_constant(JSValue::Boolean(false));
+                            self.chunk.emit(Opcode::LoadConst(value));
+                        }
+                        expression => {
+                            self.compile_expression(expression)?;
+                            self.chunk.emit(Opcode::Pop);
+                            let value = self.chunk.add_constant(JSValue::Boolean(true));
+                            self.chunk.emit(Opcode::LoadConst(value));
+                        }
+                    }
+                    return Ok(());
+                }
                 self.compile_expression(*arg)?;
 
                 let opcode = match op {
@@ -639,12 +662,7 @@ impl Compiler {
                     UnaryOp::BitNot => Opcode::BitNot,
                     UnaryOp::Typeof => Opcode::Typeof,
                     UnaryOp::Void => Opcode::Void,
-                    UnaryOp::Delete => {
-                        // Delete は現時点では未実装
-                        return Err(JSError::InternalError(
-                            "delete operator not yet implemented".to_string(),
-                        ));
-                    }
+                    UnaryOp::Delete => unreachable!(),
                 };
                 self.chunk.emit(opcode);
             }

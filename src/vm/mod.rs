@@ -443,6 +443,17 @@ impl VM {
                     }
                 }
             }
+            Opcode::DeleteProperty => {
+                let key = self.pop()?.to_string();
+                let object = self.pop()?;
+                let JSValue::Object(object) = object else {
+                    return Err(JSError::TypeError(
+                        "Cannot delete property on non-object".to_string(),
+                    ));
+                };
+                let deleted = object.borrow_mut().delete(&key);
+                self.stack.push(JSValue::Boolean(deleted));
+            }
             Opcode::ArrayPush => {
                 // スタック: [array, value, index]
                 let index = self.pop()?;

@@ -149,7 +149,8 @@ impl JSObject {
             return false; // 設定変更不可
         }
 
-        self.properties.borrow_mut().remove(key).is_some()
+        self.properties.borrow_mut().remove(key);
+        true
     }
 
     /// オブジェクトの拡張を禁止する
