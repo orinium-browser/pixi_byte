@@ -937,12 +937,35 @@ impl Parser {
         let mut properties = Vec::new();
 
         while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
-            // Parse property key
-            let key = self.expect_identifier("Expected property key")?;
+            let (key, shorthand) = match &self.current().kind {
+                TokenKind::String(key) => {
+                    let key = key.clone();
+                    self.advance()?;
+                    (key, None)
+                }
+                TokenKind::NumberLiteral(key) => {
+                    let key = key.clone();
+                    self.advance()?;
+                    (key, None)
+                }
+                TokenKind::Identifier(key) => {
+                    let key = key.clone();
+                    self.advance()?;
+                    (key.clone(), Some(Expression::Identifier(key)))
+                }
+                _ => (self.expect_identifier_name("Expected property key")?, None),
+            };
 
-            self.expect(&TokenKind::Colon, "Expected ':' after property key")?;
-
-            let value = self.parse_assignment()?;
+            let value = if self.eat(&TokenKind::Colon)? {
+                self.parse_assignment()?
+            } else if let Some(value) = shorthand {
+                value
+            } else {
+                return Err(JSError::SyntaxError(
+                    "Expected ':' after property key".to_string(),
+                    self.current().span,
+                ));
+            };
 
             properties.push((key, value));
 
