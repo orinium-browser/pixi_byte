@@ -113,6 +113,17 @@ impl Statement {
                     stmt.dump_impl(next_prefix.clone(), index + 1 == body.len());
                 }
             }
+            Statement::ForIn {
+                binding,
+                right,
+                body,
+            } => {
+                println!("{prefix}{branch}ForIn({binding})");
+                right.dump_impl(next_prefix.clone(), body.is_empty());
+                for (index, statement) in body.iter().enumerate() {
+                    statement.dump_impl(next_prefix.clone(), index + 1 == body.len());
+                }
+            }
             Statement::Throw(expression) => {
                 println!("{prefix}{branch}Throw");
                 expression.dump_impl(next_prefix, true);

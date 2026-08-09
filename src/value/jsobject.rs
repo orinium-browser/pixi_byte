@@ -186,6 +186,19 @@ impl JSObject {
             .collect()
     }
 
+    /// Returns enumerable string keys from this object and its prototype chain.
+    pub fn enumerable_keys(&self) -> Vec<String> {
+        let mut keys = self.keys();
+        if let Some(prototype) = &self.prototype {
+            for key in prototype.borrow().enumerable_keys() {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        }
+        keys
+    }
+
     /// 指定されたプロパティディスクリプタでプロパティを定義します。
     ///
     /// ディスクリプタは部分的に指定されることがあり、未指定属性は既存のプロパティから継承されます。

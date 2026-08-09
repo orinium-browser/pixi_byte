@@ -654,6 +654,20 @@ impl VM {
                     return Ok(ControlFlow::Continue);
                 }
             }
+            Opcode::Enumerate => {
+                let value = self.pop()?;
+                let keys = match value {
+                    JSValue::Object(object) => object
+                        .borrow()
+                        .enumerable_keys()
+                        .into_iter()
+                        .map(JSValue::String)
+                        .collect(),
+                    JSValue::Null | JSValue::Undefined => Vec::new(),
+                    _ => Vec::new(),
+                };
+                self.stack.push(self.array_from_values(keys));
+            }
             Opcode::JumpIfTrue(offset) => {
                 let condition = self.pop()?;
                 if condition.to_boolean() {

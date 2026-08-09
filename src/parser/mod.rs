@@ -43,6 +43,11 @@ pub enum Statement {
         update: Vec<Expression>,
         body: Vec<Statement>,
     },
+    ForIn {
+        binding: String,
+        right: Expression,
+        body: Vec<Statement>,
+    },
     Throw(Expression),
     Try {
         block: Vec<Statement>,
@@ -367,6 +372,26 @@ impl Parser {
         self.expect(&TokenKind::For, "Expected 'for'")?;
         self.expect(&TokenKind::LeftParen, "Expected '(' after 'for'")?;
 
+        if matches!(self.current().kind, TokenKind::Var | TokenKind::Let | TokenKind::Const) {
+            let mut candidate = self.clone();
+            candidate.advance()?;
+            if matches!(candidate.current().kind, TokenKind::Identifier(_)) {
+                candidate.advance()?;
+                if candidate.check(&TokenKind::In) {
+                    self.advance()?;
+                    let binding = self.expect_identifier("Expected for-in binding")?;
+                    self.expect(&TokenKind::In, "Expected 'in' after for-in binding")?;
+                    return self.parse_for_in_tail(binding);
+                }
+            }
+        } else if matches!(self.current().kind, TokenKind::Identifier(_))
+            && matches!(self.next.kind, TokenKind::In)
+        {
+            let binding = self.expect_identifier("Expected for-in binding")?;
+            self.expect(&TokenKind::In, "Expected 'in' after for-in binding")?;
+            return self.parse_for_in_tail(binding);
+        }
+
         let init = if self.eat(&TokenKind::Semicolon)? {
             None
         } else if matches!(self.current().kind, TokenKind::Var | TokenKind::Let | TokenKind::Const)
@@ -408,6 +433,21 @@ impl Parser {
             init,
             test,
             update,
+            body,
+        })
+    }
+
+    fn parse_for_in_tail(&mut self, binding: String) -> JSResult<Statement> {
+        let right = self.parse_expression()?;
+        self.expect(&TokenKind::RightParen, "Expected ')' after for-in expression")?;
+        let body = if self.check(&TokenKind::LeftBrace) {
+            self.parse_block()?
+        } else {
+            vec![self.parse_statement()?]
+        };
+        Ok(Statement::ForIn {
+            binding,
+            right,
             body,
         })
     }

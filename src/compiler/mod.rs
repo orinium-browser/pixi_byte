@@ -61,6 +61,7 @@ pub enum Opcode {
     DeleteProperty,    // delete obj[key] - スタックから key, obj をポップ
     ArrayPush,         // arr.push(value) - スタックから index, value をポップ、arr は残る
     ObjectSetProperty, // obj[key] = value - スタックから key, value をポップ、obj は残る
+    Enumerate,         // for-in用の列挙可能なプロパティ名配列を生成
 
     // 関数操作
     CreateFunction(usize), // 定数プール内の関数オブジェクトを生成してプッシュ（func chunk idx）
@@ -374,6 +375,71 @@ impl Compiler {
                     self.compile_expression(update)?;
                     self.chunk.emit(Opcode::Pop);
                 }
+                self.chunk.emit(Opcode::Jump(loop_start));
+
+                let exit_target = self.chunk.code.len();
+                self.patch_jump(exit_jump, exit_target);
+                self.loops.pop().expect("loop context must exist");
+                for break_jump in self.break_scopes.pop().expect("break scope must exist") {
+                    self.patch_jump(break_jump, exit_target);
+                }
+                if is_last {
+                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    self.chunk.emit(Opcode::LoadConst(undefined));
+                }
+            }
+            Statement::ForIn {
+                binding,
+                right,
+                body,
+            } => {
+                let keys = format!("__pixi_for_in_keys_{}", self.next_temporary);
+                let index = format!("__pixi_for_in_index_{}", self.next_temporary);
+                self.next_temporary += 1;
+
+                self.compile_expression(right)?;
+                self.chunk.emit(Opcode::Enumerate);
+                self.chunk.emit(Opcode::StoreVar(keys.clone()));
+                let zero = self.chunk.add_constant(JSValue::Number(0.0));
+                self.chunk.emit(Opcode::LoadConst(zero));
+                self.chunk.emit(Opcode::StoreVar(index.clone()));
+
+                let loop_start = self.chunk.code.len();
+                self.chunk.emit(Opcode::LoadVar(index.clone()));
+                self.chunk.emit(Opcode::LoadVar(keys.clone()));
+                let length = self
+                    .chunk
+                    .add_constant(JSValue::String("length".to_string()));
+                self.chunk.emit(Opcode::LoadConst(length));
+                self.chunk.emit(Opcode::GetProperty);
+                self.chunk.emit(Opcode::Lt);
+                let exit_jump = self.chunk.code.len();
+                self.chunk.emit(Opcode::JumpIfFalse(usize::MAX));
+
+                self.chunk.emit(Opcode::LoadVar(keys));
+                self.chunk.emit(Opcode::LoadVar(index.clone()));
+                self.chunk.emit(Opcode::GetProperty);
+                self.chunk.emit(Opcode::StoreVar(binding));
+
+                self.loops.push(LoopContext {
+                    continue_jumps: Vec::new(),
+                });
+                self.break_scopes.push(Vec::new());
+                self.compile_statements(body, false)?;
+
+                let update_start = self.chunk.code.len();
+                let continue_jumps = {
+                    let loop_context = self.loops.last_mut().expect("loop context must exist");
+                    std::mem::take(&mut loop_context.continue_jumps)
+                };
+                for continue_jump in continue_jumps {
+                    self.patch_jump(continue_jump, update_start);
+                }
+                self.chunk.emit(Opcode::LoadVar(index.clone()));
+                let one = self.chunk.add_constant(JSValue::Number(1.0));
+                self.chunk.emit(Opcode::LoadConst(one));
+                self.chunk.emit(Opcode::Add);
+                self.chunk.emit(Opcode::StoreVar(index));
                 self.chunk.emit(Opcode::Jump(loop_start));
 
                 let exit_target = self.chunk.code.len();
