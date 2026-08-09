@@ -776,13 +776,13 @@ impl VM {
             }
 
             JSValue::Function(chunk, params, env, name) => {
-                let env = self.create_function_env(callee_clone, env, params, args, name);
+                let env = self.create_function_env(callee_clone, env, params, args, name, true);
 
                 self.with_call_frame(env, this, chunk)
             }
 
             JSValue::ArrowFunction(chunk, params, env, lexical_this) => {
-                let env = self.create_function_env(callee_clone, env, params, args, None);
+                let env = self.create_function_env(callee_clone, env, params, args, None, false);
                 let this = lexical_this.map(|this| *this).unwrap_or(this);
                 self.with_call_frame(env, this, chunk)
             }
@@ -800,10 +800,15 @@ impl VM {
         params: Vec<String>,
         args: Vec<JSValue>,
         name: Option<String>,
+        bind_arguments: bool,
     ) -> Environment {
         let outer = captured_env.unwrap_or_else(|| self.current_env());
 
         let env = Environment::with_outer(outer);
+
+        if bind_arguments {
+            env.define("arguments".to_string(), self.array_from_values(args.clone()));
+        }
 
         for (i, arg) in args.into_iter().enumerate() {
             let key = params
