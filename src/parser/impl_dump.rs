@@ -111,6 +111,17 @@ impl Expression {
                 }
             }
 
+            Expression::New { callee, args } => {
+                println!("{prefix}{branch}New");
+
+                let total = args.len() + 1;
+                callee.dump_impl(next_prefix.clone(), total == 1);
+
+                for (i, arg) in args.iter().enumerate() {
+                    arg.dump_impl(next_prefix.clone(), i == args.len() - 1);
+                }
+            }
+
             Expression::Unary { op, arg } => {
                 println!("{prefix}{branch}Unary({op:?})");
 

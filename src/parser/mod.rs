@@ -66,6 +66,10 @@ pub enum Expression {
         callee: Box<Expression>,
         args: Vec<Expression>,
     },
+    New {
+        callee: Box<Expression>,
+        args: Vec<Expression>,
+    },
     Function {
         name: Option<String>,
         params: Vec<String>,
@@ -446,12 +450,33 @@ impl Parser {
             TokenKind::LeftBracket => self.parse_array_literal(),
             TokenKind::LeftBrace => self.parse_object_literal(),
             TokenKind::Function => self.parse_function_expression(),
+            TokenKind::New => self.parse_new_expression(),
 
             _ => Err(JSError::SyntaxError(
                 format!("Unexpected token {:?}", self.current().kind),
                 self.current().span,
             )),
         }
+    }
+
+    fn parse_new_expression(&mut self) -> JSResult<Expression> {
+        self.advance()?; // consume 'new'
+        let callee = self.parse_primary()?;
+        let args = if self.eat(&TokenKind::LeftParen)? {
+            let args = self.parse_arguments()?;
+            self.expect(
+                &TokenKind::RightParen,
+                "Expected ')' after constructor arguments",
+            )?;
+            args
+        } else {
+            Vec::new()
+        };
+
+        Ok(Expression::New {
+            callee: Box::new(callee),
+            args,
+        })
     }
 
     /// 配列リテラルをパース: [1, 2, 3]

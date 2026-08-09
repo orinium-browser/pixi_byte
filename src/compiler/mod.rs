@@ -60,6 +60,7 @@ pub enum Opcode {
     CreateFunction(usize), // 定数プール内の関数オブジェクトを生成してプッシュ（func chunk idx）
     CallFunction(usize),   // 呼び出し（引数個数） - スタックから argN..arg1, func を使う
     CallMethod(usize), // メソッド呼び出し（arg count） - スタック: ..., object, property, arg1..argN
+    Construct(usize),  // コンストラクタ呼び出し（引数個数）
 
     // 制御フロー
     Jump(usize),        // 無条件ジャンプ
@@ -417,6 +418,13 @@ impl Compiler {
                     let arg_count = args.len();
                     self.chunk.emit(Opcode::CallFunction(arg_count));
                 }
+            }
+            Expression::New { callee, args } => {
+                self.compile_expression(*callee)?;
+                for arg in &args {
+                    self.compile_expression(arg.clone())?;
+                }
+                self.chunk.emit(Opcode::Construct(args.len()));
             }
         }
         Ok(())

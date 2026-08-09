@@ -410,6 +410,21 @@ impl VM {
 
                 self.stack.push(result);
             }
+            Opcode::Construct(arg_count) => {
+                let mut args = Vec::new();
+                for _ in 0..*arg_count {
+                    args.push(self.pop()?);
+                }
+                args.reverse();
+
+                let constructor = self.pop()?;
+                let this = JSValue::Object(Rc::new(RefCell::new(JSObject::new())));
+                let result = self.call(constructor, this.clone(), args)?;
+                self.stack.push(match result {
+                    JSValue::Object(_) => result,
+                    _ => this,
+                });
+            }
 
             // その他
             Opcode::Typeof => {
