@@ -494,6 +494,23 @@ impl Compiler {
                 }
                 self.chunk.emit(Opcode::StoreVar(name));
             }
+            Expression::Conditional {
+                test,
+                consequent,
+                alternate,
+            } => {
+                self.compile_expression(*test)?;
+                let alternate_jump = self.chunk.code.len();
+                self.chunk.emit(Opcode::JumpIfFalse(usize::MAX));
+                self.compile_expression(*consequent)?;
+                let end_jump = self.chunk.code.len();
+                self.chunk.emit(Opcode::Jump(usize::MAX));
+                let alternate_start = self.chunk.code.len();
+                self.patch_jump(alternate_jump, alternate_start);
+                self.compile_expression(*alternate)?;
+                let end = self.chunk.code.len();
+                self.patch_jump(end_jump, end);
+            }
             Expression::This => {
                 self.chunk.emit(Opcode::LoadThis);
             }

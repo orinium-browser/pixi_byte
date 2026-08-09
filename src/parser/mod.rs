@@ -75,6 +75,11 @@ pub enum Expression {
         increment: bool,
         prefix: bool,
     },
+    Conditional {
+        test: Box<Expression>,
+        consequent: Box<Expression>,
+        alternate: Box<Expression>,
+    },
     This,
     ArrayLiteral(Vec<Expression>),
     ObjectLiteral(Vec<(String, Expression)>),
@@ -376,7 +381,18 @@ impl Parser {
             return Ok(arrow);
         }
 
-        let left = self.parse_expression_bp(0)?;
+        let mut left = self.parse_expression_bp(0)?;
+
+        if self.eat(&TokenKind::Question)? {
+            let consequent = self.parse_assignment()?;
+            self.expect(&TokenKind::Colon, "Expected ':' in conditional expression")?;
+            let alternate = self.parse_assignment()?;
+            left = Expression::Conditional {
+                test: Box::new(left),
+                consequent: Box::new(consequent),
+                alternate: Box::new(alternate),
+            };
+        }
 
         let assignment = match self.current().kind {
             TokenKind::Eq => Some(None),

@@ -140,6 +140,16 @@ impl Expression {
                 println!("{prefix}{branch}{position}Update({operator})");
                 arg.dump_impl(next_prefix, true);
             }
+            Expression::Conditional {
+                test,
+                consequent,
+                alternate,
+            } => {
+                println!("{prefix}{branch}Conditional");
+                test.dump_impl(next_prefix.clone(), false);
+                consequent.dump_impl(next_prefix.clone(), false);
+                alternate.dump_impl(next_prefix, true);
+            }
 
             Expression::Identifier(name) => {
                 println!("{prefix}{branch}Identifier({name})");
