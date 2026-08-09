@@ -50,6 +50,29 @@ impl Statement {
                     expr.dump_impl(next_prefix, true);
                 }
             }
+            Statement::If {
+                test,
+                consequent,
+                alternate,
+            } => {
+                println!("{prefix}{branch}If");
+                test.dump_impl(next_prefix.clone(), consequent.is_empty() && alternate.is_none());
+                for (index, stmt) in consequent.iter().enumerate() {
+                    stmt.dump_impl(
+                        next_prefix.clone(),
+                        alternate.is_none() && index + 1 == consequent.len(),
+                    );
+                }
+                if let Some(alternate) = alternate {
+                    println!("{next_prefix}└─ Else");
+                    for (index, stmt) in alternate.iter().enumerate() {
+                        stmt.dump_impl(
+                            format!("{next_prefix}   "),
+                            index + 1 == alternate.len(),
+                        );
+                    }
+                }
+            }
         }
     }
 }

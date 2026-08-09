@@ -228,8 +228,46 @@ impl Compiler {
                 // 関数名を変数としてストア
                 self.chunk.emit(Opcode::StoreVar(name));
             }
+            Statement::If {
+                test,
+                consequent,
+                alternate,
+            } => {
+                self.compile_expression(test)?;
+                let branch = self.chunk.code.len();
+                self.chunk.emit(Opcode::JumpIfFalse(usize::MAX));
+                self.compile_statements(consequent, is_last && alternate.is_none())?;
+
+                if let Some(alternate) = alternate {
+                    let end_jump = self.chunk.code.len();
+                    self.chunk.emit(Opcode::Jump(usize::MAX));
+                    let alternate_start = self.chunk.code.len();
+                    self.patch_jump(branch, alternate_start);
+                    self.compile_statements(alternate, is_last)?;
+                    let end = self.chunk.code.len();
+                    self.patch_jump(end_jump, end);
+                } else {
+                    let end = self.chunk.code.len();
+                    self.patch_jump(branch, end);
+                }
+            }
         }
         Ok(())
+    }
+
+    fn compile_statements(&mut self, statements: Vec<Statement>, keep_last: bool) -> JSResult<()> {
+        let len = statements.len();
+        for (index, statement) in statements.into_iter().enumerate() {
+            self.compile_statement(statement, keep_last && index + 1 == len)?;
+        }
+        Ok(())
+    }
+
+    fn patch_jump(&mut self, index: usize, target: usize) {
+        match &mut self.chunk.code[index] {
+            Opcode::Jump(destination) | Opcode::JumpIfFalse(destination) => *destination = target,
+            _ => unreachable!("attempted to patch a non-jump opcode"),
+        }
     }
 
     /// 式をコンパイル

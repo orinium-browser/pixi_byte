@@ -25,6 +25,11 @@ pub enum Statement {
         params: Vec<String>,
         body: Vec<Statement>,
     },
+    If {
+        test: Expression,
+        consequent: Vec<Statement>,
+        alternate: Option<Vec<Statement>>,
+    },
     // TODO: 他の文を追加
 }
 
@@ -179,12 +184,39 @@ impl Parser {
             TokenKind::Const => self.parse_var_declaration(VarKind::Const),
             TokenKind::Return => self.parse_return_statement(),
             TokenKind::Function => self.parse_function_declaration(),
+            TokenKind::If => self.parse_if_statement(),
             _ => {
                 let expr = self.parse_expression()?;
                 self.consume_semicolon()?;
                 Ok(Statement::Expression(expr))
             }
         }
+    }
+
+    fn parse_if_statement(&mut self) -> JSResult<Statement> {
+        self.expect(&TokenKind::If, "Expected 'if'")?;
+        self.expect(&TokenKind::LeftParen, "Expected '(' after 'if'")?;
+        let test = self.parse_expression()?;
+        self.expect(&TokenKind::RightParen, "Expected ')' after condition")?;
+        let consequent = if self.check(&TokenKind::LeftBrace) {
+            self.parse_block()?
+        } else {
+            vec![self.parse_statement()?]
+        };
+        let alternate = if self.eat(&TokenKind::Else)? {
+            Some(if self.check(&TokenKind::LeftBrace) {
+                self.parse_block()?
+            } else {
+                vec![self.parse_statement()?]
+            })
+        } else {
+            None
+        };
+        Ok(Statement::If {
+            test,
+            consequent,
+            alternate,
+        })
     }
 
     /// ブロックをパースして文のベクタを返す
