@@ -56,16 +56,16 @@ pub enum Opcode {
     UnsignedRightShift,
 
     // 配列・オブジェクト操作
-    NewArray(usize),   // 空の配列を作成（サイズ指定）
-    NewObject,         // 空のオブジェクトを作成
+    NewArray(usize), // 空の配列を作成（サイズ指定）
+    NewObject,       // 空のオブジェクトを作成
     NewRegExp(String, String),
-    GetProperty,       // obj[key] - スタックから key, obj をポップ、結果をプッシュ
-    SetProperty,       // obj[key] = value - スタックから value, key, obj をポップ
+    GetProperty,        // obj[key] - スタックから key, obj をポップ、結果をプッシュ
+    SetProperty,        // obj[key] = value - スタックから value, key, obj をポップ
     SetPropertyKeepOld, // postfix update用: obj, key, old, newからoldを残す
-    DeleteProperty,    // delete obj[key] - スタックから key, obj をポップ
-    ArrayPush,         // arr.push(value) - スタックから index, value をポップ、arr は残る
-    ObjectSetProperty, // obj[key] = value - スタックから key, value をポップ、obj は残る
-    Enumerate,         // for-in用の列挙可能なプロパティ名配列を生成
+    DeleteProperty,     // delete obj[key] - スタックから key, obj をポップ
+    ArrayPush,          // arr.push(value) - スタックから index, value をポップ、arr は残る
+    ObjectSetProperty,  // obj[key] = value - スタックから key, value をポップ、obj は残る
+    Enumerate,          // for-in用の列挙可能なプロパティ名配列を生成
 
     // 関数操作
     CreateFunction(usize), // 定数プール内の関数オブジェクトを生成してプッシュ（func chunk idx）
@@ -85,7 +85,7 @@ pub enum Opcode {
     BeginFinally,
     EndFinally,
     Throw,
-    Return,             // 関数から戻る
+    Return, // 関数から戻る
 
     // その他
     Typeof,
@@ -176,10 +176,19 @@ pub struct Compiler {
     chunk: BytecodeChunk,
     loops: Vec<LoopContext>,
     break_scopes: Vec<Vec<usize>>,
+    labels: Vec<LabelContext>,
+    pending_loop_label: Option<String>,
     next_temporary: usize,
 }
 
 struct LoopContext {
+    continue_jumps: Vec<usize>,
+}
+
+struct LabelContext {
+    name: String,
+    is_iteration: bool,
+    break_jumps: Vec<usize>,
     continue_jumps: Vec<usize>,
 }
 
@@ -190,6 +199,8 @@ impl Compiler {
             chunk: BytecodeChunk::new(),
             loops: Vec::new(),
             break_scopes: Vec::new(),
+            labels: Vec::new(),
+            pending_loop_label: None,
             next_temporary: 0,
         }
     }
@@ -208,6 +219,38 @@ impl Compiler {
     /// ステートメントをコンパイル
     fn compile_statement(&mut self, statement: Statement, is_last: bool) -> JSResult<()> {
         match statement {
+            Statement::Block(body) => {
+                self.compile_statements(body, is_last)?;
+            }
+            Statement::Labeled { label, body } => {
+                let is_iteration = matches!(
+                    &*body,
+                    Statement::While { .. }
+                        | Statement::DoWhile { .. }
+                        | Statement::For { .. }
+                        | Statement::ForIn { .. }
+                );
+                self.labels.push(LabelContext {
+                    name: label.clone(),
+                    is_iteration,
+                    break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
+                });
+                if is_iteration {
+                    self.pending_loop_label = Some(label);
+                }
+                self.compile_statement(*body, is_last)?;
+                let context = self.labels.pop().expect("label context must exist");
+                if !context.continue_jumps.is_empty() {
+                    return Err(JSError::InternalError(
+                        "labeled continue target is not an iteration statement".to_string(),
+                    ));
+                }
+                let end = self.chunk.code.len();
+                for jump in context.break_jumps {
+                    self.patch_jump(jump, end);
+                }
+            }
             Statement::Expression(expr) => {
                 self.compile_expression(expr)?;
                 // 最後の式文の結果はスタックに残す（REPLスタイル）
@@ -285,6 +328,7 @@ impl Compiler {
                 }
             }
             Statement::While { test, body } => {
+                let loop_label = self.pending_loop_label.take();
                 let loop_start = self.chunk.code.len();
                 self.compile_expression(test)?;
                 let exit_jump = self.chunk.code.len();
@@ -301,6 +345,7 @@ impl Compiler {
                 for continue_jump in continue_jumps {
                     self.patch_jump(continue_jump, loop_start);
                 }
+                self.patch_labeled_continues(loop_label.as_deref(), loop_start)?;
                 self.chunk.emit(Opcode::Jump(loop_start));
 
                 let exit_target = self.chunk.code.len();
@@ -315,6 +360,7 @@ impl Compiler {
                 }
             }
             Statement::DoWhile { body, test } => {
+                let loop_label = self.pending_loop_label.take();
                 let loop_start = self.chunk.code.len();
                 self.loops.push(LoopContext {
                     continue_jumps: Vec::new(),
@@ -330,6 +376,7 @@ impl Compiler {
                 for continue_jump in continue_jumps {
                     self.patch_jump(continue_jump, condition_start);
                 }
+                self.patch_labeled_continues(loop_label.as_deref(), condition_start)?;
                 self.compile_expression(test)?;
                 let exit_jump = self.chunk.code.len();
                 self.chunk.emit(Opcode::JumpIfFalse(usize::MAX));
@@ -352,6 +399,7 @@ impl Compiler {
                 update,
                 body,
             } => {
+                let loop_label = self.pending_loop_label.take();
                 if let Some(init) = init {
                     self.compile_statement(*init, false)?;
                 }
@@ -378,6 +426,7 @@ impl Compiler {
                 for continue_jump in continue_jumps {
                     self.patch_jump(continue_jump, update_start);
                 }
+                self.patch_labeled_continues(loop_label.as_deref(), update_start)?;
                 for update in update {
                     self.compile_expression(update)?;
                     self.chunk.emit(Opcode::Pop);
@@ -400,6 +449,7 @@ impl Compiler {
                 right,
                 body,
             } => {
+                let loop_label = self.pending_loop_label.take();
                 let keys = format!("__pixi_for_in_keys_{}", self.next_temporary);
                 let index = format!("__pixi_for_in_index_{}", self.next_temporary);
                 self.next_temporary += 1;
@@ -442,6 +492,7 @@ impl Compiler {
                 for continue_jump in continue_jumps {
                     self.patch_jump(continue_jump, update_start);
                 }
+                self.patch_labeled_continues(loop_label.as_deref(), update_start)?;
                 self.chunk.emit(Opcode::LoadVar(index.clone()));
                 let one = self.chunk.add_constant(JSValue::Number(1.0));
                 self.chunk.emit(Opcode::LoadConst(one));
@@ -585,25 +636,58 @@ impl Compiler {
                     self.chunk.emit(Opcode::LoadConst(undefined));
                 }
             }
-            Statement::Break => {
+            Statement::Break(label) => {
                 let jump = self.chunk.code.len();
                 self.chunk.emit(Opcode::Jump(usize::MAX));
-                let Some(break_scope) = self.break_scopes.last_mut() else {
-                    return Err(JSError::InternalError(
-                        "break used outside of a loop or switch".to_string(),
-                    ));
-                };
-                break_scope.push(jump);
+                if let Some(label) = label {
+                    let Some(context) = self
+                        .labels
+                        .iter_mut()
+                        .rev()
+                        .find(|context| context.name == label)
+                    else {
+                        return Err(JSError::InternalError(format!(
+                            "unknown break label '{label}'"
+                        )));
+                    };
+                    context.break_jumps.push(jump);
+                } else {
+                    let Some(break_scope) = self.break_scopes.last_mut() else {
+                        return Err(JSError::InternalError(
+                            "break used outside of a loop or switch".to_string(),
+                        ));
+                    };
+                    break_scope.push(jump);
+                }
             }
-            Statement::Continue => {
+            Statement::Continue(label) => {
                 let jump = self.chunk.code.len();
                 self.chunk.emit(Opcode::Jump(usize::MAX));
-                let Some(loop_context) = self.loops.last_mut() else {
-                    return Err(JSError::InternalError(
-                        "continue used outside of a loop".to_string(),
-                    ));
-                };
-                loop_context.continue_jumps.push(jump);
+                if let Some(label) = label {
+                    let Some(context) = self
+                        .labels
+                        .iter_mut()
+                        .rev()
+                        .find(|context| context.name == label)
+                    else {
+                        return Err(JSError::InternalError(format!(
+                            "unknown continue label '{label}'"
+                        )));
+                    };
+                    if !context.is_iteration {
+                        return Err(JSError::InternalError(format!(
+                            "continue label '{label}' is not an iteration statement"
+                        )));
+                    }
+                    context.continue_jumps.push(jump);
+                } else {
+                    let Some(loop_context) = self.loops.last_mut() else {
+                        return Err(JSError::InternalError(
+                            "continue used outside of a loop".to_string(),
+                        ));
+                    };
+                    loop_context.continue_jumps.push(jump);
+                }
             }
         }
         Ok(())
@@ -624,6 +708,29 @@ impl Compiler {
             | Opcode::JumpIfTrue(destination) => *destination = target,
             _ => unreachable!("attempted to patch a non-jump opcode"),
         }
+    }
+
+    fn patch_labeled_continues(&mut self, label: Option<&str>, target: usize) -> JSResult<()> {
+        let Some(label) = label else {
+            return Ok(());
+        };
+        let jumps = {
+            let Some(context) = self
+                .labels
+                .iter_mut()
+                .rev()
+                .find(|context| context.name == label)
+            else {
+                return Err(JSError::InternalError(format!(
+                    "unknown continue label '{label}'"
+                )));
+            };
+            std::mem::take(&mut context.continue_jumps)
+        };
+        for jump in jumps {
+            self.patch_jump(jump, target);
+        }
+        Ok(())
     }
 
     fn patch_try(
@@ -778,41 +885,41 @@ impl Compiler {
                 prefix,
             } => {
                 match *arg {
-                    Expression::Identifier(name) => {
-                        self.chunk.emit(Opcode::LoadVar(name.clone()));
-                        if !prefix {
-                            self.chunk.emit(Opcode::Dup);
-                        }
-                        let one = self.chunk.add_constant(JSValue::Number(1.0));
-                        self.chunk.emit(Opcode::LoadConst(one));
+                Expression::Identifier(name) => {
+                    self.chunk.emit(Opcode::LoadVar(name.clone()));
+                    if !prefix {
+                        self.chunk.emit(Opcode::Dup);
+                    }
+                    let one = self.chunk.add_constant(JSValue::Number(1.0));
+                    self.chunk.emit(Opcode::LoadConst(one));
                         self.chunk.emit(if increment { Opcode::Add } else { Opcode::Sub });
-                        if prefix {
-                            self.chunk.emit(Opcode::Dup);
-                        }
-                        self.chunk.emit(Opcode::StoreVar(name));
+                    if prefix {
+                        self.chunk.emit(Opcode::Dup);
                     }
-                    Expression::MemberAccess {
-                        object, property, ..
-                    } => {
-                        self.compile_expression(*object)?;
-                        self.compile_expression(*property)?;
-                        self.chunk.emit(Opcode::Dup2);
-                        self.chunk.emit(Opcode::GetProperty);
-                        if !prefix {
-                            self.chunk.emit(Opcode::Dup);
-                        }
-                        let one = self.chunk.add_constant(JSValue::Number(1.0));
-                        self.chunk.emit(Opcode::LoadConst(one));
+                    self.chunk.emit(Opcode::StoreVar(name));
+                }
+                Expression::MemberAccess {
+                    object, property, ..
+                } => {
+                    self.compile_expression(*object)?;
+                    self.compile_expression(*property)?;
+                    self.chunk.emit(Opcode::Dup2);
+                    self.chunk.emit(Opcode::GetProperty);
+                    if !prefix {
+                        self.chunk.emit(Opcode::Dup);
+                    }
+                    let one = self.chunk.add_constant(JSValue::Number(1.0));
+                    self.chunk.emit(Opcode::LoadConst(one));
                         self.chunk.emit(if increment { Opcode::Add } else { Opcode::Sub });
-                        self.chunk.emit(if prefix {
-                            Opcode::SetProperty
-                        } else {
-                            Opcode::SetPropertyKeepOld
-                        });
-                    }
-                    _ => {
-                        return Err(JSError::TypeError("Invalid update target".to_string()));
-                    }
+                    self.chunk.emit(if prefix {
+                        Opcode::SetProperty
+                    } else {
+                        Opcode::SetPropertyKeepOld
+                    });
+                }
+                _ => {
+                    return Err(JSError::TypeError("Invalid update target".to_string()));
+                }
                 }
             }
             Expression::Conditional {

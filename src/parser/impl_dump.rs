@@ -21,6 +21,16 @@ impl Statement {
         };
 
         match self {
+            Statement::Block(body) => {
+                println!("{prefix}{branch}Block");
+                for (index, statement) in body.iter().enumerate() {
+                    statement.dump_impl(next_prefix.clone(), index + 1 == body.len());
+                }
+            }
+            Statement::Labeled { label, body } => {
+                println!("{prefix}{branch}Label({label})");
+                body.dump_impl(next_prefix, true);
+            }
             Statement::FunctionDeclaration { name, params, body } => {
                 println!("{prefix}{branch}Function {}({})", name, params.join(", "));
 
@@ -178,8 +188,20 @@ impl Statement {
                     }
                 }
             }
-            Statement::Break => println!("{prefix}{branch}Break"),
-            Statement::Continue => println!("{prefix}{branch}Continue"),
+            Statement::Break(label) => println!(
+                "{prefix}{branch}Break{}",
+                label
+                    .as_ref()
+                    .map(|label| format!("({label})"))
+                    .unwrap_or_default()
+            ),
+            Statement::Continue(label) => println!(
+                "{prefix}{branch}Continue{}",
+                label
+                    .as_ref()
+                    .map(|label| format!("({label})"))
+                    .unwrap_or_default()
+            ),
         }
     }
 }

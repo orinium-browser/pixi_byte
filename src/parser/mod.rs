@@ -13,6 +13,11 @@ pub struct Program {
 /// 文
 #[derive(Debug, Clone)]
 pub enum Statement {
+    Block(Vec<Statement>),
+    Labeled {
+        label: String,
+        body: Box<Statement>,
+    },
     Expression(Expression),
     VariableDeclaration {
         kind: VarKind,
@@ -58,8 +63,8 @@ pub enum Statement {
         discriminant: Expression,
         cases: Vec<(Option<Expression>, Vec<Statement>)>,
     },
-    Break,
-    Continue,
+    Break(Option<String>),
+    Continue(Option<String>),
     // TODO: 他の文を追加
 }
 
@@ -225,7 +230,20 @@ impl Parser {
 
     /// 文をパース
     fn parse_statement(&mut self) -> JSResult<Statement> {
+        if matches!(self.current.kind, TokenKind::Identifier(_))
+            && matches!(self.next.kind, TokenKind::Colon)
+        {
+            let label = self.expect_identifier("Expected statement label")?;
+            self.expect(&TokenKind::Colon, "Expected ':' after statement label")?;
+            let body = self.parse_statement()?;
+            return Ok(Statement::Labeled {
+                label,
+                body: Box::new(body),
+            });
+        }
+
         match &self.current().kind {
+            TokenKind::LeftBrace => Ok(Statement::Block(self.parse_block()?)),
             TokenKind::Var => self.parse_var_declaration(VarKind::Var),
             TokenKind::Let => self.parse_var_declaration(VarKind::Let),
             TokenKind::Const => self.parse_var_declaration(VarKind::Const),
@@ -239,14 +257,38 @@ impl Parser {
             TokenKind::Try => self.parse_try_statement(),
             TokenKind::Switch => self.parse_switch_statement(),
             TokenKind::Break => {
+                let line = self.current().span.line;
                 self.advance()?;
+                let label = if self.current().span.line == line {
+                    if let TokenKind::Identifier(label) = &self.current().kind {
+                        let label = label.clone();
+                        self.advance()?;
+                        Some(label)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 self.consume_semicolon()?;
-                Ok(Statement::Break)
+                Ok(Statement::Break(label))
             }
             TokenKind::Continue => {
+                let line = self.current().span.line;
                 self.advance()?;
+                let label = if self.current().span.line == line {
+                    if let TokenKind::Identifier(label) = &self.current().kind {
+                        let label = label.clone();
+                        self.advance()?;
+                        Some(label)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 self.consume_semicolon()?;
-                Ok(Statement::Continue)
+                Ok(Statement::Continue(label))
             }
             _ => {
                 let expr = self.parse_expression()?;
