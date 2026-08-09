@@ -73,6 +73,15 @@ impl Statement {
                     }
                 }
             }
+            Statement::While { test, body } => {
+                println!("{prefix}{branch}While");
+                test.dump_impl(next_prefix.clone(), body.is_empty());
+                for (index, stmt) in body.iter().enumerate() {
+                    stmt.dump_impl(next_prefix.clone(), index + 1 == body.len());
+                }
+            }
+            Statement::Break => println!("{prefix}{branch}Break"),
+            Statement::Continue => println!("{prefix}{branch}Continue"),
         }
     }
 }

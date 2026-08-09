@@ -152,6 +152,12 @@ impl Default for BytecodeChunk {
 pub struct Compiler {
     /// 生成されたバイトコードチャンク
     chunk: BytecodeChunk,
+    loops: Vec<LoopContext>,
+}
+
+struct LoopContext {
+    continue_target: usize,
+    break_jumps: Vec<usize>,
 }
 
 impl Compiler {
@@ -159,6 +165,7 @@ impl Compiler {
     pub fn new() -> Self {
         Self {
             chunk: BytecodeChunk::new(),
+            loops: Vec::new(),
         }
     }
 
@@ -251,6 +258,47 @@ impl Compiler {
                     let end = self.chunk.code.len();
                     self.patch_jump(branch, end);
                 }
+            }
+            Statement::While { test, body } => {
+                let loop_start = self.chunk.code.len();
+                self.compile_expression(test)?;
+                let exit_jump = self.chunk.code.len();
+                self.chunk.emit(Opcode::JumpIfFalse(usize::MAX));
+                self.loops.push(LoopContext {
+                    continue_target: loop_start,
+                    break_jumps: Vec::new(),
+                });
+                self.compile_statements(body, false)?;
+                self.chunk.emit(Opcode::Jump(loop_start));
+
+                let exit_target = self.chunk.code.len();
+                self.patch_jump(exit_jump, exit_target);
+                let loop_context = self.loops.pop().expect("loop context must exist");
+                for break_jump in loop_context.break_jumps {
+                    self.patch_jump(break_jump, exit_target);
+                }
+                if is_last {
+                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    self.chunk.emit(Opcode::LoadConst(undefined));
+                }
+            }
+            Statement::Break => {
+                let jump = self.chunk.code.len();
+                self.chunk.emit(Opcode::Jump(usize::MAX));
+                let Some(loop_context) = self.loops.last_mut() else {
+                    return Err(JSError::InternalError(
+                        "break used outside of a loop".to_string(),
+                    ));
+                };
+                loop_context.break_jumps.push(jump);
+            }
+            Statement::Continue => {
+                let Some(loop_context) = self.loops.last() else {
+                    return Err(JSError::InternalError(
+                        "continue used outside of a loop".to_string(),
+                    ));
+                };
+                self.chunk.emit(Opcode::Jump(loop_context.continue_target));
             }
         }
         Ok(())

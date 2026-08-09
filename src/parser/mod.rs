@@ -30,6 +30,12 @@ pub enum Statement {
         consequent: Vec<Statement>,
         alternate: Option<Vec<Statement>>,
     },
+    While {
+        test: Expression,
+        body: Vec<Statement>,
+    },
+    Break,
+    Continue,
     // TODO: 他の文を追加
 }
 
@@ -190,12 +196,36 @@ impl Parser {
             TokenKind::Return => self.parse_return_statement(),
             TokenKind::Function => self.parse_function_declaration(),
             TokenKind::If => self.parse_if_statement(),
+            TokenKind::While => self.parse_while_statement(),
+            TokenKind::Break => {
+                self.advance()?;
+                self.consume_semicolon()?;
+                Ok(Statement::Break)
+            }
+            TokenKind::Continue => {
+                self.advance()?;
+                self.consume_semicolon()?;
+                Ok(Statement::Continue)
+            }
             _ => {
                 let expr = self.parse_expression()?;
                 self.consume_semicolon()?;
                 Ok(Statement::Expression(expr))
             }
         }
+    }
+
+    fn parse_while_statement(&mut self) -> JSResult<Statement> {
+        self.expect(&TokenKind::While, "Expected 'while'")?;
+        self.expect(&TokenKind::LeftParen, "Expected '(' after 'while'")?;
+        let test = self.parse_expression()?;
+        self.expect(&TokenKind::RightParen, "Expected ')' after condition")?;
+        let body = if self.check(&TokenKind::LeftBrace) {
+            self.parse_block()?
+        } else {
+            vec![self.parse_statement()?]
+        };
+        Ok(Statement::While { test, body })
     }
 
     fn parse_if_statement(&mut self) -> JSResult<Statement> {
