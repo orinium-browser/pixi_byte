@@ -4,7 +4,7 @@
 //! `setPrototypeOf`, and helpers like `defineProperty` and `getOwnPropertyDescriptor`.
 
 use crate::error::{JSError, JSResult};
-use crate::value::JSValue;
+use crate::value::{JSArray, JSValue};
 use crate::value::jsobject::JSObject;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -461,6 +461,52 @@ fn object_get_own_property_descriptor(
     }
 }
 
+/// Object.keys(obj)
+fn object_keys(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let args = object_static_arguments(vm, args);
+    let Some(value) = args.into_iter().next() else {
+        return Err(JSError::TypeError(
+            "Object.keys: missing object argument".to_string(),
+        ));
+    };
+    let JSValue::Object(object) = value else {
+        return Err(JSError::TypeError(
+            "Object.keys: argument must be an object".to_string(),
+        ));
+    };
+    let keys = object
+        .borrow()
+        .keys()
+        .into_iter()
+        .map(JSValue::String)
+        .collect();
+    Ok(JSArray::from_vec(keys).to_object())
+}
+
+/// Object.assign(target, ...sources)
+fn object_assign(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let mut args = object_static_arguments(vm, args).into_iter();
+    let Some(JSValue::Object(target)) = args.next() else {
+        return Err(JSError::TypeError(
+            "Object.assign: target must be an object".to_string(),
+        ));
+    };
+
+    for source in args {
+        let source = match source {
+            JSValue::Object(source) => source,
+            JSValue::Null | JSValue::Undefined => continue,
+            _ => continue,
+        };
+        let keys = source.borrow().keys();
+        for key in keys {
+            let value = source.borrow().get(&key);
+            target.borrow_mut().set(key, value);
+        }
+    }
+    Ok(JSValue::Object(target))
+}
+
 /// Object.prototype.propertyIsEnumerable(prop)
 fn object_property_is_enumerable(
     _vm: &mut crate::vm::VM,
@@ -561,6 +607,8 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         "getOwnPropertyDescriptor".to_string(),
         JSValue::NativeFunction(object_get_own_property_descriptor),
     );
+    obj.set("keys".to_string(), JSValue::NativeFunction(object_keys));
+    obj.set("assign".to_string(), JSValue::NativeFunction(object_assign));
 
     // Set prototype property on constructor-like object
     obj.set(
