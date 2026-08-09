@@ -16,6 +16,7 @@ pub mod math;
 pub mod symbol;
 pub mod collection;
 pub mod error_object;
+pub mod uri;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -47,6 +48,7 @@ impl Builtins {
         self::error_object::install(global);
         self::date::install(global);
         self::json::install(global);
+        self::uri::install(global);
         // Function 関連の組み込みを登録
         self::function::install(global)
     }
