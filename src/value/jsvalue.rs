@@ -9,6 +9,9 @@ use crate::runtime::Environment;
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_BOUND_FUNCTION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// ネイティブ関数の型エイリアス。
 /// Rust 側で実装された組み込み関数はこのシグネチャを持ちます。
@@ -58,9 +61,21 @@ pub enum JSValue {
 /// Internal representation for bound functions
 #[derive(Debug, Clone)]
 pub struct BoundFunctionData {
+    pub identity: u64,
     pub target: Box<JSValue>,
     pub bound_this: JSValue,
     pub bound_args: Vec<JSValue>,
+}
+
+impl BoundFunctionData {
+    pub fn new(target: JSValue, bound_this: JSValue, bound_args: Vec<JSValue>) -> Self {
+        Self {
+            identity: NEXT_BOUND_FUNCTION_ID.fetch_add(1, Ordering::Relaxed),
+            target: Box::new(target),
+            bound_this,
+            bound_args,
+        }
+    }
 }
 
 impl JSValue {
@@ -165,6 +180,16 @@ impl JSValue {
             (JSValue::Object(a), JSValue::Object(b)) => {
                 // オブジェクトは参照が同じ場合のみtrue
                 Rc::ptr_eq(a, b)
+            }
+            (JSValue::Function(a, ..), JSValue::Function(b, ..))
+            | (JSValue::ArrowFunction(a, ..), JSValue::ArrowFunction(b, ..)) => {
+                a.identity == b.identity
+            }
+            (JSValue::NativeFunction(a), JSValue::NativeFunction(b)) => {
+                std::ptr::fn_addr_eq(*a, *b)
+            }
+            (JSValue::BoundFunction(a), JSValue::BoundFunction(b)) => {
+                a.identity == b.identity
             }
             // 簡易実装ではその他は false
             _ => false,

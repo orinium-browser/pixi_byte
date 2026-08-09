@@ -98,22 +98,18 @@ fn function_bind(
             // If already bound, preserve original target and bound_this, concatenate args
             let mut new_args = boxed.bound_args.clone();
             new_args.extend(bound_args);
-            let bf = BoundFunctionData {
-                target: boxed.target.clone(),
-                bound_this: boxed.bound_this.clone(),
-                bound_args: new_args,
-            };
+            let bf = BoundFunctionData::new(
+                (*boxed.target).clone(),
+                boxed.bound_this.clone(),
+                new_args,
+            );
             Ok(JSValue::BoundFunction(Box::new(bf)))
         }
         JSValue::Function(_, _, _, _)
         | JSValue::ArrowFunction(_, _, _, _)
         | JSValue::NativeFunction(_) => {
             // create bound function wrapper
-            let bf = BoundFunctionData {
-                target: Box::new(func.clone()),
-                bound_this: this_arg,
-                bound_args,
-            };
+            let bf = BoundFunctionData::new(func.clone(), this_arg, bound_args);
             Ok(JSValue::BoundFunction(Box::new(bf)))
         }
         _ => Err(crate::error::JSError::TypeError(

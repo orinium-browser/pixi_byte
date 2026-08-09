@@ -1,6 +1,9 @@
 use crate::error::{JSError, JSResult};
 use crate::parser::{BinaryOp, Expression, Literal, Program, Statement, UnaryOp};
 use crate::value::JSValue;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_BYTECODE_ID: AtomicU64 = AtomicU64::new(1);
 
 /// バイトコード命令
 #[derive(Debug, Clone, PartialEq)]
@@ -107,6 +110,8 @@ impl Opcode {
 /// バイトコードチャンク
 #[derive(Debug, Clone)]
 pub struct BytecodeChunk {
+    /// Stable identity retained when a function value is cloned.
+    pub identity: u64,
     /// バイトコード命令列
     pub code: Vec<Opcode>,
     /// 定数プール
@@ -117,6 +122,7 @@ impl BytecodeChunk {
     /// 新しいバイトコードチャンクを作成
     pub fn new() -> Self {
         Self {
+            identity: NEXT_BYTECODE_ID.fetch_add(1, Ordering::Relaxed),
             code: Vec::new(),
             constants: Vec::new(),
         }

@@ -37,11 +37,11 @@ fn bound_settler(
     function: fn(&mut VM, Vec<JSValue>) -> JSResult<JSValue>,
     promise: &Rc<RefCell<JSObject>>,
 ) -> JSValue {
-    JSValue::BoundFunction(Box::new(BoundFunctionData {
-        target: Box::new(JSValue::NativeFunction(function)),
-        bound_this: JSValue::Object(Rc::clone(promise)),
-        bound_args: Vec::new(),
-    }))
+    JSValue::BoundFunction(Box::new(BoundFunctionData::new(
+        JSValue::NativeFunction(function),
+        JSValue::Object(Rc::clone(promise)),
+        Vec::new(),
+    )))
 }
 
 fn promise_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -121,11 +121,11 @@ fn promise_all(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     for index in 0..length {
         let value = values.borrow().get(&index.to_string());
         let promise = promise_resolve_static(vm, vec![JSValue::Undefined, value])?;
-        let on_fulfilled = JSValue::BoundFunction(Box::new(BoundFunctionData {
-            target: Box::new(JSValue::NativeFunction(promise_all_fulfill)),
-            bound_this: JSValue::Object(Rc::clone(&tracker)),
-            bound_args: vec![JSValue::Number(index as f64)],
-        }));
+        let on_fulfilled = JSValue::BoundFunction(Box::new(BoundFunctionData::new(
+            JSValue::NativeFunction(promise_all_fulfill),
+            JSValue::Object(Rc::clone(&tracker)),
+            vec![JSValue::Number(index as f64)],
+        )));
         let on_rejected = bound_settler(promise_reject, &result);
         let _ = promise_then(vm, vec![promise, on_fulfilled, on_rejected])?;
     }
@@ -288,11 +288,11 @@ fn enqueue_reaction(
         return;
     }
 
-    let job = JSValue::BoundFunction(Box::new(BoundFunctionData {
-        target: Box::new(JSValue::NativeFunction(promise_reaction_job)),
-        bound_this: JSValue::Object(child),
-        bound_args: vec![handler, value],
-    }));
+    let job = JSValue::BoundFunction(Box::new(BoundFunctionData::new(
+        JSValue::NativeFunction(promise_reaction_job),
+        JSValue::Object(child),
+        vec![handler, value],
+    )));
     vm.enqueue_job(job, JSValue::Undefined, Vec::new());
 }
 
