@@ -1,4 +1,15 @@
 use pixi_byte::{JSEngine, JSValue};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+fn object_constructor(
+    _vm: &mut pixi_byte::vm::VM,
+    _args: Vec<JSValue>,
+) -> pixi_byte::JSResult<JSValue> {
+    let mut result = pixi_byte::value::jsobject::JSObject::new();
+    result.set("value".to_string(), JSValue::Number(9.0));
+    Ok(JSValue::Object(Rc::new(RefCell::new(result))))
+}
 
 #[test]
 fn new_calls_constructor_with_a_fresh_this_object() {
@@ -29,4 +40,23 @@ fn constructor_object_return_value_replaces_this() {
         .unwrap();
 
     assert_eq!(result, JSValue::Number(7.0));
+}
+
+#[test]
+fn object_can_expose_an_internal_constructor_entry_point() {
+    let mut engine = JSEngine::new();
+    let mut constructor = pixi_byte::value::jsobject::JSObject::new();
+    constructor.set(
+        "__construct__".to_string(),
+        JSValue::NativeFunction(object_constructor),
+    );
+    engine.global_mut().borrow_mut().set(
+        "ObjectConstructor".to_string(),
+        JSValue::Object(Rc::new(RefCell::new(constructor))),
+    );
+
+    assert_eq!(
+        engine.eval("new ObjectConstructor().value").unwrap(),
+        JSValue::Number(9.0)
+    );
 }

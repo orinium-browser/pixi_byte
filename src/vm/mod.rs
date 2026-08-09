@@ -418,6 +418,18 @@ impl VM {
                 args.reverse();
 
                 let constructor = self.pop()?;
+                let constructor = match constructor {
+                    JSValue::Object(object) => {
+                        let callable = object.borrow().get("__construct__");
+                        if matches!(callable, JSValue::Undefined) {
+                            return Err(JSError::TypeError(
+                                "object is not a constructor".to_string(),
+                            ));
+                        }
+                        callable
+                    }
+                    callable => callable,
+                };
                 let this = JSValue::Object(Rc::new(RefCell::new(JSObject::new())));
                 let result = self.call(constructor, this.clone(), args)?;
                 self.stack.push(match result {
