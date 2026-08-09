@@ -11,7 +11,7 @@ use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
 use std::any::Any;
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 struct Job {
@@ -34,6 +34,8 @@ pub struct VM {
     pub string_prototype: Rc<RefCell<JSObject>>,
     /// Number.prototype への参照（数値プリミティブのメソッド検索に利用）
     pub number_prototype: Rc<RefCell<JSObject>>,
+    /// Own properties for user-defined callable values, keyed by function identity.
+    callable_objects: HashMap<u64, Rc<RefCell<JSObject>>>,
     /// Host data slot.
     ///
     /// A shared slot where the host (the embedding app) can store arbitrary state.
@@ -111,6 +113,7 @@ impl VM {
             function_prototype,
             string_prototype,
             number_prototype,
+            callable_objects: HashMap::new(),
             host: None,
             jobs: VecDeque::new(),
         }
@@ -137,6 +140,39 @@ impl VM {
             array_object.borrow_mut().set_prototype(Some(prototype));
         }
         array
+    }
+
+    fn register_user_function(
+        &mut self,
+        function: &JSValue,
+        constructible: bool,
+        length: usize,
+        name: Option<&str>,
+    ) {
+        let Some(identity) = function.user_function_identity() else {
+            return;
+        };
+        let mut properties = JSObject::with_prototype(Some(Rc::clone(&self.function_prototype)));
+        properties.set("length".to_string(), JSValue::Number(length as f64));
+        properties.set(
+            "name".to_string(),
+            JSValue::String(name.unwrap_or("").to_string()),
+        );
+        if constructible {
+            let mut prototype = JSObject::new();
+            prototype.set("constructor".to_string(), function.clone());
+            properties.set(
+                "prototype".to_string(),
+                JSValue::Object(Rc::new(RefCell::new(prototype))),
+            );
+        }
+        self.callable_objects
+            .insert(identity, Rc::new(RefCell::new(properties)));
+    }
+
+    fn user_function_object(&self, value: &JSValue) -> Option<Rc<RefCell<JSObject>>> {
+        let identity = value.user_function_identity()?;
+        self.callable_objects.get(&identity).cloned()
     }
 
     /// Runs queued jobs in FIFO order until the queue is empty.
@@ -368,7 +404,14 @@ impl VM {
             Opcode::In => {
                 let object = self.pop()?;
                 let key = self.pop()?.to_string();
-                let JSValue::Object(object) = object else {
+                let object = match &object {
+                    JSValue::Object(object) => Some(Rc::clone(object)),
+                    JSValue::Function(..) | JSValue::ArrowFunction(..) => {
+                        self.user_function_object(&object)
+                    }
+                    _ => None,
+                };
+                let Some(object) = object else {
                     return Err(JSError::TypeError(
                         "right-hand side of 'in' is not an object".to_string(),
                     ));
@@ -379,13 +422,18 @@ impl VM {
             Opcode::Instanceof => {
                 let constructor = self.pop()?;
                 let value = self.pop()?;
-                let JSValue::Object(constructor) = &constructor else {
+                let constructor_object = match &constructor {
+                    JSValue::Object(object) => Some(Rc::clone(object)),
+                    JSValue::Function(..) => self.user_function_object(&constructor),
+                    _ => None,
+                };
+                let Some(constructor_object) = constructor_object else {
                     return Err(JSError::TypeError(
                         "right-hand side of 'instanceof' is not an object".to_string(),
                     ));
                 };
 
-                let host_has_instance = constructor
+                let host_has_instance = constructor_object
                     .borrow()
                     .get(crate::value::jsobject::HOST_HAS_INSTANCE);
                 if matches!(
@@ -397,14 +445,16 @@ impl VM {
                 ) {
                     let result = self.call(
                         host_has_instance,
-                        JSValue::Object(Rc::clone(constructor)),
+                        constructor.clone(),
                         vec![value],
                     )?;
                     self.stack.push(JSValue::Boolean(result.to_boolean()));
                     return Ok(ControlFlow::Continue);
                 }
 
-                let JSValue::Object(target_prototype) = constructor.borrow().get("prototype") else {
+                let JSValue::Object(target_prototype) =
+                    constructor_object.borrow().get("prototype")
+                else {
                     return Err(JSError::TypeError(
                         "constructor has a non-object prototype".to_string(),
                     ));
@@ -524,9 +574,24 @@ impl VM {
                         self.stack.push(value);
                     }
                     JSValue::Function(..)
-                    | JSValue::ArrowFunction(..)
-                    | JSValue::NativeFunction(..)
-                    | JSValue::BoundFunction(..) => {
+                    | JSValue::ArrowFunction(..) => {
+                        let key_str = key.to_string();
+                        let object = self.user_function_object(&obj);
+                        if let Some(object) = object {
+                            let descriptor = object.borrow().get_property_descriptor(&key_str);
+                            if let Some(getter) = descriptor.and_then(|property| property.getter) {
+                                let value = self.call(getter, obj.clone(), Vec::new())?;
+                                self.stack.push(value);
+                            } else {
+                                let value = object.borrow().get(&key_str);
+                                self.stack.push(value);
+                            }
+                        } else {
+                            let value = self.function_prototype.borrow().get(&key_str);
+                            self.stack.push(value);
+                        }
+                    }
+                    JSValue::NativeFunction(..) | JSValue::BoundFunction(..) => {
                         let key_str = key.to_string();
                         let value = self.function_prototype.borrow().get(&key_str);
                         self.stack.push(value);
@@ -577,7 +642,14 @@ impl VM {
             Opcode::DeleteProperty => {
                 let key = self.pop()?.to_string();
                 let object = self.pop()?;
-                let JSValue::Object(object) = object else {
+                let object = match &object {
+                    JSValue::Object(object) => Some(Rc::clone(object)),
+                    JSValue::Function(..) | JSValue::ArrowFunction(..) => {
+                        self.user_function_object(&object)
+                    }
+                    _ => None,
+                };
+                let Some(object) = object else {
                     return Err(JSError::TypeError(
                         "Cannot delete property on non-object".to_string(),
                     ));
@@ -627,6 +699,7 @@ impl VM {
                 match func_const {
                     JSValue::Function(func_chunk, params, _maybe_env, name_opt, _) => {
                         let captured = Some(self.current_env());
+                        let length = params.len();
                         let func = JSValue::Function(
                             func_chunk,
                             params,
@@ -634,9 +707,11 @@ impl VM {
                             name_opt.clone(),
                             crate::value::jsvalue::next_function_identity(),
                         );
+                        self.register_user_function(&func, true, length, name_opt.as_deref());
                         self.stack.push(func);
                     }
                     JSValue::ArrowFunction(func_chunk, params, _maybe_env, _maybe_this, _) => {
+                        let length = params.len();
                         let func = JSValue::ArrowFunction(
                             func_chunk,
                             params,
@@ -644,6 +719,7 @@ impl VM {
                             Some(Box::new(self.current_frame().this.clone())),
                             crate::value::jsvalue::next_function_identity(),
                         );
+                        self.register_user_function(&func, false, length, None);
                         self.stack.push(func);
                     }
                     _other => {
@@ -690,9 +766,13 @@ impl VM {
                 let method = match &object {
                     JSValue::Object(obj_ref) => obj_ref.borrow().get(&key),
                     JSValue::Function(..)
-                    | JSValue::ArrowFunction(..)
-                    | JSValue::NativeFunction(..)
-                    | JSValue::BoundFunction(..) => self.function_prototype.borrow().get(&key),
+                    | JSValue::ArrowFunction(..) => self
+                        .user_function_object(&object)
+                        .map(|properties| properties.borrow().get(&key))
+                        .unwrap_or_else(|| self.function_prototype.borrow().get(&key)),
+                    JSValue::NativeFunction(..) | JSValue::BoundFunction(..) => {
+                        self.function_prototype.borrow().get(&key)
+                    }
                     JSValue::String(_) => self.string_prototype.borrow().get(&key),
                     JSValue::Number(_) => self.number_prototype.borrow().get(&key),
                     _ => {
@@ -714,7 +794,7 @@ impl VM {
                 args.reverse();
 
                 let constructor = self.pop()?;
-                let constructor = match constructor {
+                let callable = match &constructor {
                     JSValue::ArrowFunction(..) => {
                         return Err(JSError::TypeError(
                             "arrow function is not a constructor".to_string(),
@@ -729,12 +809,31 @@ impl VM {
                         }
                         callable
                     }
-                    callable => callable,
+                    _ => constructor.clone(),
                 };
-                let this = JSValue::Object(Rc::new(RefCell::new(JSObject::new())));
-                let result = self.call(constructor, this.clone(), args)?;
+                let prototype = match &constructor {
+                    JSValue::Function(..) => self
+                        .user_function_object(&constructor)
+                        .and_then(|properties| match properties.borrow().get("prototype") {
+                            JSValue::Object(prototype) => Some(prototype),
+                            _ => None,
+                        }),
+                    JSValue::Object(object) => match object.borrow().get("prototype") {
+                        JSValue::Object(prototype) => Some(prototype),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let this = JSValue::Object(Rc::new(RefCell::new(JSObject::with_prototype(
+                    prototype,
+                ))));
+                let result = self.call(callable, this.clone(), args)?;
                 self.stack.push(match result {
-                    JSValue::Object(_) => result,
+                    JSValue::Object(_)
+                    | JSValue::Function(..)
+                    | JSValue::ArrowFunction(..)
+                    | JSValue::NativeFunction(..)
+                    | JSValue::BoundFunction(..) => result,
                     _ => this,
                 });
             }
@@ -846,7 +945,14 @@ impl VM {
         key: JSValue,
         value: JSValue,
     ) -> JSResult<()> {
-        let JSValue::Object(object_ref) = object else {
+        let object_ref = match object {
+            JSValue::Object(object_ref) => Some(Rc::clone(object_ref)),
+            JSValue::Function(..) | JSValue::ArrowFunction(..) => {
+                self.user_function_object(object)
+            }
+            _ => None,
+        };
+        let Some(object_ref) = object_ref else {
             return Err(JSError::TypeError(
                 "Cannot set property on non-object".to_string(),
             ));

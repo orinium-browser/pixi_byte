@@ -86,6 +86,14 @@ impl BoundFunctionData {
 }
 
 impl JSValue {
+    pub(crate) fn user_function_identity(&self) -> Option<u64> {
+        match self {
+            JSValue::Function(_, _, _, _, identity)
+            | JSValue::ArrowFunction(_, _, _, _, identity) if *identity != 0 => Some(*identity),
+            _ => None,
+        }
+    }
+
     /// 値をコンソール向け文字列に変換します（ToString 相当）。
     ///
     /// デバッグやログ出力に使います。
