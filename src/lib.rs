@@ -106,6 +106,16 @@ impl JSEngine {
     ) -> JSResult<JSValue> {
         self.vm.call(callee, this, args)
     }
+
+    /// Enqueues a callable job for execution at the next host checkpoint.
+    pub fn enqueue_job(&mut self, callback: JSValue, this: JSValue, args: Vec<JSValue>) {
+        self.vm.enqueue_job(callback, this, args);
+    }
+
+    /// Runs all queued jobs, including jobs enqueued while draining the queue.
+    pub fn run_jobs(&mut self) -> JSResult<()> {
+        self.vm.run_jobs()
+    }
 }
 
 impl Default for JSEngine {

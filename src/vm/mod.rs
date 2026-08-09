@@ -11,7 +11,14 @@ use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
 use std::any::Any;
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
+
+struct Job {
+    callback: JSValue,
+    this: JSValue,
+    arguments: Vec<JSValue>,
+}
 
 /// 仮想マシン
 pub struct VM {
@@ -30,6 +37,7 @@ pub struct VM {
     /// and cannot capture closures, so host state (e.g. the DOM tree) is accessed
     /// from native functions through this slot via `downcast_ref`.
     pub host: Option<Rc<RefCell<dyn Any>>>,
+    jobs: VecDeque<Job>,
 }
 
 enum ControlFlow {
@@ -58,7 +66,25 @@ impl VM {
             global_object: global_rc,
             function_prototype,
             host: None,
+            jobs: VecDeque::new(),
         }
+    }
+
+    /// Enqueues a callable job for the next host microtask checkpoint.
+    pub fn enqueue_job(&mut self, callback: JSValue, this: JSValue, arguments: Vec<JSValue>) {
+        self.jobs.push_back(Job {
+            callback,
+            this,
+            arguments,
+        });
+    }
+
+    /// Runs queued jobs in FIFO order until the queue is empty.
+    pub fn run_jobs(&mut self) -> JSResult<()> {
+        while let Some(job) = self.jobs.pop_front() {
+            self.call(job.callback, job.this, job.arguments)?;
+        }
+        Ok(())
     }
 
     pub fn execute(&mut self, chunk: &BytecodeChunk) -> JSResult<JSValue> {
