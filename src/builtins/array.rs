@@ -291,6 +291,24 @@ fn array_is_array(
     Ok(JSValue::Boolean(is_array))
 }
 
+fn array_constructor(
+    vm: &mut crate::vm::VM,
+    args: Vec<JSValue>,
+) -> crate::error::JSResult<JSValue> {
+    let values: Vec<_> = args.into_iter().skip(1).collect();
+    if let [JSValue::Number(length)] = values.as_slice() {
+        let length = if length.is_finite() && *length >= 0.0 && length.fract() == 0.0 {
+            *length as usize
+        } else {
+            return Err(crate::error::JSError::RangeError(
+                "Invalid array length".to_string(),
+            ));
+        };
+        return Ok(vm.array_from_values(vec![JSValue::Undefined; length]));
+    }
+    Ok(vm.array_from_values(values))
+}
+
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     // Array コンストラクタオブジェクト（最小実装）
     let mut array_ctor = JSObject::new();
@@ -330,6 +348,14 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     array_ctor.set(
         "isArray".to_string(),
         JSValue::NativeFunction(array_is_array),
+    );
+    array_ctor.set(
+        "__call__".to_string(),
+        JSValue::NativeFunction(array_constructor),
+    );
+    array_ctor.set(
+        "__construct__".to_string(),
+        JSValue::NativeFunction(array_constructor),
     );
 
     global.borrow_mut().set(
