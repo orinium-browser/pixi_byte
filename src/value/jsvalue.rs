@@ -89,7 +89,11 @@ impl JSValue {
     pub(crate) fn user_function_identity(&self) -> Option<u64> {
         match self {
             JSValue::Function(_, _, _, _, identity)
-            | JSValue::ArrowFunction(_, _, _, _, identity) if *identity != 0 => Some(*identity),
+            | JSValue::ArrowFunction(_, _, _, _, identity)
+                if *identity != 0 =>
+            {
+                Some(*identity)
+            }
             _ => None,
         }
     }
@@ -207,9 +211,7 @@ impl JSValue {
             (JSValue::NativeFunction(a), JSValue::NativeFunction(b)) => {
                 std::ptr::fn_addr_eq(*a, *b)
             }
-            (JSValue::BoundFunction(a), JSValue::BoundFunction(b)) => {
-                a.identity == b.identity
-            }
+            (JSValue::BoundFunction(a), JSValue::BoundFunction(b)) => a.identity == b.identity,
             // 簡易実装ではその他は false
             _ => false,
         }
@@ -279,13 +281,15 @@ impl Clone for JSValue {
                 name_opt.clone(),
                 *identity,
             ),
-            JSValue::ArrowFunction(chunk, params, env_opt, this_opt, identity) => JSValue::ArrowFunction(
-                chunk.clone(),
-                params.clone(),
-                env_opt.clone(),
-                this_opt.clone(),
-                *identity,
-            ),
+            JSValue::ArrowFunction(chunk, params, env_opt, this_opt, identity) => {
+                JSValue::ArrowFunction(
+                    chunk.clone(),
+                    params.clone(),
+                    env_opt.clone(),
+                    this_opt.clone(),
+                    *identity,
+                )
+            }
             JSValue::NativeFunction(f) => JSValue::NativeFunction(*f),
             JSValue::BoundFunction(b) => JSValue::BoundFunction(Box::new((**b).clone())),
         }

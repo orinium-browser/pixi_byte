@@ -1,6 +1,6 @@
 use crate::error::JSResult;
-use crate::value::jsobject::JSObject;
 use crate::value::JSValue;
+use crate::value::jsobject::JSObject;
 use crate::vm::VM;
 use std::cell::RefCell;
 use std::rc::Rc;

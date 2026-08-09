@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::{JSError, JSResult};
-use crate::value::jsobject::{JSObject, Property};
 use crate::value::JSValue;
+use crate::value::jsobject::{JSObject, Property};
 use crate::vm::VM;
 
 fn receiver(args: &[JSValue], method: &str) -> JSResult<f64> {
@@ -24,10 +24,7 @@ fn number_constructor(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 }
 
 fn global_is_nan(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let value = args
-        .get(1)
-        .map(JSValue::to_number)
-        .unwrap_or(f64::NAN);
+    let value = args.get(1).map(JSValue::to_number).unwrap_or(f64::NAN);
     Ok(JSValue::Boolean(value.is_nan()))
 }
 

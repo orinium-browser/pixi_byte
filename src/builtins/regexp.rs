@@ -6,8 +6,8 @@ use std::rc::Rc;
 use regex::RegexBuilder;
 
 use crate::error::{JSError, JSResult};
-use crate::value::jsobject::JSObject;
 use crate::value::JSValue;
+use crate::value::jsobject::JSObject;
 use crate::vm::VM;
 
 const PATTERN: &str = "__regexp_pattern";
@@ -56,14 +56,9 @@ pub(crate) fn compile(object: &Rc<RefCell<JSObject>>) -> JSResult<regex::Regex> 
         .case_insensitive(flags.contains('i'))
         .multi_line(flags.contains('m'))
         .dot_matches_new_line(flags.contains('s'));
-    builder
-        .build()
-        .map_err(|error| {
-            JSError::SyntaxError(
-                error.to_string(),
-                crate::lexer::Span::new(0, 0, 0, 0),
-            )
-        })
+    builder.build().map_err(|error| {
+        JSError::SyntaxError(error.to_string(), crate::lexer::Span::new(0, 0, 0, 0))
+    })
 }
 
 pub(crate) fn flags(object: &Rc<RefCell<JSObject>>) -> String {
@@ -76,7 +71,9 @@ pub(crate) fn is_regexp(object: &Rc<RefCell<JSObject>>) -> bool {
 
 fn regexp_test(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let Some(JSValue::Object(object)) = args.first() else {
-        return Err(JSError::TypeError("RegExp.test: invalid receiver".to_string()));
+        return Err(JSError::TypeError(
+            "RegExp.test: invalid receiver".to_string(),
+        ));
     };
     let input = args.get(1).map(JSValue::to_string).unwrap_or_default();
     Ok(JSValue::Boolean(compile(object)?.is_match(&input)))
@@ -84,7 +81,9 @@ fn regexp_test(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 
 fn regexp_exec(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let Some(JSValue::Object(object)) = args.first() else {
-        return Err(JSError::TypeError("RegExp.exec: invalid receiver".to_string()));
+        return Err(JSError::TypeError(
+            "RegExp.exec: invalid receiver".to_string(),
+        ));
     };
     let input = args.get(1).map(JSValue::to_string).unwrap_or_default();
     let expression = compile(object)?;

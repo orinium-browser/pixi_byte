@@ -127,10 +127,7 @@ fn array_shift(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
     Ok(first)
 }
 
-fn array_unshift(
-    _vm: &mut crate::vm::VM,
-    args: Vec<JSValue>,
-) -> crate::error::JSResult<JSValue> {
+fn array_unshift(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     let object = receiver(&args, "unshift")?;
     let length = length(&object);
     let additions = args.len().saturating_sub(1);
@@ -173,10 +170,7 @@ fn array_splice(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
         .map(|index| object.borrow().get(&index.to_string()))
         .collect();
     let removed: Vec<_> = values
-        .splice(
-            start..start + delete_count,
-            args.into_iter().skip(3),
-        )
+        .splice(start..start + delete_count, args.into_iter().skip(3))
         .collect();
     for (index, value) in values.iter().cloned().enumerate() {
         object.borrow_mut().set(index.to_string(), value);
@@ -262,11 +256,7 @@ fn array_filter(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
             .call(
                 callback.clone(),
                 this_arg.clone(),
-                vec![
-                    value.clone(),
-                    JSValue::Number(index as f64),
-                    array.clone(),
-                ],
+                vec![value.clone(), JSValue::Number(index as f64), array.clone()],
             )?
             .to_boolean()
         {
@@ -366,25 +356,23 @@ fn array_reduce(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
     Ok(accumulator)
 }
 
-fn array_index_of(
-    _vm: &mut crate::vm::VM,
-    args: Vec<JSValue>,
-) -> crate::error::JSResult<JSValue> {
+fn array_index_of(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     let object = receiver(&args, "indexOf")?;
     let needle = args.get(1).cloned().unwrap_or(JSValue::Undefined);
     let start = normalized_index(args.get(2), length(&object), 0);
     for index in start..length(&object) {
-        if object.borrow().get(&index.to_string()).strict_equals(&needle) {
+        if object
+            .borrow()
+            .get(&index.to_string())
+            .strict_equals(&needle)
+        {
             return Ok(JSValue::Number(index as f64));
         }
     }
     Ok(JSValue::Number(-1.0))
 }
 
-fn array_includes(
-    _vm: &mut crate::vm::VM,
-    args: Vec<JSValue>,
-) -> crate::error::JSResult<JSValue> {
+fn array_includes(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     let object = receiver(&args, "includes")?;
     let needle = args.get(1).cloned().unwrap_or(JSValue::Undefined);
     let start = normalized_index(args.get(2), length(&object), 0);
@@ -415,10 +403,7 @@ fn array_join(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRe
     Ok(JSValue::String(values))
 }
 
-fn array_is_array(
-    _vm: &mut crate::vm::VM,
-    args: Vec<JSValue>,
-) -> crate::error::JSResult<JSValue> {
+fn array_is_array(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     let value = if args.len() > 1 {
         args.get(1)
     } else {

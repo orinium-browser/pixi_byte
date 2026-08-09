@@ -418,7 +418,10 @@ impl Parser {
         self.expect(&TokenKind::For, "Expected 'for'")?;
         self.expect(&TokenKind::LeftParen, "Expected '(' after 'for'")?;
 
-        if matches!(self.current().kind, TokenKind::Var | TokenKind::Let | TokenKind::Const) {
+        if matches!(
+            self.current().kind,
+            TokenKind::Var | TokenKind::Let | TokenKind::Const
+        ) {
             let mut candidate = self.clone();
             candidate.advance()?;
             if matches!(candidate.current().kind, TokenKind::Identifier(_)) {
@@ -440,8 +443,10 @@ impl Parser {
 
         let init = if self.eat(&TokenKind::Semicolon)? {
             None
-        } else if matches!(self.current().kind, TokenKind::Var | TokenKind::Let | TokenKind::Const)
-        {
+        } else if matches!(
+            self.current().kind,
+            TokenKind::Var | TokenKind::Let | TokenKind::Const
+        ) {
             let kind = match self.current().kind {
                 TokenKind::Var => VarKind::Var,
                 TokenKind::Let => VarKind::Let,
@@ -485,7 +490,10 @@ impl Parser {
 
     fn parse_for_in_tail(&mut self, binding: String) -> JSResult<Statement> {
         let right = self.parse_expression()?;
-        self.expect(&TokenKind::RightParen, "Expected ')' after for-in expression")?;
+        self.expect(
+            &TokenKind::RightParen,
+            "Expected ')' after for-in expression",
+        )?;
         let body = if self.check(&TokenKind::LeftBrace) {
             self.parse_block()?
         } else {

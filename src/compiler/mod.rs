@@ -893,8 +893,7 @@ impl Compiler {
                 arg,
                 increment,
                 prefix,
-            } => {
-                match *arg {
+            } => match *arg {
                 Expression::Identifier(name) => {
                     self.chunk.emit(Opcode::LoadVar(name.clone()));
                     if !prefix {
@@ -902,7 +901,8 @@ impl Compiler {
                     }
                     let one = self.chunk.add_constant(JSValue::Number(1.0));
                     self.chunk.emit(Opcode::LoadConst(one));
-                        self.chunk.emit(if increment { Opcode::Add } else { Opcode::Sub });
+                    self.chunk
+                        .emit(if increment { Opcode::Add } else { Opcode::Sub });
                     if prefix {
                         self.chunk.emit(Opcode::Dup);
                     }
@@ -920,7 +920,8 @@ impl Compiler {
                     }
                     let one = self.chunk.add_constant(JSValue::Number(1.0));
                     self.chunk.emit(Opcode::LoadConst(one));
-                        self.chunk.emit(if increment { Opcode::Add } else { Opcode::Sub });
+                    self.chunk
+                        .emit(if increment { Opcode::Add } else { Opcode::Sub });
                     self.chunk.emit(if prefix {
                         Opcode::SetProperty
                     } else {
@@ -930,8 +931,7 @@ impl Compiler {
                 _ => {
                     return Err(JSError::TypeError("Invalid update target".to_string()));
                 }
-                }
-            }
+            },
             Expression::Conditional {
                 test,
                 consequent,

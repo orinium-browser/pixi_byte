@@ -57,10 +57,20 @@ impl Statement {
                 println!("{prefix}{branch}Var");
                 for (index, (name, init)) in declarations.iter().enumerate() {
                     let declaration_last = index + 1 == declarations.len();
-                    println!("{next_prefix}{}{name}", if declaration_last { "└─ " } else { "├─ " });
+                    println!(
+                        "{next_prefix}{}{name}",
+                        if declaration_last {
+                            "└─ "
+                        } else {
+                            "├─ "
+                        }
+                    );
                     if let Some(expr) = init {
                         expr.dump_impl(
-                            format!("{next_prefix}{}", if declaration_last { "   " } else { "│  " }),
+                            format!(
+                                "{next_prefix}{}",
+                                if declaration_last { "   " } else { "│  " }
+                            ),
                             true,
                         );
                     }
@@ -72,7 +82,10 @@ impl Statement {
                 alternate,
             } => {
                 println!("{prefix}{branch}If");
-                test.dump_impl(next_prefix.clone(), consequent.is_empty() && alternate.is_none());
+                test.dump_impl(
+                    next_prefix.clone(),
+                    consequent.is_empty() && alternate.is_none(),
+                );
                 for (index, stmt) in consequent.iter().enumerate() {
                     stmt.dump_impl(
                         next_prefix.clone(),
@@ -82,10 +95,7 @@ impl Statement {
                 if let Some(alternate) = alternate {
                     println!("{next_prefix}└─ Else");
                     for (index, stmt) in alternate.iter().enumerate() {
-                        stmt.dump_impl(
-                            format!("{next_prefix}   "),
-                            index + 1 == alternate.len(),
-                        );
+                        stmt.dump_impl(format!("{next_prefix}   "), index + 1 == alternate.len());
                     }
                 }
             }

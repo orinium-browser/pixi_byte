@@ -170,8 +170,7 @@ impl VM {
             JSValue::String(name.unwrap_or("").to_string()),
         );
         if constructible {
-            let mut prototype =
-                JSObject::with_prototype(Some(Rc::clone(&self.object_prototype)));
+            let mut prototype = JSObject::with_prototype(Some(Rc::clone(&self.object_prototype)));
             prototype.set("constructor".to_string(), function.clone());
             properties.set(
                 "prototype".to_string(),
@@ -208,12 +207,7 @@ impl VM {
                 Ok(control) => control,
                 Err(error) => {
                     pending_finally.pop();
-                    self.redirect_exception(
-                        error,
-                        &mut handlers,
-                        &mut pending_finally,
-                        &mut pc,
-                    )?;
+                    self.redirect_exception(error, &mut handlers, &mut pending_finally, &mut pc)?;
                     continue;
                 }
             };
@@ -226,12 +220,9 @@ impl VM {
 
                 ControlFlow::Return(value) => {
                     pending_finally.pop();
-                    if let Some(value) = self.redirect_return(
-                        value,
-                        &mut handlers,
-                        &mut pending_finally,
-                        &mut pc,
-                    ) {
+                    if let Some(value) =
+                        self.redirect_return(value, &mut handlers, &mut pending_finally, &mut pc)
+                    {
                         return Ok(value);
                     }
                 }
@@ -246,29 +237,27 @@ impl VM {
                     handlers.pop();
                 }
                 ControlFlow::BeginFinally => pending_finally.push(PendingFinally::Normal),
-                ControlFlow::EndFinally => {
-                    match pending_finally.pop() {
-                        Some(PendingFinally::Throw(error)) => {
-                            self.redirect_exception(
-                                error,
-                                &mut handlers,
-                                &mut pending_finally,
-                                &mut pc,
-                            )?;
-                        }
-                        Some(PendingFinally::Return(value)) => {
-                            if let Some(value) = self.redirect_return(
-                                value,
-                                &mut handlers,
-                                &mut pending_finally,
-                                &mut pc,
-                            ) {
-                                return Ok(value);
-                            }
-                        }
-                        Some(PendingFinally::Normal) | None => {}
+                ControlFlow::EndFinally => match pending_finally.pop() {
+                    Some(PendingFinally::Throw(error)) => {
+                        self.redirect_exception(
+                            error,
+                            &mut handlers,
+                            &mut pending_finally,
+                            &mut pc,
+                        )?;
                     }
-                }
+                    Some(PendingFinally::Return(value)) => {
+                        if let Some(value) = self.redirect_return(
+                            value,
+                            &mut handlers,
+                            &mut pending_finally,
+                            &mut pc,
+                        ) {
+                            return Ok(value);
+                        }
+                    }
+                    Some(PendingFinally::Normal) | None => {}
+                },
             }
         }
 
@@ -455,11 +444,7 @@ impl VM {
                         | JSValue::NativeFunction(..)
                         | JSValue::BoundFunction(..)
                 ) {
-                    let result = self.call(
-                        host_has_instance,
-                        constructor.clone(),
-                        vec![value],
-                    )?;
+                    let result = self.call(host_has_instance, constructor.clone(), vec![value])?;
                     self.stack.push(JSValue::Boolean(result.to_boolean()));
                     return Ok(ControlFlow::Continue);
                 }
@@ -592,8 +577,7 @@ impl VM {
 
                         self.stack.push(value);
                     }
-                    JSValue::Function(..)
-                    | JSValue::ArrowFunction(..) => {
+                    JSValue::Function(..) | JSValue::ArrowFunction(..) => {
                         let key_str = key.to_string();
                         let object = self.user_function_object(&obj);
                         if let Some(object) = object {
@@ -618,9 +602,8 @@ impl VM {
                     JSValue::String(string) => {
                         let key = key.to_string();
                         if key == "length" {
-                            self.stack.push(JSValue::Number(
-                                string.encode_utf16().count() as f64,
-                            ));
+                            self.stack
+                                .push(JSValue::Number(string.encode_utf16().count() as f64));
                         } else if let Ok(index) = key.parse::<usize>() {
                             let value = string
                                 .chars()
@@ -791,8 +774,7 @@ impl VM {
                             self.object_prototype.borrow().get(&key)
                         }
                     }
-                    JSValue::Function(..)
-                    | JSValue::ArrowFunction(..) => self
+                    JSValue::Function(..) | JSValue::ArrowFunction(..) => self
                         .user_function_object(&object)
                         .map(|properties| properties.borrow().get(&key))
                         .unwrap_or_else(|| self.function_prototype.borrow().get(&key)),
@@ -838,21 +820,21 @@ impl VM {
                     _ => constructor.clone(),
                 };
                 let prototype = match &constructor {
-                    JSValue::Function(..) => self
-                        .user_function_object(&constructor)
-                        .and_then(|properties| match properties.borrow().get("prototype") {
-                            JSValue::Object(prototype) => Some(prototype),
-                            _ => None,
-                        }),
+                    JSValue::Function(..) => {
+                        self.user_function_object(&constructor)
+                            .and_then(|properties| match properties.borrow().get("prototype") {
+                                JSValue::Object(prototype) => Some(prototype),
+                                _ => None,
+                            })
+                    }
                     JSValue::Object(object) => match object.borrow().get("prototype") {
                         JSValue::Object(prototype) => Some(prototype),
                         _ => None,
                     },
                     _ => Some(Rc::clone(&self.object_prototype)),
                 };
-                let this = JSValue::Object(Rc::new(RefCell::new(JSObject::with_prototype(
-                    prototype,
-                ))));
+                let this =
+                    JSValue::Object(Rc::new(RefCell::new(JSObject::with_prototype(prototype))));
                 let result = self.call(callable, this.clone(), args)?;
                 self.stack.push(match result {
                     JSValue::Object(_)
@@ -973,9 +955,7 @@ impl VM {
     ) -> JSResult<()> {
         let object_ref = match object {
             JSValue::Object(object_ref) => Some(Rc::clone(object_ref)),
-            JSValue::Function(..) | JSValue::ArrowFunction(..) => {
-                self.user_function_object(object)
-            }
+            JSValue::Function(..) | JSValue::ArrowFunction(..) => self.user_function_object(object),
             _ => None,
         };
         let Some(object_ref) = object_ref else {
@@ -1076,7 +1056,10 @@ impl VM {
         let env = Environment::with_outer(outer);
 
         if bind_arguments {
-            env.define("arguments".to_string(), self.array_from_values(args.clone()));
+            env.define(
+                "arguments".to_string(),
+                self.array_from_values(args.clone()),
+            );
         }
 
         for (i, arg) in args.into_iter().enumerate() {

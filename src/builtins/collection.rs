@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::{JSError, JSResult};
-use crate::value::jsobject::JSObject;
 use crate::value::JSValue;
+use crate::value::jsobject::JSObject;
 use crate::vm::VM;
 
 const COUNT: &str = "__collection_count";
@@ -29,7 +29,9 @@ fn count(object: &Rc<RefCell<JSObject>>) -> usize {
 fn find(object: &Rc<RefCell<JSObject>>, key: &JSValue) -> Option<usize> {
     (0..count(object)).find(|index| {
         matches!(
-            object.borrow().get(&format!("__collection_present_{index}")),
+            object
+                .borrow()
+                .get(&format!("__collection_present_{index}")),
             JSValue::Boolean(true)
         ) && object
             .borrow()
@@ -156,15 +158,9 @@ fn map_for_each(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 
 fn make_iterator(collection: Rc<RefCell<JSObject>>, kind: &str) -> JSValue {
     let mut iterator = JSObject::new();
-    iterator.set(
-        ITERATOR_COLLECTION.to_string(),
-        JSValue::Object(collection),
-    );
+    iterator.set(ITERATOR_COLLECTION.to_string(), JSValue::Object(collection));
     iterator.set(ITERATOR_INDEX.to_string(), JSValue::Number(0.0));
-    iterator.set(
-        ITERATOR_KIND.to_string(),
-        JSValue::String(kind.to_string()),
-    );
+    iterator.set(ITERATOR_KIND.to_string(), JSValue::String(kind.to_string()));
     iterator.set(
         "next".to_string(),
         JSValue::NativeFunction(collection_iterator_next),
@@ -280,7 +276,10 @@ fn constructor(
     construct: crate::value::jsvalue::NativeFunctionType,
 ) -> JSObject {
     let mut constructor = JSObject::new();
-    constructor.set("__construct__".to_string(), JSValue::NativeFunction(construct));
+    constructor.set(
+        "__construct__".to_string(),
+        JSValue::NativeFunction(construct),
+    );
     constructor.set(
         "prototype".to_string(),
         JSValue::Object(Rc::new(RefCell::new(prototype))),
@@ -297,7 +296,10 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     set_prototype.set("values".to_string(), JSValue::NativeFunction(set_values));
     set_prototype.set("keys".to_string(), JSValue::NativeFunction(set_values));
     set_prototype.set("entries".to_string(), JSValue::NativeFunction(set_entries));
-    set_prototype.set("@@iterator".to_string(), JSValue::NativeFunction(set_values));
+    set_prototype.set(
+        "@@iterator".to_string(),
+        JSValue::NativeFunction(set_values),
+    );
     set_prototype.set(
         "delete".to_string(),
         JSValue::NativeFunction(collection_delete),
@@ -310,7 +312,10 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     map_prototype.set("keys".to_string(), JSValue::NativeFunction(map_keys));
     map_prototype.set("values".to_string(), JSValue::NativeFunction(map_values));
     map_prototype.set("entries".to_string(), JSValue::NativeFunction(map_entries));
-    map_prototype.set("@@iterator".to_string(), JSValue::NativeFunction(map_entries));
+    map_prototype.set(
+        "@@iterator".to_string(),
+        JSValue::NativeFunction(map_entries),
+    );
     map_prototype.set(
         "delete".to_string(),
         JSValue::NativeFunction(collection_delete),

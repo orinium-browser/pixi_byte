@@ -1,6 +1,6 @@
 use crate::error::{JSError, JSResult};
-use crate::value::jsobject::JSObject;
 use crate::value::JSValue;
+use crate::value::jsobject::JSObject;
 use crate::vm::VM;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -28,7 +28,11 @@ fn quote(value: &str) -> String {
     result
 }
 
-fn serialize(value: &JSValue, stack: &mut HashSet<usize>, in_array: bool) -> JSResult<Option<String>> {
+fn serialize(
+    value: &JSValue,
+    stack: &mut HashSet<usize>,
+    in_array: bool,
+) -> JSResult<Option<String>> {
     match value {
         JSValue::Undefined
         | JSValue::Function(..)

@@ -4,18 +4,18 @@
 //! Each built-in has an `install` function which receives the global object.
 
 pub mod array;
+pub mod collection;
 pub mod date;
+pub mod error_object;
 pub mod function;
 pub mod json;
+pub mod math;
+pub mod number;
 pub mod object;
 pub mod promise;
 pub mod regexp;
 pub mod string;
-pub mod number;
-pub mod math;
 pub mod symbol;
-pub mod collection;
-pub mod error_object;
 pub mod uri;
 
 use std::cell::RefCell;

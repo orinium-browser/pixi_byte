@@ -385,23 +385,13 @@ impl Lexer {
             let Some(character) = self.peek() else {
                 return Err(JSError::SyntaxError(
                     "Invalid hexadecimal escape sequence".to_string(),
-                    Span::new(
-                        literal_start,
-                        self.position,
-                        start_line,
-                        start_column,
-                    ),
+                    Span::new(literal_start, self.position, start_line, start_column),
                 ));
             };
             let Some(digit) = character.to_digit(16) else {
                 return Err(JSError::SyntaxError(
                     "Invalid hexadecimal escape sequence".to_string(),
-                    Span::new(
-                        literal_start,
-                        self.position,
-                        start_line,
-                        start_column,
-                    ),
+                    Span::new(literal_start, self.position, start_line, start_column),
                 ));
             };
             self.advance();

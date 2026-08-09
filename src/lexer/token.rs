@@ -90,14 +90,14 @@ pub enum TokenKind {
     Colon,    // :
 
     // 代入演算子
-    PlusEq,    // +=
-    MinusEq,   // -=
-    StarEq,    // *=
-    SlashEq,   // /=
-    PercentEq, // %=
-    BitAndEq,  // &=
-    BitOrEq,   // |=
-    BitXorEq,  // ^=
+    PlusEq,               // +=
+    MinusEq,              // -=
+    StarEq,               // *=
+    SlashEq,              // /=
+    PercentEq,            // %=
+    BitAndEq,             // &=
+    BitOrEq,              // |=
+    BitXorEq,             // ^=
     LeftShiftEq,          // <<=
     RightShiftEq,         // >>=
     UnsignedRightShiftEq, // >>>=
