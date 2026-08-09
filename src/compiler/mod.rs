@@ -163,11 +163,12 @@ pub struct Compiler {
     /// 生成されたバイトコードチャンク
     chunk: BytecodeChunk,
     loops: Vec<LoopContext>,
+    break_scopes: Vec<Vec<usize>>,
+    next_temporary: usize,
 }
 
 struct LoopContext {
     continue_jumps: Vec<usize>,
-    break_jumps: Vec<usize>,
 }
 
 impl Compiler {
@@ -176,6 +177,8 @@ impl Compiler {
         Self {
             chunk: BytecodeChunk::new(),
             loops: Vec::new(),
+            break_scopes: Vec::new(),
+            next_temporary: 0,
         }
     }
 
@@ -276,8 +279,8 @@ impl Compiler {
                 self.chunk.emit(Opcode::JumpIfFalse(usize::MAX));
                 self.loops.push(LoopContext {
                     continue_jumps: Vec::new(),
-                    break_jumps: Vec::new(),
                 });
+                self.break_scopes.push(Vec::new());
                 self.compile_statements(body, false)?;
                 let continue_jumps = {
                     let loop_context = self.loops.last_mut().expect("loop context must exist");
@@ -290,8 +293,8 @@ impl Compiler {
 
                 let exit_target = self.chunk.code.len();
                 self.patch_jump(exit_jump, exit_target);
-                let loop_context = self.loops.pop().expect("loop context must exist");
-                for break_jump in loop_context.break_jumps {
+                self.loops.pop().expect("loop context must exist");
+                for break_jump in self.break_scopes.pop().expect("break scope must exist") {
                     self.patch_jump(break_jump, exit_target);
                 }
                 if is_last {
@@ -319,8 +322,8 @@ impl Compiler {
                 self.chunk.emit(Opcode::JumpIfFalse(usize::MAX));
                 self.loops.push(LoopContext {
                     continue_jumps: Vec::new(),
-                    break_jumps: Vec::new(),
                 });
+                self.break_scopes.push(Vec::new());
                 self.compile_statements(body, false)?;
 
                 let update_start = self.chunk.code.len();
@@ -339,8 +342,8 @@ impl Compiler {
 
                 let exit_target = self.chunk.code.len();
                 self.patch_jump(exit_jump, exit_target);
-                let loop_context = self.loops.pop().expect("loop context must exist");
-                for break_jump in loop_context.break_jumps {
+                self.loops.pop().expect("loop context must exist");
+                for break_jump in self.break_scopes.pop().expect("break scope must exist") {
                     self.patch_jump(break_jump, exit_target);
                 }
                 if is_last {
@@ -423,15 +426,65 @@ impl Compiler {
                     }
                 }
             }
+            Statement::Switch {
+                discriminant,
+                cases,
+            } => {
+                let temporary = format!("__pixi_switch_{}", self.next_temporary);
+                self.next_temporary += 1;
+                self.compile_expression(discriminant)?;
+                self.chunk.emit(Opcode::StoreVar(temporary.clone()));
+
+                let mut case_jumps = Vec::new();
+                for (case_index, (test, _)) in cases.iter().enumerate() {
+                    let Some(test) = test else {
+                        continue;
+                    };
+                    self.chunk.emit(Opcode::LoadVar(temporary.clone()));
+                    self.compile_expression(test.clone())?;
+                    self.chunk.emit(Opcode::StrictEq);
+                    let jump = self.chunk.code.len();
+                    self.chunk.emit(Opcode::JumpIfTrue(usize::MAX));
+                    case_jumps.push((jump, case_index));
+                }
+                let default_jump = self.chunk.code.len();
+                self.chunk.emit(Opcode::Jump(usize::MAX));
+
+                self.break_scopes.push(Vec::new());
+                let mut case_starts = Vec::with_capacity(cases.len());
+                let mut default_index = None;
+                for (case_index, (test, body)) in cases.into_iter().enumerate() {
+                    case_starts.push(self.chunk.code.len());
+                    if test.is_none() {
+                        default_index = Some(case_index);
+                    }
+                    self.compile_statements(body, false)?;
+                }
+                let end = self.chunk.code.len();
+                for (jump, case_index) in case_jumps {
+                    self.patch_jump(jump, case_starts[case_index]);
+                }
+                self.patch_jump(
+                    default_jump,
+                    default_index.map(|index| case_starts[index]).unwrap_or(end),
+                );
+                for break_jump in self.break_scopes.pop().expect("break scope must exist") {
+                    self.patch_jump(break_jump, end);
+                }
+                if is_last {
+                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    self.chunk.emit(Opcode::LoadConst(undefined));
+                }
+            }
             Statement::Break => {
                 let jump = self.chunk.code.len();
                 self.chunk.emit(Opcode::Jump(usize::MAX));
-                let Some(loop_context) = self.loops.last_mut() else {
+                let Some(break_scope) = self.break_scopes.last_mut() else {
                     return Err(JSError::InternalError(
-                        "break used outside of a loop".to_string(),
+                        "break used outside of a loop or switch".to_string(),
                     ));
                 };
-                loop_context.break_jumps.push(jump);
+                break_scope.push(jump);
             }
             Statement::Continue => {
                 let jump = self.chunk.code.len();

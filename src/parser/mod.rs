@@ -45,6 +45,10 @@ pub enum Statement {
         handler: Option<(Option<String>, Vec<Statement>)>,
         finalizer: Option<Vec<Statement>>,
     },
+    Switch {
+        discriminant: Expression,
+        cases: Vec<(Option<Expression>, Vec<Statement>)>,
+    },
     Break,
     Continue,
     // TODO: 他の文を追加
@@ -218,6 +222,7 @@ impl Parser {
             TokenKind::For => self.parse_for_statement(),
             TokenKind::Throw => self.parse_throw_statement(),
             TokenKind::Try => self.parse_try_statement(),
+            TokenKind::Switch => self.parse_switch_statement(),
             TokenKind::Break => {
                 self.advance()?;
                 self.consume_semicolon()?;
@@ -273,6 +278,54 @@ impl Parser {
             block,
             handler,
             finalizer,
+        })
+    }
+
+    fn parse_switch_statement(&mut self) -> JSResult<Statement> {
+        self.expect(&TokenKind::Switch, "Expected 'switch'")?;
+        self.expect(&TokenKind::LeftParen, "Expected '(' after 'switch'")?;
+        let discriminant = self.parse_expression()?;
+        self.expect(&TokenKind::RightParen, "Expected ')' after switch value")?;
+        self.expect(&TokenKind::LeftBrace, "Expected '{' after switch value")?;
+
+        let mut cases = Vec::new();
+        let mut has_default = false;
+        while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+            let test = if self.eat(&TokenKind::Case)? {
+                let test = self.parse_expression()?;
+                self.expect(&TokenKind::Colon, "Expected ':' after case value")?;
+                Some(test)
+            } else if self.eat(&TokenKind::Default)? {
+                if has_default {
+                    return Err(JSError::SyntaxError(
+                        "switch statement has more than one default".to_string(),
+                        self.current().span,
+                    ));
+                }
+                has_default = true;
+                self.expect(&TokenKind::Colon, "Expected ':' after default")?;
+                None
+            } else {
+                return Err(JSError::SyntaxError(
+                    "Expected 'case' or 'default' in switch".to_string(),
+                    self.current().span,
+                ));
+            };
+
+            let mut body = Vec::new();
+            while !self.check(&TokenKind::Case)
+                && !self.check(&TokenKind::Default)
+                && !self.check(&TokenKind::RightBrace)
+                && !self.is_at_end()
+            {
+                body.push(self.parse_statement()?);
+            }
+            cases.push((test, body));
+        }
+        self.expect(&TokenKind::RightBrace, "Expected '}' after switch")?;
+        Ok(Statement::Switch {
+            discriminant,
+            cases,
         })
     }
 
@@ -938,6 +991,9 @@ impl Parser {
             TokenKind::While => "while",
             TokenKind::Break => "break",
             TokenKind::Continue => "continue",
+            TokenKind::Switch => "switch",
+            TokenKind::Case => "case",
+            TokenKind::Default => "default",
             TokenKind::Class => "class",
             TokenKind::New => "new",
             TokenKind::This => "this",

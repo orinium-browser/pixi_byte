@@ -138,6 +138,28 @@ impl Statement {
                     }
                 }
             }
+            Statement::Switch {
+                discriminant,
+                cases,
+            } => {
+                println!("{prefix}{branch}Switch");
+                discriminant.dump_impl(next_prefix.clone(), cases.is_empty());
+                for (case_index, (test, body)) in cases.iter().enumerate() {
+                    let case_last = case_index + 1 == cases.len();
+                    if let Some(test) = test {
+                        println!("{next_prefix}{}Case", if case_last { "└─ " } else { "├─ " });
+                        test.dump_impl(next_prefix.clone(), body.is_empty());
+                    } else {
+                        println!(
+                            "{next_prefix}{}Default",
+                            if case_last { "└─ " } else { "├─ " }
+                        );
+                    }
+                    for (index, statement) in body.iter().enumerate() {
+                        statement.dump_impl(next_prefix.clone(), index + 1 == body.len());
+                    }
+                }
+            }
             Statement::Break => println!("{prefix}{branch}Break"),
             Statement::Continue => println!("{prefix}{branch}Continue"),
         }
