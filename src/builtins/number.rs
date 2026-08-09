@@ -23,6 +23,14 @@ fn number_constructor(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     ))
 }
 
+fn global_is_nan(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = args
+        .get(1)
+        .map(JSValue::to_number)
+        .unwrap_or(f64::NAN);
+    Ok(JSValue::Boolean(value.is_nan()))
+}
+
 fn number_to_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let value = receiver(&args, "toString")?;
     let radix = args.get(1).map(JSValue::to_number).unwrap_or(10.0) as u32;
@@ -63,6 +71,10 @@ fn number_value_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 
 /// Installs Number and its primitive prototype.
 pub fn install(global: &Rc<RefCell<JSObject>>) {
+    global
+        .borrow_mut()
+        .set("isNaN".to_string(), JSValue::NativeFunction(global_is_nan));
+
     let mut prototype = JSObject::new();
     prototype.set(
         "toString".to_string(),
