@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::{JSError, JSResult};
-use crate::value::jsobject::JSObject;
+use crate::value::jsobject::{JSObject, Property};
 use crate::value::JSValue;
 use crate::vm::VM;
 
@@ -71,9 +71,18 @@ fn number_value_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 
 /// Installs Number and its primitive prototype.
 pub fn install(global: &Rc<RefCell<JSObject>>) {
-    global
-        .borrow_mut()
-        .set("isNaN".to_string(), JSValue::NativeFunction(global_is_nan));
+    {
+        let mut global = global.borrow_mut();
+        global.set("isNaN".to_string(), JSValue::NativeFunction(global_is_nan));
+        global.define_property(
+            "Infinity".to_string(),
+            Property::read_only(JSValue::Number(f64::INFINITY)),
+        );
+        global.define_property(
+            "NaN".to_string(),
+            Property::read_only(JSValue::Number(f64::NAN)),
+        );
+    }
 
     let mut prototype = JSObject::new();
     prototype.set(
