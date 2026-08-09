@@ -9,10 +9,22 @@ use crate::value::jsobject::JSObject;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+fn object_static_arguments(vm: &crate::vm::VM, mut args: Vec<JSValue>) -> Vec<JSValue> {
+    let constructor = vm.global_object.borrow().get("Object");
+    if let (Some(JSValue::Object(receiver)), JSValue::Object(constructor)) =
+        (args.first(), constructor)
+        && Rc::ptr_eq(receiver, &constructor)
+    {
+        args.remove(0);
+    }
+    args
+}
+
 /// Object.create(proto[, properties])
 /// - `proto` must be object or null
 /// - If second arg present, it is treated as property descriptor object
-fn object_create(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
+fn object_create(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let mut args = object_static_arguments(vm, args);
     if args.is_empty() {
         return Err(JSError::TypeError(
             "Object.create: missing prototype argument".to_string(),
@@ -65,7 +77,8 @@ fn object_create(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JS
 
 /// Object.getPrototypeOf(obj)
 /// - returns the prototype object or null
-fn object_get_prototype_of(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
+fn object_get_prototype_of(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let mut args = object_static_arguments(vm, args);
     // args: [obj]
     if args.is_empty() {
         return Err(JSError::TypeError(
@@ -151,7 +164,8 @@ fn object_proto_set(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult
 }
 
 /// Object.setPrototypeOf(obj, proto)
-fn object_set_prototype_of(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
+fn object_set_prototype_of(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let mut args = object_static_arguments(vm, args);
     if args.len() < 2 {
         return Err(JSError::TypeError(
             "Object.setPrototypeOf: missing arguments".to_string(),
@@ -265,7 +279,8 @@ fn object_to_string(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult
 }
 
 /// Object.defineProperty(obj, prop, descriptor)
-fn object_define_property(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
+fn object_define_property(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let mut args = object_static_arguments(vm, args);
     if args.len() < 3 {
         return Err(JSError::TypeError(
             "Object.defineProperty: missing arguments".to_string(),
@@ -298,7 +313,8 @@ fn object_define_property(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JS
 }
 
 /// Object.preventExtensions(obj)
-fn object_prevent_extensions(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
+fn object_prevent_extensions(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let mut args = object_static_arguments(vm, args);
     if args.is_empty() {
         return Err(JSError::TypeError(
             "Object.preventExtensions: missing object".to_string(),
@@ -317,7 +333,8 @@ fn object_prevent_extensions(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) ->
 }
 
 /// Object.isExtensible(obj)
-fn object_is_extensible(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
+fn object_is_extensible(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let mut args = object_static_arguments(vm, args);
     if args.is_empty() {
         return Err(JSError::TypeError(
             "Object.isExtensible: missing object".to_string(),
@@ -333,7 +350,8 @@ fn object_is_extensible(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSRe
 }
 
 /// Object.seal(obj): make all properties non-configurable and prevent extensions
-fn object_seal(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
+fn object_seal(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let mut args = object_static_arguments(vm, args);
     if args.is_empty() {
         return Err(JSError::TypeError(
             "Object.seal: missing object".to_string(),
@@ -361,7 +379,8 @@ fn object_seal(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSVa
 }
 
 /// Object.freeze(obj): make all properties non-configurable and non-writable and prevent extensions
-fn object_freeze(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
+fn object_freeze(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let mut args = object_static_arguments(vm, args);
     if args.is_empty() {
         return Err(JSError::TypeError(
             "Object.freeze: missing object".to_string(),
@@ -391,9 +410,10 @@ fn object_freeze(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JS
 
 /// Object.getOwnPropertyDescriptor(obj, prop)
 fn object_get_own_property_descriptor(
-    _vm: &mut crate::vm::VM,
-    mut args: Vec<JSValue>,
+    vm: &mut crate::vm::VM,
+    args: Vec<JSValue>,
 ) -> JSResult<JSValue> {
+    let mut args = object_static_arguments(vm, args);
     if args.len() < 2 {
         return Err(JSError::TypeError(
             "Object.getOwnPropertyDescriptor: missing arguments".to_string(),
