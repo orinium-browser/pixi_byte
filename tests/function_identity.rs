@@ -32,3 +32,21 @@ fn bound_function_clones_retain_reference_identity() {
         .unwrap();
     assert_eq!(result, JSValue::Boolean(true));
 }
+
+#[test]
+fn repeated_closure_creation_produces_distinct_identities() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            function create() {
+                return function () {};
+            }
+            const first = create();
+            const second = create();
+            first !== second;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}

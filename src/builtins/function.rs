@@ -105,8 +105,8 @@ fn function_bind(
             );
             Ok(JSValue::BoundFunction(Box::new(bf)))
         }
-        JSValue::Function(_, _, _, _)
-        | JSValue::ArrowFunction(_, _, _, _)
+        JSValue::Function(..)
+        | JSValue::ArrowFunction(..)
         | JSValue::NativeFunction(_) => {
             // create bound function wrapper
             let bf = BoundFunctionData::new(func.clone(), this_arg, bound_args);

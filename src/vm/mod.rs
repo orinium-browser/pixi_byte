@@ -625,18 +625,24 @@ impl VM {
                 // 定数プールの関数オブジェクト（BytecodeChunk）をそのままプッシュ
                 let func_const = chunk.constants[*idx].clone();
                 match func_const {
-                    JSValue::Function(func_chunk, params, _maybe_env, name_opt) => {
+                    JSValue::Function(func_chunk, params, _maybe_env, name_opt, _) => {
                         let captured = Some(self.current_env());
-                        let func =
-                            JSValue::Function(func_chunk, params, captured, name_opt.clone());
+                        let func = JSValue::Function(
+                            func_chunk,
+                            params,
+                            captured,
+                            name_opt.clone(),
+                            crate::value::jsvalue::next_function_identity(),
+                        );
                         self.stack.push(func);
                     }
-                    JSValue::ArrowFunction(func_chunk, params, _maybe_env, _maybe_this) => {
+                    JSValue::ArrowFunction(func_chunk, params, _maybe_env, _maybe_this, _) => {
                         let func = JSValue::ArrowFunction(
                             func_chunk,
                             params,
                             Some(self.current_env()),
                             Some(Box::new(self.current_frame().this.clone())),
+                            crate::value::jsvalue::next_function_identity(),
                         );
                         self.stack.push(func);
                     }
@@ -898,13 +904,13 @@ impl VM {
                 f(self, all)
             }
 
-            JSValue::Function(chunk, params, env, name) => {
+            JSValue::Function(chunk, params, env, name, _) => {
                 let env = self.create_function_env(callee_clone, env, params, args, name, true);
 
                 self.with_call_frame(env, this, chunk)
             }
 
-            JSValue::ArrowFunction(chunk, params, env, lexical_this) => {
+            JSValue::ArrowFunction(chunk, params, env, lexical_this, _) => {
                 let env = self.create_function_env(callee_clone, env, params, args, None, false);
                 let this = lexical_this.map(|this| *this).unwrap_or(this);
                 self.with_call_frame(env, this, chunk)

@@ -307,6 +307,7 @@ impl Compiler {
                     params.clone(),
                     None,
                     Some(name.clone()),
+                    0,
                 ));
                 self.chunk.emit(Opcode::CreateFunction(idx));
 
@@ -1018,14 +1019,15 @@ impl Compiler {
                 // 現在のチャンクに関数オブジェクト（チャンク + params）を追加
                 // 関数式の場合は name があれば保持する
                 let func_value =
-                    JSValue::Function(function_chunk, params.clone(), None, name.clone());
+                    JSValue::Function(function_chunk, params.clone(), None, name.clone(), 0);
                 let idx = self.chunk.add_constant(func_value);
                 self.chunk.emit(Opcode::CreateFunction(idx));
             }
             Expression::ArrowFunction { params, body } => {
                 let program = Program { body };
                 let function_chunk = Compiler::new().compile(program)?;
-                let func_value = JSValue::ArrowFunction(function_chunk, params.clone(), None, None);
+                let func_value =
+                    JSValue::ArrowFunction(function_chunk, params.clone(), None, None, 0);
                 let idx = self.chunk.add_constant(func_value);
                 self.chunk.emit(Opcode::CreateFunction(idx));
             }

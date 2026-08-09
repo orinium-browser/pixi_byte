@@ -12,6 +12,11 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_BOUND_FUNCTION_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_FUNCTION_ID: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) fn next_function_identity() -> u64 {
+    NEXT_FUNCTION_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 /// ネイティブ関数の型エイリアス。
 /// Rust 側で実装された組み込み関数はこのシグネチャを持ちます。
@@ -43,6 +48,7 @@ pub enum JSValue {
         Vec<String>,
         Option<Rc<RefCell<Environment>>>,
         Option<String>,
+        u64,
     ),
     /// Arrow function with a captured lexical environment and lexical `this`.
     ArrowFunction(
@@ -50,6 +56,7 @@ pub enum JSValue {
         Vec<String>,
         Option<Rc<RefCell<Environment>>>,
         Option<Box<JSValue>>,
+        u64,
     ),
     /// ネイティブ（Rust側）で実装された関数を表す。テストなどでクロージャを渡すために使用する。
     NativeFunction(NativeFunctionType),
@@ -102,8 +109,8 @@ impl JSValue {
             }
             JSValue::String(s) => s.clone(),
             JSValue::Object(_) => "[object Object]".to_string(),
-            JSValue::Function(_, _, _, _) => "[function]".to_string(),
-            JSValue::ArrowFunction(_, _, _, _) => "[function]".to_string(),
+            JSValue::Function(..) => "[function]".to_string(),
+            JSValue::ArrowFunction(..) => "[function]".to_string(),
             JSValue::NativeFunction(_) => "[native function]".to_string(),
             JSValue::BoundFunction(_) => "[bound function]".to_string(),
         }
@@ -125,8 +132,8 @@ impl JSValue {
                 trimmed.parse().unwrap_or(f64::NAN)
             }
             JSValue::Object(_) => f64::NAN, // オブジェクトはNaN（簡易）
-            JSValue::Function(_, _, _, _) => f64::NAN,
-            JSValue::ArrowFunction(_, _, _, _) => f64::NAN,
+            JSValue::Function(..) => f64::NAN,
+            JSValue::ArrowFunction(..) => f64::NAN,
             JSValue::NativeFunction(_) => f64::NAN,
             JSValue::BoundFunction(data) => data.target.to_number(),
         }
@@ -140,8 +147,8 @@ impl JSValue {
             JSValue::Number(n) => !n.is_nan() && *n != 0.0,
             JSValue::String(s) => !s.is_empty(),
             JSValue::Object(_) => true, // オブジェクトは常にtrue
-            JSValue::Function(_, _, _, _) => true,
-            JSValue::ArrowFunction(_, _, _, _) => true,
+            JSValue::Function(..) => true,
+            JSValue::ArrowFunction(..) => true,
             JSValue::NativeFunction(_) => true,
             JSValue::BoundFunction(_) => true,
         }
@@ -156,8 +163,8 @@ impl JSValue {
             JSValue::Number(_) => "number",
             JSValue::String(_) => "string",
             JSValue::Object(_) => "object",
-            JSValue::Function(_, _, _, _) => "function",
-            JSValue::ArrowFunction(_, _, _, _) => "function",
+            JSValue::Function(..) => "function",
+            JSValue::ArrowFunction(..) => "function",
             JSValue::NativeFunction(_) => "function",
             JSValue::BoundFunction(_) => "function",
         }
@@ -181,9 +188,13 @@ impl JSValue {
                 // オブジェクトは参照が同じ場合のみtrue
                 Rc::ptr_eq(a, b)
             }
-            (JSValue::Function(a, ..), JSValue::Function(b, ..))
-            | (JSValue::ArrowFunction(a, ..), JSValue::ArrowFunction(b, ..)) => {
-                a.identity == b.identity
+            (JSValue::Function(a, _, _, _, a_id), JSValue::Function(b, _, _, _, b_id))
+            | (
+                JSValue::ArrowFunction(a, _, _, _, a_id),
+                JSValue::ArrowFunction(b, _, _, _, b_id),
+            ) => {
+                (*a_id != 0 && a_id == b_id)
+                    || (*a_id == 0 && *b_id == 0 && a.identity == b.identity)
             }
             (JSValue::NativeFunction(a), JSValue::NativeFunction(b)) => {
                 std::ptr::fn_addr_eq(*a, *b)
@@ -236,8 +247,8 @@ impl fmt::Debug for JSValue {
             JSValue::Number(n) => write!(f, "Number({})", n),
             JSValue::String(s) => write!(f, "String(\"{}\")", s),
             JSValue::Object(_) => write!(f, "Object(...)"),
-            JSValue::Function(_, _, _, _) => write!(f, "Function(...)"),
-            JSValue::ArrowFunction(_, _, _, _) => write!(f, "ArrowFunction(...)"),
+            JSValue::Function(..) => write!(f, "Function(...)"),
+            JSValue::ArrowFunction(..) => write!(f, "ArrowFunction(...)"),
             JSValue::NativeFunction(_) => write!(f, "NativeFunction(...)"),
             JSValue::BoundFunction(_) => write!(f, "BoundFunction(...)"),
         }
@@ -253,17 +264,19 @@ impl Clone for JSValue {
             JSValue::Number(n) => JSValue::Number(*n),
             JSValue::String(s) => JSValue::String(s.clone()),
             JSValue::Object(o) => JSValue::Object(o.clone()),
-            JSValue::Function(chunk, params, env_opt, name_opt) => JSValue::Function(
+            JSValue::Function(chunk, params, env_opt, name_opt, identity) => JSValue::Function(
                 chunk.clone(),
                 params.clone(),
                 env_opt.clone(),
                 name_opt.clone(),
+                *identity,
             ),
-            JSValue::ArrowFunction(chunk, params, env_opt, this_opt) => JSValue::ArrowFunction(
+            JSValue::ArrowFunction(chunk, params, env_opt, this_opt, identity) => JSValue::ArrowFunction(
                 chunk.clone(),
                 params.clone(),
                 env_opt.clone(),
                 this_opt.clone(),
+                *identity,
             ),
             JSValue::NativeFunction(f) => JSValue::NativeFunction(*f),
             JSValue::BoundFunction(b) => JSValue::BoundFunction(Box::new((**b).clone())),
