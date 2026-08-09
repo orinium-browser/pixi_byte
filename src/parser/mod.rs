@@ -135,6 +135,7 @@ pub enum BinaryOp {
     Gt,
     LtEq,
     GtEq,
+    In,
     And,
     Or,
     BitAnd,
@@ -927,6 +928,7 @@ fn precedence(kind: &TokenKind) -> Option<(u8, BinaryOp)> {
         TokenKind::Gt => Some((4, BinaryOp::Gt)),
         TokenKind::LtEq => Some((4, BinaryOp::LtEq)),
         TokenKind::GtEq => Some((4, BinaryOp::GtEq)),
+        TokenKind::In => Some((4, BinaryOp::In)),
 
         // additive
         TokenKind::Plus => Some((5, BinaryOp::Add)),

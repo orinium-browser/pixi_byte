@@ -194,6 +194,17 @@ impl VM {
             Opcode::Gt => self.numeric_comparison_op(|a, b| a > b)?,
             Opcode::LtEq => self.numeric_comparison_op(|a, b| a <= b)?,
             Opcode::GtEq => self.numeric_comparison_op(|a, b| a >= b)?,
+            Opcode::In => {
+                let object = self.pop()?;
+                let key = self.pop()?.to_string();
+                let JSValue::Object(object) = object else {
+                    return Err(JSError::TypeError(
+                        "right-hand side of 'in' is not an object".to_string(),
+                    ));
+                };
+                let contains = object.borrow().has_property(&key);
+                self.stack.push(JSValue::Boolean(contains));
+            }
 
             // 論理演算
             Opcode::And => {
