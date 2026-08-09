@@ -279,6 +279,54 @@ impl VM {
                 let contains = object.borrow().has_property(&key);
                 self.stack.push(JSValue::Boolean(contains));
             }
+            Opcode::Instanceof => {
+                let constructor = self.pop()?;
+                let value = self.pop()?;
+                let JSValue::Object(constructor) = &constructor else {
+                    return Err(JSError::TypeError(
+                        "right-hand side of 'instanceof' is not an object".to_string(),
+                    ));
+                };
+
+                let host_has_instance = constructor
+                    .borrow()
+                    .get(crate::value::jsobject::HOST_HAS_INSTANCE);
+                if matches!(
+                    &host_has_instance,
+                    JSValue::Function(..)
+                        | JSValue::ArrowFunction(..)
+                        | JSValue::NativeFunction(..)
+                        | JSValue::BoundFunction(..)
+                ) {
+                    let result = self.call(
+                        host_has_instance,
+                        JSValue::Object(Rc::clone(constructor)),
+                        vec![value],
+                    )?;
+                    self.stack.push(JSValue::Boolean(result.to_boolean()));
+                    return Ok(ControlFlow::Continue);
+                }
+
+                let JSValue::Object(target_prototype) = constructor.borrow().get("prototype") else {
+                    return Err(JSError::TypeError(
+                        "constructor has a non-object prototype".to_string(),
+                    ));
+                };
+                let JSValue::Object(object) = value else {
+                    self.stack.push(JSValue::Boolean(false));
+                    return Ok(ControlFlow::Continue);
+                };
+                let mut prototype = object.borrow().get_prototype();
+                let mut matches = false;
+                while let Some(current) = prototype {
+                    if Rc::ptr_eq(&current, &target_prototype) {
+                        matches = true;
+                        break;
+                    }
+                    prototype = current.borrow().get_prototype();
+                }
+                self.stack.push(JSValue::Boolean(matches));
+            }
 
             // 論理演算
             Opcode::And => {

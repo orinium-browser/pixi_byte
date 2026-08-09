@@ -37,6 +37,7 @@ pub enum Opcode {
     LtEq,
     GtEq,
     In,
+    Instanceof,
 
     // 論理演算
     And,
@@ -620,6 +621,7 @@ impl Compiler {
                     BinaryOp::LtEq => Opcode::LtEq,
                     BinaryOp::GtEq => Opcode::GtEq,
                     BinaryOp::In => Opcode::In,
+                    BinaryOp::Instanceof => Opcode::Instanceof,
                     BinaryOp::And | BinaryOp::Or => unreachable!(),
                     BinaryOp::BitAnd => Opcode::BitAnd,
                     BinaryOp::BitOr => Opcode::BitOr,

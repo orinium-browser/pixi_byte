@@ -13,6 +13,9 @@ pub const HOST_GET_PROPERTY: &str = "__host_get_property__";
 /// Property name used by host objects to handle otherwise missing writes.
 pub const HOST_SET_PROPERTY: &str = "__host_set_property__";
 
+/// Property name used by host constructors to implement `instanceof`.
+pub const HOST_HAS_INSTANCE: &str = "__host_has_instance__";
+
 /// JavaScript オブジェクトの内部表現
 #[derive(Debug, Clone)]
 pub struct JSObject {
