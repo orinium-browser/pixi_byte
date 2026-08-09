@@ -86,6 +86,26 @@ impl Statement {
                     stmt.dump_impl(next_prefix.clone(), index + 1 == body.len());
                 }
             }
+            Statement::For {
+                init,
+                test,
+                update,
+                body,
+            } => {
+                println!("{prefix}{branch}For");
+                if let Some(init) = init {
+                    init.dump_impl(next_prefix.clone(), false);
+                }
+                if let Some(test) = test {
+                    test.dump_impl(next_prefix.clone(), false);
+                }
+                for update in update {
+                    update.dump_impl(next_prefix.clone(), body.is_empty());
+                }
+                for (index, stmt) in body.iter().enumerate() {
+                    stmt.dump_impl(next_prefix.clone(), index + 1 == body.len());
+                }
+            }
             Statement::Break => println!("{prefix}{branch}Break"),
             Statement::Continue => println!("{prefix}{branch}Continue"),
         }

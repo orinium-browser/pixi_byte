@@ -33,6 +33,12 @@ pub enum Statement {
         test: Expression,
         body: Vec<Statement>,
     },
+    For {
+        init: Option<Box<Statement>>,
+        test: Option<Expression>,
+        update: Vec<Expression>,
+        body: Vec<Statement>,
+    },
     Break,
     Continue,
     // TODO: 他の文を追加
@@ -196,6 +202,7 @@ impl Parser {
             TokenKind::Function => self.parse_function_declaration(),
             TokenKind::If => self.parse_if_statement(),
             TokenKind::While => self.parse_while_statement(),
+            TokenKind::For => self.parse_for_statement(),
             TokenKind::Break => {
                 self.advance()?;
                 self.consume_semicolon()?;
@@ -225,6 +232,55 @@ impl Parser {
             vec![self.parse_statement()?]
         };
         Ok(Statement::While { test, body })
+    }
+
+    fn parse_for_statement(&mut self) -> JSResult<Statement> {
+        self.expect(&TokenKind::For, "Expected 'for'")?;
+        self.expect(&TokenKind::LeftParen, "Expected '(' after 'for'")?;
+
+        let init = if self.eat(&TokenKind::Semicolon)? {
+            None
+        } else if matches!(self.current().kind, TokenKind::Var | TokenKind::Let | TokenKind::Const)
+        {
+            let kind = match self.current().kind {
+                TokenKind::Var => VarKind::Var,
+                TokenKind::Let => VarKind::Let,
+                TokenKind::Const => VarKind::Const,
+                _ => unreachable!(),
+            };
+            Some(Box::new(self.parse_var_declaration(kind)?))
+        } else {
+            let expression = self.parse_expression()?;
+            self.expect(&TokenKind::Semicolon, "Expected ';' after for initializer")?;
+            Some(Box::new(Statement::Expression(expression)))
+        };
+
+        let test = if self.eat(&TokenKind::Semicolon)? {
+            None
+        } else {
+            let expression = self.parse_expression()?;
+            self.expect(&TokenKind::Semicolon, "Expected ';' after for condition")?;
+            Some(expression)
+        };
+        let mut update = Vec::new();
+        while !self.check(&TokenKind::RightParen) {
+            update.push(self.parse_assignment()?);
+            if !self.eat(&TokenKind::Comma)? {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RightParen, "Expected ')' after for clauses")?;
+        let body = if self.check(&TokenKind::LeftBrace) {
+            self.parse_block()?
+        } else {
+            vec![self.parse_statement()?]
+        };
+        Ok(Statement::For {
+            init,
+            test,
+            update,
+            body,
+        })
     }
 
     fn parse_if_statement(&mut self) -> JSResult<Statement> {

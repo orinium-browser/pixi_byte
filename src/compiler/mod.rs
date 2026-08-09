@@ -156,7 +156,7 @@ pub struct Compiler {
 }
 
 struct LoopContext {
-    continue_target: usize,
+    continue_jumps: Vec<usize>,
     break_jumps: Vec<usize>,
 }
 
@@ -265,10 +265,66 @@ impl Compiler {
                 let exit_jump = self.chunk.code.len();
                 self.chunk.emit(Opcode::JumpIfFalse(usize::MAX));
                 self.loops.push(LoopContext {
-                    continue_target: loop_start,
+                    continue_jumps: Vec::new(),
                     break_jumps: Vec::new(),
                 });
                 self.compile_statements(body, false)?;
+                let continue_jumps = {
+                    let loop_context = self.loops.last_mut().expect("loop context must exist");
+                    std::mem::take(&mut loop_context.continue_jumps)
+                };
+                for continue_jump in continue_jumps {
+                    self.patch_jump(continue_jump, loop_start);
+                }
+                self.chunk.emit(Opcode::Jump(loop_start));
+
+                let exit_target = self.chunk.code.len();
+                self.patch_jump(exit_jump, exit_target);
+                let loop_context = self.loops.pop().expect("loop context must exist");
+                for break_jump in loop_context.break_jumps {
+                    self.patch_jump(break_jump, exit_target);
+                }
+                if is_last {
+                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    self.chunk.emit(Opcode::LoadConst(undefined));
+                }
+            }
+            Statement::For {
+                init,
+                test,
+                update,
+                body,
+            } => {
+                if let Some(init) = init {
+                    self.compile_statement(*init, false)?;
+                }
+                let loop_start = self.chunk.code.len();
+                if let Some(test) = test {
+                    self.compile_expression(test)?;
+                } else {
+                    let truthy = self.chunk.add_constant(JSValue::Boolean(true));
+                    self.chunk.emit(Opcode::LoadConst(truthy));
+                }
+                let exit_jump = self.chunk.code.len();
+                self.chunk.emit(Opcode::JumpIfFalse(usize::MAX));
+                self.loops.push(LoopContext {
+                    continue_jumps: Vec::new(),
+                    break_jumps: Vec::new(),
+                });
+                self.compile_statements(body, false)?;
+
+                let update_start = self.chunk.code.len();
+                let continue_jumps = {
+                    let loop_context = self.loops.last_mut().expect("loop context must exist");
+                    std::mem::take(&mut loop_context.continue_jumps)
+                };
+                for continue_jump in continue_jumps {
+                    self.patch_jump(continue_jump, update_start);
+                }
+                for update in update {
+                    self.compile_expression(update)?;
+                    self.chunk.emit(Opcode::Pop);
+                }
                 self.chunk.emit(Opcode::Jump(loop_start));
 
                 let exit_target = self.chunk.code.len();
@@ -293,12 +349,14 @@ impl Compiler {
                 loop_context.break_jumps.push(jump);
             }
             Statement::Continue => {
-                let Some(loop_context) = self.loops.last() else {
+                let jump = self.chunk.code.len();
+                self.chunk.emit(Opcode::Jump(usize::MAX));
+                let Some(loop_context) = self.loops.last_mut() else {
                     return Err(JSError::InternalError(
                         "continue used outside of a loop".to_string(),
                     ));
                 };
-                self.chunk.emit(Opcode::Jump(loop_context.continue_target));
+                loop_context.continue_jumps.push(jump);
             }
         }
         Ok(())
