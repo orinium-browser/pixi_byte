@@ -9,6 +9,27 @@ use crate::value::jsobject::JSObject;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+fn object_constructor(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    if let Some(value @ (JSValue::Object(_) | JSValue::Function(..) | JSValue::ArrowFunction(..))) =
+        args.get(1)
+    {
+        return Ok(value.clone());
+    }
+    if let Some(JSValue::Object(this)) = args.first() {
+        return Ok(JSValue::Object(Rc::clone(this)));
+    }
+    let prototype = match vm.global_object.borrow().get("Object") {
+        JSValue::Object(constructor) => match constructor.borrow().get("prototype") {
+            JSValue::Object(prototype) => Some(prototype),
+            _ => None,
+        },
+        _ => None,
+    };
+    Ok(JSValue::Object(Rc::new(RefCell::new(
+        JSObject::with_prototype(prototype),
+    ))))
+}
+
 fn object_static_arguments(vm: &crate::vm::VM, mut args: Vec<JSValue>) -> Vec<JSValue> {
     let constructor = vm.global_object.borrow().get("Object");
     let has_receiver = match (args.first(), constructor) {
@@ -743,6 +764,14 @@ fn object_property_is_enumerable(
 /// グローバルオブジェクトに Object 組み込みをインストールする
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut obj = JSObject::new();
+    obj.set(
+        "__call__".to_string(),
+        JSValue::NativeFunction(object_constructor),
+    );
+    obj.set(
+        "__construct__".to_string(),
+        JSValue::NativeFunction(object_constructor),
+    );
 
     // Create Object.prototype and attach methods (e.g., hasOwnProperty)
     let mut proto = JSObject::new();
@@ -826,15 +855,23 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     obj.set("is".to_string(), JSValue::NativeFunction(object_is));
 
     // Set prototype property on constructor-like object
-    obj.set(
-        "prototype".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(proto))),
+    let proto = Rc::new(RefCell::new(proto));
+    obj.set("prototype".to_string(), JSValue::Object(Rc::clone(&proto)));
+    let obj = Rc::new(RefCell::new(obj));
+    proto.borrow_mut().define_property(
+        "constructor".to_string(),
+        crate::value::jsobject::Property {
+            value: JSValue::Object(Rc::clone(&obj)),
+            enumerable: false,
+            writable: true,
+            configurable: true,
+            getter: None,
+            setter: None,
+        },
     );
-
-    global.borrow_mut().set(
-        "Object".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(obj))),
-    );
+    global
+        .borrow_mut()
+        .set("Object".to_string(), JSValue::Object(obj));
 }
 
 fn builtin_method(function: crate::NativeFunctionType) -> crate::value::jsobject::Property {

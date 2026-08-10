@@ -30,3 +30,18 @@ fn constructed_instances_inherit_object_prototype_methods() {
         .unwrap();
     assert_eq!(result, JSValue::Boolean(true));
 }
+
+#[test]
+fn object_prototype_exposes_a_constructible_constructor() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const value = {};
+            const clone = new value.constructor();
+            value.constructor === Object && clone.constructor === Object;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}
