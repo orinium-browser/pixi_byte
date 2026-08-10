@@ -767,19 +767,7 @@ impl VM {
             Opcode::ArrayExtend => {
                 let iterable = self.pop()?;
                 let array = self.pop()?;
-                let values = match iterable {
-                    JSValue::Object(object) => {
-                        let length = object.borrow().get("length").to_number() as usize;
-                        (0..length)
-                            .map(|index| object.borrow().get(&index.to_string()))
-                            .collect::<Vec<_>>()
-                    }
-                    JSValue::String(value) => value
-                        .chars()
-                        .map(|character| JSValue::String(character.to_string()))
-                        .collect(),
-                    _ => Vec::new(),
-                };
+                let values = self.collect_iterable_values(iterable)?;
                 let JSValue::Object(array_ref) = &array else {
                     return Err(JSError::TypeError("ArrayExtend: not an array".to_string()));
                 };
@@ -1771,6 +1759,39 @@ impl VM {
             return Ok(indexed_iterator(value));
         }
         Err(JSError::TypeError("value is not iterable".into()))
+    }
+
+    fn collect_iterable_values(&mut self, value: JSValue) -> JSResult<Vec<JSValue>> {
+        let iterator = self.get_iterator(value)?;
+        let JSValue::Object(iterator_object) = &iterator else {
+            unreachable!("get_iterator must return an object");
+        };
+        let mut values = Vec::new();
+        loop {
+            let fast_step = indexed_iterator_step(iterator_object)?.or(
+                crate::builtins::collection::iterator_step(self, iterator_object)?,
+            );
+            if let Some(value) = fast_step {
+                let Some(value) = value else {
+                    break;
+                };
+                values.push(value);
+                continue;
+            }
+
+            let next = iterator_object.borrow().get("next");
+            let result = self.call(next, iterator.clone(), Vec::new())?;
+            let JSValue::Object(result) = result else {
+                return Err(JSError::TypeError(
+                    "iterator result is not an object".into(),
+                ));
+            };
+            if result.borrow().get("done").to_boolean() {
+                break;
+            }
+            values.push(result.borrow().get("value"));
+        }
+        Ok(values)
     }
 }
 

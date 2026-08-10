@@ -142,6 +142,15 @@ fn for_of_consumes_set_values() {
 }
 
 #[test]
+fn array_spread_consumes_set_values() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(r#"[...new Set(["a", "b", "a"])].join("");"#)
+        .unwrap();
+    assert_eq!(result, JSValue::String("ab".to_string()));
+}
+
+#[test]
 fn map_iterators_expose_keys_values_and_entries() {
     let mut engine = JSEngine::new();
     let result = engine
