@@ -5,6 +5,7 @@ use std::fmt;
 pub enum TokenKind {
     // リテラル
     NumberLiteral(String),
+    BigIntLiteral(String),
     String(String),
     TemplateLiteral {
         strings: Vec<String>,

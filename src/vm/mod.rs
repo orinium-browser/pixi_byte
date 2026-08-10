@@ -9,6 +9,8 @@ use crate::error::{JSError, JSResult};
 use crate::runtime::{CallFrame, Environment};
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
+use num_bigint::BigInt;
+use num_traits::ToPrimitive;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -18,6 +20,24 @@ struct Job {
     callback: JSValue,
     this: JSValue,
     arguments: Vec<JSValue>,
+}
+
+#[derive(Clone, Copy)]
+enum ArithmeticOp {
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Power,
+}
+
+#[derive(Clone, Copy)]
+enum BitwiseOp {
+    And,
+    Or,
+    Xor,
+    LeftShift,
+    RightShift,
 }
 
 /// 仮想マシン
@@ -366,27 +386,20 @@ impl VM {
             }
 
             // 算術演算
-            Opcode::Add => self.binary_op(|a, b| {
-                // JavaScriptの加算は文字列連結も含む
-                match (&a, &b) {
-                    (JSValue::String(s1), JSValue::String(s2)) => {
-                        JSValue::String(format!("{}{}", s1, s2))
-                    }
-                    (JSValue::String(s), _) => JSValue::String(format!("{}{}", s, b)),
-                    (_, JSValue::String(s)) => JSValue::String(format!("{}{}", a, s)),
-                    _ => JSValue::Number(a.to_number() + b.to_number()),
-                }
-            })?,
-            Opcode::Sub => self.binary_numeric_op(|a, b| a - b)?,
-            Opcode::Mul => self.binary_numeric_op(|a, b| a * b)?,
-            Opcode::Div => self.binary_numeric_op(|a, b| a / b)?,
-            Opcode::Mod => self.binary_numeric_op(|a, b| a % b)?,
-            Opcode::Power => self.binary_numeric_op(|a, b| a.powf(b))?,
+            Opcode::Add => self.add_op()?,
+            Opcode::Sub => self.binary_arithmetic_op(ArithmeticOp::Sub)?,
+            Opcode::Mul => self.binary_arithmetic_op(ArithmeticOp::Mul)?,
+            Opcode::Div => self.binary_arithmetic_op(ArithmeticOp::Div)?,
+            Opcode::Mod => self.binary_arithmetic_op(ArithmeticOp::Mod)?,
+            Opcode::Power => self.binary_arithmetic_op(ArithmeticOp::Power)?,
 
             // 単項演算
             Opcode::Neg => {
                 let value = self.pop()?;
-                self.stack.push(JSValue::Number(-value.to_number()));
+                self.stack.push(match value {
+                    JSValue::BigInt(value) => JSValue::BigInt(-value),
+                    value => JSValue::Number(-value.to_number()),
+                });
             }
             Opcode::Not => {
                 let value = self.pop()?;
@@ -394,8 +407,26 @@ impl VM {
             }
             Opcode::BitNot => {
                 let value = self.pop()?;
-                let n = to_int32(value.to_number());
-                self.stack.push(JSValue::Number((!n) as f64));
+                self.stack.push(match value {
+                    JSValue::BigInt(value) => JSValue::BigInt(!value),
+                    value => JSValue::Number((!to_int32(value.to_number())) as f64),
+                });
+            }
+            Opcode::Increment | Opcode::Decrement => {
+                let value = self.pop()?;
+                let increment = matches!(opcode, Opcode::Increment);
+                self.stack.push(match value {
+                    JSValue::BigInt(value) => JSValue::BigInt(if increment {
+                        value + BigInt::from(1)
+                    } else {
+                        value - BigInt::from(1)
+                    }),
+                    value => JSValue::Number(if increment {
+                        value.to_number() + 1.0
+                    } else {
+                        value.to_number() - 1.0
+                    }),
+                });
             }
 
             // 比較演算
@@ -403,10 +434,10 @@ impl VM {
             Opcode::NotEq => self.comparison_op(|a, b| !a.abstract_equals(b))?,
             Opcode::StrictEq => self.comparison_op(|a, b| a.strict_equals(b))?,
             Opcode::StrictNotEq => self.comparison_op(|a, b| !a.strict_equals(b))?,
-            Opcode::Lt => self.numeric_comparison_op(|a, b| a < b)?,
-            Opcode::Gt => self.numeric_comparison_op(|a, b| a > b)?,
-            Opcode::LtEq => self.numeric_comparison_op(|a, b| a <= b)?,
-            Opcode::GtEq => self.numeric_comparison_op(|a, b| a >= b)?,
+            Opcode::Lt => self.numeric_comparison_op(|o| o.is_lt())?,
+            Opcode::Gt => self.numeric_comparison_op(|o| o.is_gt())?,
+            Opcode::LtEq => self.numeric_comparison_op(|o| o.is_le())?,
+            Opcode::GtEq => self.numeric_comparison_op(|o| o.is_ge())?,
             Opcode::In => {
                 let object = self.pop()?;
                 let key = self.pop()?.to_string();
@@ -454,12 +485,31 @@ impl VM {
                     return Ok(ControlFlow::Continue);
                 }
 
+                let regexp_constructor = self.global_object.borrow().get("RegExp");
+                if let JSValue::Object(regexp_constructor) = regexp_constructor
+                    && Rc::ptr_eq(&constructor_object, &regexp_constructor)
+                {
+                    let is_regexp = matches!(
+                        &value,
+                        JSValue::Object(object) if crate::builtins::regexp::is_regexp(object)
+                    );
+                    self.stack.push(JSValue::Boolean(is_regexp));
+                    return Ok(ControlFlow::Continue);
+                }
+
                 let JSValue::Object(target_prototype) =
                     constructor_object.borrow().get("prototype")
                 else {
-                    return Err(JSError::TypeError(
-                        "constructor has a non-object prototype".to_string(),
-                    ));
+                    let keys = constructor_object.borrow().keys();
+                    let stack = self
+                        .frames
+                        .iter()
+                        .filter_map(|frame| frame.function_name.as_deref())
+                        .collect::<Vec<_>>()
+                        .join(" -> ");
+                    return Err(JSError::TypeError(format!(
+                        "constructor has a non-object prototype (own properties: {keys:?}, JS stack: {stack})"
+                    )));
                 };
                 let JSValue::Object(object) = value else {
                     self.stack.push(JSValue::Boolean(false));
@@ -500,14 +550,19 @@ impl VM {
             }
 
             // ビット演算
-            Opcode::BitAnd => self.bitwise_op(|a, b| a & b)?,
-            Opcode::BitOr => self.bitwise_op(|a, b| a | b)?,
-            Opcode::BitXor => self.bitwise_op(|a, b| a ^ b)?,
-            Opcode::LeftShift => self.bitwise_op(|a, b| a << (b & 0x1f))?,
-            Opcode::RightShift => self.bitwise_op(|a, b| a >> (b & 0x1f))?,
+            Opcode::BitAnd => self.bitwise_op(BitwiseOp::And)?,
+            Opcode::BitOr => self.bitwise_op(BitwiseOp::Or)?,
+            Opcode::BitXor => self.bitwise_op(BitwiseOp::Xor)?,
+            Opcode::LeftShift => self.bitwise_op(BitwiseOp::LeftShift)?,
+            Opcode::RightShift => self.bitwise_op(BitwiseOp::RightShift)?,
             Opcode::UnsignedRightShift => {
                 let b = self.pop()?;
                 let a = self.pop()?;
+                if matches!(a, JSValue::BigInt(_)) || matches!(b, JSValue::BigInt(_)) {
+                    return Err(JSError::TypeError(
+                        "BigInts have no unsigned right shift".into(),
+                    ));
+                }
                 let a_u32 = to_uint32(a.to_number());
                 let b_u32 = to_uint32(b.to_number());
                 self.stack
@@ -586,7 +641,8 @@ impl VM {
                             if object.has_property(&key_str) {
                                 object.get(&key_str)
                             } else {
-                                self.object_prototype.borrow().get(&key_str)
+                                drop(object);
+                                self.object_fallback_property(obj_ref, &key_str)
                             }
                         };
 
@@ -1021,7 +1077,7 @@ impl VM {
                                     vec![JSValue::String(key.clone())],
                                 )?
                             } else {
-                                self.object_prototype.borrow().get(&key)
+                                self.object_fallback_property(obj_ref, &key)
                             }
                         }
                     }
@@ -1064,9 +1120,15 @@ impl VM {
                         | JSValue::BoundFunction(..)
                         | JSValue::Object(..)
                 ) {
+                    let stack = self
+                        .frames
+                        .iter()
+                        .filter_map(|frame| frame.function_name.as_deref())
+                        .collect::<Vec<_>>()
+                        .join(" -> ");
                     return Err(JSError::TypeError(format!(
-                        "property '{key}' is not callable (found {})",
-                        method.type_of()
+                        "property '{key}' is not callable (found {}, JS stack: {stack})",
+                        method.type_of(),
                     )));
                 }
 
@@ -1182,6 +1244,28 @@ impl VM {
                 };
                 self.stack.push(self.array_from_values(keys));
             }
+            Opcode::GetIterator => {
+                let value = self.pop()?;
+                let iterator = self.get_iterator(value)?;
+                self.stack.push(iterator);
+            }
+            Opcode::IteratorNext(exit_target) => {
+                let iterator = self.pop()?;
+                let JSValue::Object(iterator_object) = &iterator else {
+                    return Err(JSError::TypeError("iterator is not an object".into()));
+                };
+                let next = iterator_object.borrow().get("next");
+                let result = self.call(next, iterator.clone(), Vec::new())?;
+                let JSValue::Object(result) = result else {
+                    return Err(JSError::TypeError(
+                        "iterator result is not an object".into(),
+                    ));
+                };
+                if result.borrow().get("done").to_boolean() {
+                    return Ok(ControlFlow::Jump(*exit_target));
+                }
+                self.stack.push(result.borrow().get("value"));
+            }
             Opcode::JumpIfTrue(offset) => {
                 let condition = self.pop()?;
                 if condition.to_boolean() {
@@ -1261,17 +1345,29 @@ impl VM {
         key: JSValue,
         value: JSValue,
     ) -> JSResult<()> {
+        let key_string = key.to_string();
         let object_ref = match object {
             JSValue::Object(object_ref) => Some(Rc::clone(object_ref)),
             JSValue::Function(..) | JSValue::ArrowFunction(..) => self.user_function_object(object),
             _ => None,
         };
         let Some(object_ref) = object_ref else {
-            return Err(JSError::TypeError(
-                "Cannot set property on non-object".to_string(),
-            ));
+            let stack = self
+                .frames
+                .iter()
+                .filter_map(|frame| frame.function_name.as_deref())
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            let stack = if stack.is_empty() {
+                String::new()
+            } else {
+                format!(" (JS stack: {stack})")
+            };
+            return Err(JSError::TypeError(format!(
+                "Cannot set property '{key_string}' on {}{stack}",
+                object.type_of()
+            )));
         };
-        let key_string = key.to_string();
         let property = object_ref.borrow().get_property_descriptor(&key_string);
         if let Some(property) = property {
             if let Some(setter) = property.setter {
@@ -1346,7 +1442,7 @@ impl VM {
                             vec![JSValue::String(key.to_string())],
                         )
                     } else {
-                        Ok(self.object_prototype.borrow().get(key))
+                        Ok(self.object_fallback_property(obj_ref, key))
                     }
                 }
             }
@@ -1360,6 +1456,15 @@ impl VM {
             JSValue::String(_) => Ok(self.string_prototype.borrow().get(key)),
             JSValue::Number(_) => Ok(self.number_prototype.borrow().get(key)),
             _ => Ok(JSValue::Undefined),
+        }
+    }
+
+    fn object_fallback_property(&self, object: &Rc<RefCell<JSObject>>, key: &str) -> JSValue {
+        let is_callable = !matches!(object.borrow().get("__call__"), JSValue::Undefined);
+        if is_callable {
+            self.function_prototype.borrow().get(key)
+        } else {
+            self.object_prototype.borrow().get(key)
         }
     }
 
@@ -1495,27 +1600,62 @@ impl VM {
         env
     }
 
-    /// 二項演算ヘルパー
-    fn binary_op<F>(&mut self, op: F) -> JSResult<()>
-    where
-        F: FnOnce(JSValue, JSValue) -> JSValue,
-    {
+    fn add_op(&mut self) -> JSResult<()> {
         let b = self.pop()?;
         let a = self.pop()?;
-        let result = op(a, b);
+        let result = match (a, b) {
+            (JSValue::String(a), b) => JSValue::String(format!("{a}{b}")),
+            (a, JSValue::String(b)) => JSValue::String(format!("{a}{b}")),
+            (JSValue::BigInt(a), JSValue::BigInt(b)) => JSValue::BigInt(a + b),
+            (JSValue::BigInt(_), _) | (_, JSValue::BigInt(_)) => {
+                return Err(JSError::TypeError(
+                    "Cannot mix BigInt and other types".into(),
+                ));
+            }
+            (a, b) => JSValue::Number(a.to_number() + b.to_number()),
+        };
         self.stack.push(result);
         Ok(())
     }
 
-    /// 数値二項演算ヘルパー
-    fn binary_numeric_op<F>(&mut self, op: F) -> JSResult<()>
-    where
-        F: FnOnce(f64, f64) -> f64,
-    {
+    fn binary_arithmetic_op(&mut self, op: ArithmeticOp) -> JSResult<()> {
         let b = self.pop()?;
         let a = self.pop()?;
-        let result = op(a.to_number(), b.to_number());
-        self.stack.push(JSValue::Number(result));
+        let result = match (a, b) {
+            (JSValue::BigInt(a), JSValue::BigInt(b)) => {
+                if matches!(op, ArithmeticOp::Div | ArithmeticOp::Mod) && b == BigInt::from(0) {
+                    return Err(JSError::RangeError("Division by zero".into()));
+                }
+                JSValue::BigInt(match op {
+                    ArithmeticOp::Sub => a - b,
+                    ArithmeticOp::Mul => a * b,
+                    ArithmeticOp::Div => a / b,
+                    ArithmeticOp::Mod => a % b,
+                    ArithmeticOp::Power => {
+                        let exponent = b.to_u32().ok_or_else(|| {
+                            JSError::RangeError("BigInt exponent must be non-negative".into())
+                        })?;
+                        a.pow(exponent)
+                    }
+                })
+            }
+            (JSValue::BigInt(_), _) | (_, JSValue::BigInt(_)) => {
+                return Err(JSError::TypeError(
+                    "Cannot mix BigInt and other types".into(),
+                ));
+            }
+            (a, b) => {
+                let (a, b) = (a.to_number(), b.to_number());
+                JSValue::Number(match op {
+                    ArithmeticOp::Sub => a - b,
+                    ArithmeticOp::Mul => a * b,
+                    ArithmeticOp::Div => a / b,
+                    ArithmeticOp::Mod => a % b,
+                    ArithmeticOp::Power => a.powf(b),
+                })
+            }
+        };
+        self.stack.push(result);
         Ok(())
     }
 
@@ -1534,26 +1674,133 @@ impl VM {
     /// 数値比較演算ヘルパー
     fn numeric_comparison_op<F>(&mut self, op: F) -> JSResult<()>
     where
-        F: FnOnce(f64, f64) -> bool,
+        F: FnOnce(std::cmp::Ordering) -> bool,
     {
         let b = self.pop()?;
         let a = self.pop()?;
-        let result = op(a.to_number(), b.to_number());
+        let ordering = match (&a, &b) {
+            (JSValue::BigInt(a), JSValue::BigInt(b)) => a.cmp(b),
+            _ => a
+                .to_number()
+                .partial_cmp(&b.to_number())
+                .unwrap_or(std::cmp::Ordering::Equal),
+        };
+        let result = op(ordering);
         self.stack.push(JSValue::Boolean(result));
         Ok(())
     }
 
     /// ビット演算ヘルパー
-    fn bitwise_op<F>(&mut self, op: F) -> JSResult<()>
-    where
-        F: FnOnce(i32, i32) -> i32,
-    {
+    fn bitwise_op(&mut self, op: BitwiseOp) -> JSResult<()> {
         let b = self.pop()?;
         let a = self.pop()?;
-        let result = op(to_int32(a.to_number()), to_int32(b.to_number()));
-        self.stack.push(JSValue::Number(result as f64));
+        let result = match (a, b) {
+            (JSValue::BigInt(a), JSValue::BigInt(b)) => JSValue::BigInt(match op {
+                BitwiseOp::And => a & b,
+                BitwiseOp::Or => a | b,
+                BitwiseOp::Xor => a ^ b,
+                BitwiseOp::LeftShift | BitwiseOp::RightShift => {
+                    let shift = b.to_isize().ok_or_else(|| {
+                        JSError::RangeError("BigInt shift count is out of range".into())
+                    })?;
+                    match (op, shift.is_negative()) {
+                        (BitwiseOp::LeftShift, false) | (BitwiseOp::RightShift, true) => {
+                            a << shift.unsigned_abs()
+                        }
+                        _ => a >> shift.unsigned_abs(),
+                    }
+                }
+            }),
+            (JSValue::BigInt(_), _) | (_, JSValue::BigInt(_)) => {
+                return Err(JSError::TypeError(
+                    "Cannot mix BigInt and other types".into(),
+                ));
+            }
+            (a, b) => {
+                let (a, b) = (to_int32(a.to_number()), to_int32(b.to_number()));
+                JSValue::Number(match op {
+                    BitwiseOp::And => a & b,
+                    BitwiseOp::Or => a | b,
+                    BitwiseOp::Xor => a ^ b,
+                    BitwiseOp::LeftShift => a << (b & 0x1f),
+                    BitwiseOp::RightShift => a >> (b & 0x1f),
+                } as f64)
+            }
+        };
+        self.stack.push(result);
         Ok(())
     }
+
+    fn get_iterator(&mut self, value: JSValue) -> JSResult<JSValue> {
+        if let JSValue::String(string) = value {
+            let source = self.array_from_values(
+                string
+                    .chars()
+                    .map(|character| JSValue::String(character.to_string()))
+                    .collect(),
+            );
+            return Ok(indexed_iterator(source));
+        }
+        let JSValue::Object(object) = &value else {
+            return Err(JSError::TypeError(format!(
+                "{} is not iterable",
+                value.type_of()
+            )));
+        };
+        let iterator_method = object.borrow().get("@@iterator");
+        if !matches!(iterator_method, JSValue::Undefined | JSValue::Null) {
+            let iterator = self.call(iterator_method, value.clone(), Vec::new())?;
+            if !matches!(iterator, JSValue::Object(_)) {
+                return Err(JSError::TypeError(
+                    "iterator method did not return an object".into(),
+                ));
+            }
+            return Ok(iterator);
+        }
+        let length = object.borrow().get("length").to_number();
+        if length.is_finite() && length >= 0.0 {
+            return Ok(indexed_iterator(value));
+        }
+        Err(JSError::TypeError("value is not iterable".into()))
+    }
+}
+
+const INDEXED_ITERATOR_SOURCE: &str = "__pixi_indexed_iterator_source";
+const INDEXED_ITERATOR_INDEX: &str = "__pixi_indexed_iterator_index";
+
+fn indexed_iterator(source: JSValue) -> JSValue {
+    let mut iterator = JSObject::new();
+    iterator.set(INDEXED_ITERATOR_SOURCE.to_string(), source);
+    iterator.set(INDEXED_ITERATOR_INDEX.to_string(), JSValue::Number(0.0));
+    iterator.set(
+        "next".to_string(),
+        JSValue::NativeFunction(indexed_iterator_next),
+    );
+    JSValue::Object(Rc::new(RefCell::new(iterator)))
+}
+
+fn indexed_iterator_next(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let Some(JSValue::Object(iterator)) = args.first() else {
+        return Err(JSError::TypeError("iterator next: invalid receiver".into()));
+    };
+    let JSValue::Object(source) = iterator.borrow().get(INDEXED_ITERATOR_SOURCE) else {
+        return Err(JSError::TypeError("iterator next: invalid source".into()));
+    };
+    let index = iterator.borrow().get(INDEXED_ITERATOR_INDEX).to_number() as usize;
+    let length = source.borrow().get("length").to_number().max(0.0) as usize;
+    let mut result = JSObject::new();
+    if index >= length {
+        result.set("value".to_string(), JSValue::Undefined);
+        result.set("done".to_string(), JSValue::Boolean(true));
+    } else {
+        iterator.borrow_mut().set(
+            INDEXED_ITERATOR_INDEX.to_string(),
+            JSValue::Number((index + 1) as f64),
+        );
+        result.set("value".to_string(), source.borrow().get(&index.to_string()));
+        result.set("done".to_string(), JSValue::Boolean(false));
+    }
+    Ok(JSValue::Object(Rc::new(RefCell::new(result))))
 }
 
 impl Default for VM {

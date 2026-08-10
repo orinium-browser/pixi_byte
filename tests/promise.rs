@@ -122,3 +122,58 @@ fn promise_all_preserves_input_order() {
         JSValue::String("first-second".into())
     );
 }
+
+#[test]
+fn await_unwraps_fulfilled_promises_and_synchronous_lazy_results() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            async function read() {
+                const lazy = { sync() { return 4; } };
+                return (await Promise.resolve(3)) + (await lazy);
+            }
+            read();
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Number(7.0));
+}
+
+#[test]
+fn await_drains_pending_promise_reactions() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            async function read() {
+                return await Promise.resolve(3).then(value => value + 1);
+            }
+            read();
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Number(4.0));
+}
+
+#[test]
+fn await_stringifies_synchronous_lazy_result_css() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            async function compile() {
+                const result = {};
+                const lazy = {
+                    sync() { return result; },
+                    toString() { return "body{color:red}"; }
+                };
+                const { css } = await lazy;
+                return css;
+            }
+            compile();
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("body{color:red}".to_string()));
+}

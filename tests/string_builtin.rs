@@ -7,7 +7,10 @@ fn string_primitives_expose_common_prototype_methods() {
         .eval(
             r#"
             const parts = " Alpha,Beta ".trim().toLowerCase().split(",");
-            parts[0] === "alpha" && parts[1] === "beta" && "hello".substring(1, 4) === "ell";
+            parts[0] === "alpha" && parts[1] === "beta" &&
+                "hello".substring(1, 4) === "ell" &&
+                "tailwind".startsWith("wind", 4) &&
+                "tailwind.css".endsWith("wind", 8);
             "#,
         )
         .unwrap();

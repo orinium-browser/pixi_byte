@@ -6,6 +6,8 @@
 use super::jsobject::JSObject;
 use crate::compiler::BytecodeChunk;
 use crate::runtime::Environment;
+use num_bigint::BigInt;
+use num_traits::{ToPrimitive, Zero};
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
@@ -38,6 +40,8 @@ pub enum JSValue {
     Boolean(bool),
     /// IEEE754 double
     Number(f64),
+    /// Arbitrary-precision integer.
+    BigInt(BigInt),
     /// Heap に格納された文字列（簡素化版）
     String(String),
     /// オブジェクト参照（内部は Rc<RefCell<JSObject>>）
@@ -119,6 +123,7 @@ impl JSValue {
                     n.to_string()
                 }
             }
+            JSValue::BigInt(n) => n.to_string(),
             JSValue::String(s) => s.clone(),
             JSValue::Object(_) => "[object Object]".to_string(),
             JSValue::Function(..) => "[function]".to_string(),
@@ -136,6 +141,13 @@ impl JSValue {
             JSValue::Boolean(true) => 1.0,
             JSValue::Boolean(false) => 0.0,
             JSValue::Number(n) => *n,
+            JSValue::BigInt(n) => n.to_f64().unwrap_or_else(|| {
+                if n.sign() == num_bigint::Sign::Minus {
+                    f64::NEG_INFINITY
+                } else {
+                    f64::INFINITY
+                }
+            }),
             JSValue::String(s) => {
                 let trimmed = s.trim();
                 if trimmed.is_empty() {
@@ -157,6 +169,7 @@ impl JSValue {
             JSValue::Undefined | JSValue::Null => false,
             JSValue::Boolean(b) => *b,
             JSValue::Number(n) => !n.is_nan() && *n != 0.0,
+            JSValue::BigInt(n) => !n.is_zero(),
             JSValue::String(s) => !s.is_empty(),
             JSValue::Object(_) => true, // オブジェクトは常にtrue
             JSValue::Function(..) => true,
@@ -173,6 +186,7 @@ impl JSValue {
             JSValue::Null => "object", // JavaScriptの歴史的バグ
             JSValue::Boolean(_) => "boolean",
             JSValue::Number(_) => "number",
+            JSValue::BigInt(_) => "bigint",
             JSValue::String(_) => "string",
             JSValue::Object(_) => "object",
             JSValue::Function(..) => "function",
@@ -195,6 +209,7 @@ impl JSValue {
                     a == b
                 }
             }
+            (JSValue::BigInt(a), JSValue::BigInt(b)) => a == b,
             (JSValue::String(a), JSValue::String(b)) => a == b,
             (JSValue::Object(a), JSValue::Object(b)) => {
                 // オブジェクトは参照が同じ場合のみtrue
@@ -232,6 +247,11 @@ impl JSValue {
             (JSValue::Number(n), JSValue::String(_)) => *n == other.to_number(),
             (JSValue::String(_), JSValue::Number(n)) => self.to_number() == *n,
 
+            (JSValue::BigInt(integer), JSValue::Number(number))
+            | (JSValue::Number(number), JSValue::BigInt(integer)) => {
+                number.is_finite() && number.fract() == 0.0 && integer.to_f64() == Some(*number)
+            }
+
             // 真偽値は数値に変換して比較
             (JSValue::Boolean(_), _) => JSValue::Number(self.to_number()).abstract_equals(other),
             (_, JSValue::Boolean(_)) => self.abstract_equals(&JSValue::Number(other.to_number())),
@@ -255,6 +275,7 @@ impl fmt::Debug for JSValue {
             JSValue::Null => write!(f, "Null"),
             JSValue::Boolean(b) => write!(f, "Boolean({})", b),
             JSValue::Number(n) => write!(f, "Number({})", n),
+            JSValue::BigInt(n) => write!(f, "BigInt({})", n),
             JSValue::String(s) => write!(f, "String(\"{}\")", s),
             JSValue::Object(_) => write!(f, "Object(...)"),
             JSValue::Function(..) => write!(f, "Function(...)"),
@@ -272,6 +293,7 @@ impl Clone for JSValue {
             JSValue::Null => JSValue::Null,
             JSValue::Boolean(b) => JSValue::Boolean(*b),
             JSValue::Number(n) => JSValue::Number(*n),
+            JSValue::BigInt(n) => JSValue::BigInt(n.clone()),
             JSValue::String(s) => JSValue::String(s.clone()),
             JSValue::Object(o) => JSValue::Object(o.clone()),
             JSValue::Function(chunk, params, env_opt, name_opt, identity) => JSValue::Function(

@@ -325,14 +325,15 @@ impl Lexer {
             ));
         }
 
-        // BigInt literals currently share the numeric representation. This keeps
-        // the syntax usable until JSValue gains a dedicated arbitrary-precision type.
-        if self.peek() == Some('n') {
+        let kind = if self.peek() == Some('n') {
             self.advance();
-        }
+            TokenKind::BigIntLiteral(text)
+        } else {
+            TokenKind::NumberLiteral(text)
+        };
 
         let span = Span::new(start, self.position, start_line, start_column);
-        Ok(Token::new(TokenKind::NumberLiteral(text), span))
+        Ok(Token::new(kind, span))
     }
 
     /// 文字列リテラルのスキャン

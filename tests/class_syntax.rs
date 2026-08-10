@@ -58,6 +58,46 @@ fn anonymous_class_expression_can_extend_a_base_class() {
 }
 
 #[test]
+fn implicit_derived_constructor_forwards_arguments_to_base_class() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                class Base {
+                    constructor(value) { this.value = value; }
+                }
+                class Middle extends Base {}
+                class Child extends Middle {
+                    constructor(value) { super(value); }
+                }
+                new Child("ready").value;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("ready".to_string()));
+}
+
+#[test]
+fn super_method_calls_use_the_derived_instance_as_receiver() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                class Base {
+                    read(suffix) { return this.value + suffix; }
+                }
+                class Child extends Base {
+                    constructor() { super(); this.value = "child"; }
+                    read(...suffix) { return super.read(...suffix); }
+                }
+                new Child().read("-base");
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("child-base".to_string()));
+}
+
+#[test]
 fn async_method_and_await_are_accepted_in_synchronous_mode() {
     let mut engine = JSEngine::new();
     let result = engine

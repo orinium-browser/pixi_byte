@@ -35,6 +35,8 @@ pub enum Opcode {
     Neg,    // 符号反転
     Not,    // 論理否定
     BitNot, // ビット否定
+    Increment,
+    Decrement,
 
     // 比較演算
     Eq,
@@ -77,6 +79,8 @@ pub enum Opcode {
     ObjectDefineGetter, // object literal getter; object remains on the stack
     ObjectDefineSetter, // object literal setter; object remains on the stack
     Enumerate,          // for-in用の列挙可能なプロパティ名配列を生成
+    GetIterator,
+    IteratorNext(usize),
 
     // 関数操作
     CreateFunction(usize), // 定数プール内の関数オブジェクトを生成してプッシュ（func chunk idx）
@@ -621,34 +625,20 @@ impl Compiler {
                 body,
             } => {
                 let loop_label = self.pending_loop_label.take();
-                let values = format!("__pixi_for_of_values_{}", self.next_temporary);
-                let index = format!("__pixi_for_of_index_{}", self.next_temporary);
+                let iterator = format!("__pixi_for_of_iterator_{}", self.next_temporary);
                 self.next_temporary += 1;
 
                 self.compile_expression(right)?;
-                self.chunk.emit(Opcode::DefineVar(values.clone()));
-                let zero = self.chunk.add_constant(JSValue::Number(0.0));
-                self.chunk.emit(Opcode::LoadConst(zero));
-                self.chunk.emit(Opcode::DefineVar(index.clone()));
+                self.chunk.emit(Opcode::GetIterator);
+                self.chunk.emit(Opcode::DefineVar(iterator.clone()));
                 if matches!(kind, Some(VarKind::Let | VarKind::Const)) {
                     self.define_binding_pattern(&binding)?;
                 }
 
                 let loop_start = self.chunk.code.len();
-                self.chunk.emit(Opcode::LoadVar(index.clone()));
-                self.chunk.emit(Opcode::LoadVar(values.clone()));
-                let length = self
-                    .chunk
-                    .add_constant(JSValue::String("length".to_string()));
-                self.chunk.emit(Opcode::LoadConst(length));
-                self.chunk.emit(Opcode::GetProperty);
-                self.chunk.emit(Opcode::Lt);
+                self.chunk.emit(Opcode::LoadVar(iterator));
                 let exit_jump = self.chunk.code.len();
-                self.chunk.emit(Opcode::JumpIfFalse(usize::MAX));
-
-                self.chunk.emit(Opcode::LoadVar(values));
-                self.chunk.emit(Opcode::LoadVar(index.clone()));
-                self.chunk.emit(Opcode::GetProperty);
+                self.chunk.emit(Opcode::IteratorNext(usize::MAX));
                 self.store_binding_pattern(&binding, false)?;
 
                 self.loops.push(LoopContext {
@@ -666,11 +656,6 @@ impl Compiler {
                     self.patch_jump(continue_jump, update_start);
                 }
                 self.patch_labeled_continues(loop_label.as_deref(), update_start)?;
-                self.chunk.emit(Opcode::LoadVar(index.clone()));
-                let one = self.chunk.add_constant(JSValue::Number(1.0));
-                self.chunk.emit(Opcode::LoadConst(one));
-                self.chunk.emit(Opcode::Add);
-                self.chunk.emit(Opcode::StoreVar(index));
                 self.chunk.emit(Opcode::Jump(loop_start));
 
                 let exit_target = self.chunk.code.len();
@@ -879,7 +864,8 @@ impl Compiler {
             Opcode::Jump(destination)
             | Opcode::JumpIfFalse(destination)
             | Opcode::JumpIfTrue(destination)
-            | Opcode::JumpIfNotNullish(destination) => *destination = target,
+            | Opcode::JumpIfNotNullish(destination)
+            | Opcode::IteratorNext(destination) => *destination = target,
             _ => unreachable!("attempted to patch a non-jump opcode"),
         }
     }
@@ -933,6 +919,9 @@ impl Compiler {
                     Literal::Null => JSValue::Null,
                     Literal::Boolean(b) => JSValue::Boolean(b),
                     Literal::Number(n) => JSValue::Number(n),
+                    Literal::BigInt(n) => JSValue::BigInt(n.parse().map_err(|_| {
+                        JSError::InternalError(format!("Invalid BigInt literal: {n}"))
+                    })?),
                     Literal::String(s) => JSValue::String(s),
                 };
                 let idx = self.chunk.add_constant(value);
@@ -1072,10 +1061,11 @@ impl Compiler {
                     if !prefix {
                         self.chunk.emit(Opcode::Dup);
                     }
-                    let one = self.chunk.add_constant(JSValue::Number(1.0));
-                    self.chunk.emit(Opcode::LoadConst(one));
-                    self.chunk
-                        .emit(if increment { Opcode::Add } else { Opcode::Sub });
+                    self.chunk.emit(if increment {
+                        Opcode::Increment
+                    } else {
+                        Opcode::Decrement
+                    });
                     if prefix {
                         self.chunk.emit(Opcode::Dup);
                     }
@@ -1091,10 +1081,11 @@ impl Compiler {
                     if !prefix {
                         self.chunk.emit(Opcode::Dup);
                     }
-                    let one = self.chunk.add_constant(JSValue::Number(1.0));
-                    self.chunk.emit(Opcode::LoadConst(one));
-                    self.chunk
-                        .emit(if increment { Opcode::Add } else { Opcode::Sub });
+                    self.chunk.emit(if increment {
+                        Opcode::Increment
+                    } else {
+                        Opcode::Decrement
+                    });
                     self.chunk.emit(if prefix {
                         Opcode::SetProperty
                     } else {
@@ -1289,6 +1280,56 @@ impl Compiler {
                         self.compile_expression(arg.clone())?;
                     }
                     self.chunk.emit(Opcode::CallMethod(args.len() + 1));
+                    return Ok(());
+                }
+                if let Expression::MemberAccess {
+                    object, property, ..
+                } = &*callee
+                    && matches!(&**object, Expression::Super)
+                    && !matches!(&**property, Expression::Literal(Literal::String(name)) if name == "apply")
+                {
+                    let binding = self.super_binding.clone().ok_or_else(|| {
+                        JSError::InternalError(
+                            "'super' is only valid inside a derived class".into(),
+                        )
+                    })?;
+                    self.chunk.emit(Opcode::LoadVar(binding));
+                    let prototype = self
+                        .chunk
+                        .add_constant(JSValue::String("prototype".to_string()));
+                    self.chunk.emit(Opcode::LoadConst(prototype));
+                    self.chunk.emit(Opcode::GetProperty);
+                    self.compile_expression(*property.clone())?;
+                    self.chunk.emit(Opcode::GetProperty);
+                    if args.iter().any(|arg| matches!(arg, Expression::Spread(_))) {
+                        let apply = self
+                            .chunk
+                            .add_constant(JSValue::String("apply".to_string()));
+                        self.chunk.emit(Opcode::LoadConst(apply));
+                        self.chunk.emit(Opcode::LoadThis);
+                        self.chunk.emit(Opcode::NewArray(0));
+                        for arg in args {
+                            match arg {
+                                Expression::Spread(value) => {
+                                    self.compile_expression(*value)?;
+                                    self.chunk.emit(Opcode::ArrayExtend);
+                                }
+                                value => {
+                                    self.compile_expression(value)?;
+                                    self.chunk.emit(Opcode::ArrayAppend);
+                                }
+                            }
+                        }
+                        self.chunk.emit(Opcode::CallMethod(2));
+                    } else {
+                        let call = self.chunk.add_constant(JSValue::String("call".to_string()));
+                        self.chunk.emit(Opcode::LoadConst(call));
+                        self.chunk.emit(Opcode::LoadThis);
+                        for arg in &args {
+                            self.compile_expression(arg.clone())?;
+                        }
+                        self.chunk.emit(Opcode::CallMethod(args.len() + 1));
+                    }
                     return Ok(());
                 }
                 // MemberAccess (obj.prop(args)) は receiver を使うので専用の CallMethod を出す
@@ -1585,9 +1626,26 @@ impl Compiler {
             self.chunk.emit(Opcode::DefineVar(binding.clone()));
         }
 
-        let (params, body) = constructor
-            .map(|method| (method.params, method.body))
-            .unwrap_or_default();
+        let (params, body) = match constructor {
+            Some(method) => (method.params, method.body),
+            None if super_binding.is_some() => (
+                Vec::new(),
+                vec![Statement::Expression(Expression::Call {
+                    callee: Box::new(Expression::MemberAccess {
+                        object: Box::new(Expression::Super),
+                        property: Box::new(Expression::Literal(Literal::String(
+                            "apply".to_string(),
+                        ))),
+                        computed: false,
+                    }),
+                    args: vec![
+                        Expression::This,
+                        Expression::Identifier("arguments".to_string()),
+                    ],
+                })],
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
         self.emit_function_value(name.clone(), params, body, super_binding.clone(), false)?;
         self.chunk.emit(Opcode::DefineVar(class_binding.clone()));
 

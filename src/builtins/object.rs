@@ -112,7 +112,9 @@ fn object_get_prototype_of(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResu
         }
         JSValue::String(_) => Ok(JSValue::Object(vm.string_prototype.clone())),
         JSValue::Number(_) => Ok(JSValue::Object(vm.number_prototype.clone())),
-        JSValue::Boolean(_) => Ok(JSValue::Object(vm.object_prototype.clone())),
+        JSValue::Boolean(_) | JSValue::BigInt(_) => {
+            Ok(JSValue::Object(vm.object_prototype.clone()))
+        }
         JSValue::Null | JSValue::Undefined => Err(JSError::TypeError(
             "Object.getPrototypeOf: cannot convert null or undefined to object".to_string(),
         )),
@@ -305,6 +307,7 @@ fn object_to_string(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult
         | JSValue::BoundFunction(_) => Ok(JSValue::String("[object Function]".to_string())),
         JSValue::String(_) => Ok(JSValue::String("[object String]".to_string())),
         JSValue::Number(_) => Ok(JSValue::String("[object Number]".to_string())),
+        JSValue::BigInt(_) => Ok(JSValue::String("[object BigInt]".to_string())),
         JSValue::Boolean(_) => Ok(JSValue::String("[object Boolean]".to_string())),
         JSValue::Null => Ok(JSValue::String("[object Null]".to_string())),
         JSValue::Undefined => Ok(JSValue::String("[object Undefined]".to_string())),

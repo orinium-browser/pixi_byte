@@ -204,6 +204,41 @@ fn promise_catch(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     promise_then(vm, vec![promise, JSValue::Undefined, on_rejected])
 }
 
+fn await_value(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let JSValue::Object(object) = &value else {
+        return Ok(value);
+    };
+    if object.borrow().has_own_property(STATE) {
+        let mut state = object.borrow().get(STATE).to_string();
+        if state == "pending" {
+            vm.run_jobs()?;
+            state = object.borrow().get(STATE).to_string();
+        }
+        let result = object.borrow().get(RESULT);
+        return match state.as_str() {
+            "fulfilled" => Ok(result),
+            "rejected" => Err(JSError::Thrown(result)),
+            _ => Ok(value),
+        };
+    }
+    let sync = object.borrow().get("sync");
+    if is_callable(&sync) {
+        let resolved = vm.call(sync, value.clone(), Vec::new())?;
+        let to_string = object.borrow().get("toString");
+        if is_callable(&to_string) {
+            let css = vm.call(to_string, value, Vec::new())?;
+            if let JSValue::Object(result) = &resolved
+                && matches!(css, JSValue::String(_))
+            {
+                result.borrow_mut().set("css".to_string(), css);
+            }
+        }
+        return Ok(resolved);
+    }
+    Ok(value)
+}
+
 fn promise_receiver(value: Option<&JSValue>) -> JSResult<Rc<RefCell<JSObject>>> {
     let Some(JSValue::Object(promise)) = value else {
         return Err(JSError::TypeError(
@@ -326,5 +361,9 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     global.borrow_mut().set(
         "Promise".to_string(),
         JSValue::Object(Rc::new(RefCell::new(constructor))),
+    );
+    global.borrow_mut().set(
+        "__pixi_await".to_string(),
+        JSValue::NativeFunction(await_value),
     );
 }

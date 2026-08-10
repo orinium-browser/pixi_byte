@@ -16,6 +16,28 @@ fn array_from_supports_array_like_iterables_and_mapping() {
 }
 
 #[test]
+fn array_order_search_and_flattening_methods_work() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const values = [3, 1, 2];
+            values.sort((left, right) => left - right);
+            const flattened = [1, [2, [3]]].flat(2);
+            const mapped = [1, 2].flatMap(value => [value, value * 10]);
+            values.join(",") === "1,2,3"
+                && values.find(value => value > 1) === 2
+                && values.findIndex(value => value === 3) === 2
+                && flattened.join(",") === "1,2,3"
+                && mapped.join(",") === "1,10,2,20"
+                && values.reverse().at(-1) === 1;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}
+
+#[test]
 fn array_mutation_methods_update_values_and_length() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -77,15 +99,19 @@ fn array_iteration_methods_support_component_data_transforms() {
             const mapped = values.map(function (value, index) { return value + index; });
             const filtered = mapped.filter(function (value) { return value > 3; });
             const total = filtered.reduce(function (sum, value) { return sum + value; }, 0);
+            const reversed = values.reduceRight(function (text, value) {
+                return text + value;
+            }, "");
             mapped.join(",") + ":" + filtered.join(",") + ":" + total
                 + ":" + values.some(function (value) { return value === 3; })
-                + ":" + values.every(function (value) { return value > 0; });
+                + ":" + values.every(function (value) { return value > 0; })
+                + ":" + reversed;
             "#,
         )
         .unwrap();
 
     assert_eq!(
         result,
-        JSValue::String("1,3,5,7:5,7:12:true:true".to_string())
+        JSValue::String("1,3,5,7:5,7:12:true:true:4321".to_string())
     );
 }

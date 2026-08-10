@@ -12,6 +12,8 @@ harness = false
 name = "vm_bench"
 
 [dependencies]
+num-bigint = "0.4"
+num-traits = "0.2"
 regex = "1.12"
 rustc-hash = "2.1"
 

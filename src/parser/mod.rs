@@ -234,6 +234,7 @@ pub enum Literal {
     Null,
     Boolean(bool),
     Number(f64),
+    BigInt(String),
     String(String),
 }
 
@@ -884,7 +885,11 @@ impl Parser {
 
     fn parse_unary(&mut self) -> JSResult<Expression> {
         if self.eat(&TokenKind::Await)? {
-            return self.parse_unary();
+            let value = self.parse_unary()?;
+            return Ok(Expression::Call {
+                callee: Box::new(Expression::Identifier("__pixi_await".to_string())),
+                args: vec![value],
+            });
         }
         if self.check(&TokenKind::PlusPlus) || self.check(&TokenKind::MinusMinus) {
             let increment = self.check(&TokenKind::PlusPlus);
@@ -1373,6 +1378,11 @@ impl Parser {
                 self.advance()?;
 
                 Ok(Expression::Literal(Literal::Number(n)))
+            }
+            TokenKind::BigIntLiteral(n) => {
+                let n = n.clone();
+                self.advance()?;
+                Ok(Expression::Literal(Literal::BigInt(n)))
             }
             TokenKind::String(s) => {
                 let s = s.clone();

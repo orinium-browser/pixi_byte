@@ -48,6 +48,9 @@ fn serialize(
                 Ok(Some("null".to_string()))
             }
         }
+        JSValue::BigInt(_) => Err(JSError::TypeError(
+            "Do not know how to serialize a BigInt".to_string(),
+        )),
         JSValue::String(value) => Ok(Some(quote(value))),
         JSValue::Object(object) => {
             let identity = Rc::as_ptr(object) as usize;

@@ -362,6 +362,51 @@ fn array_reduce(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
     Ok(accumulator)
 }
 
+fn array_reduce_right(
+    vm: &mut crate::vm::VM,
+    args: Vec<JSValue>,
+) -> crate::error::JSResult<JSValue> {
+    let object = receiver(&args, "reduceRight")?;
+    let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    require_callback("Array.prototype.reduceRight", &callback)?;
+    let array = JSValue::Object(Rc::clone(&object));
+    let mut index = length(&object) as isize - 1;
+    let mut accumulator = if let Some(initial) = args.get(2) {
+        initial.clone()
+    } else {
+        loop {
+            if index < 0 {
+                return Err(crate::error::JSError::TypeError(
+                    "Reduce of empty array with no initial value".to_string(),
+                ));
+            }
+            if object.borrow().has_property(&index.to_string()) {
+                let value = object.borrow().get(&index.to_string());
+                index -= 1;
+                break value;
+            }
+            index -= 1;
+        }
+    };
+    while index >= 0 {
+        if object.borrow().has_property(&index.to_string()) {
+            let value = object.borrow().get(&index.to_string());
+            accumulator = vm.call(
+                callback.clone(),
+                JSValue::Undefined,
+                vec![
+                    accumulator,
+                    value,
+                    JSValue::Number(index as f64),
+                    array.clone(),
+                ],
+            )?;
+        }
+        index -= 1;
+    }
+    Ok(accumulator)
+}
+
 fn require_callback(name: &str, callback: &JSValue) -> crate::error::JSResult<()> {
     if matches!(callback, JSValue::Undefined | JSValue::Null) {
         Err(crate::error::JSError::TypeError(format!(
@@ -418,6 +463,162 @@ fn array_join(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRe
         .collect::<Vec<_>>()
         .join(&separator);
     Ok(JSValue::String(values))
+}
+
+fn array_sort(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let array = receiver(&args, "sort")?;
+    let comparator = args
+        .get(1)
+        .cloned()
+        .filter(|value| !matches!(value, JSValue::Undefined | JSValue::Null));
+    let mut values = (0..length(&array))
+        .map(|index| array.borrow().get(&index.to_string()))
+        .collect::<Vec<_>>();
+    for index in 1..values.len() {
+        let mut cursor = index;
+        while cursor > 0 {
+            let ordering = if let Some(comparator) = &comparator {
+                vm.call(
+                    comparator.clone(),
+                    JSValue::Undefined,
+                    vec![values[cursor - 1].clone(), values[cursor].clone()],
+                )?
+                .to_number()
+            } else {
+                match values[cursor - 1]
+                    .to_string()
+                    .cmp(&values[cursor].to_string())
+                {
+                    std::cmp::Ordering::Less => -1.0,
+                    std::cmp::Ordering::Equal => 0.0,
+                    std::cmp::Ordering::Greater => 1.0,
+                }
+            };
+            if ordering <= 0.0 || ordering.is_nan() {
+                break;
+            }
+            values.swap(cursor - 1, cursor);
+            cursor -= 1;
+        }
+    }
+    for (index, value) in values.into_iter().enumerate() {
+        array.borrow_mut().set(index.to_string(), value);
+    }
+    Ok(JSValue::Object(array))
+}
+
+fn array_find(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let array = receiver(&args, "find")?;
+    let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let array_value = JSValue::Object(Rc::clone(&array));
+    for index in 0..length(&array) {
+        let value = array.borrow().get(&index.to_string());
+        if vm
+            .call(
+                callback.clone(),
+                JSValue::Undefined,
+                vec![
+                    value.clone(),
+                    JSValue::Number(index as f64),
+                    array_value.clone(),
+                ],
+            )?
+            .to_boolean()
+        {
+            return Ok(value);
+        }
+    }
+    Ok(JSValue::Undefined)
+}
+
+fn array_find_index(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let array = receiver(&args, "findIndex")?;
+    let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let array_value = JSValue::Object(Rc::clone(&array));
+    for index in 0..length(&array) {
+        let value = array.borrow().get(&index.to_string());
+        if vm
+            .call(
+                callback.clone(),
+                JSValue::Undefined,
+                vec![value, JSValue::Number(index as f64), array_value.clone()],
+            )?
+            .to_boolean()
+        {
+            return Ok(JSValue::Number(index as f64));
+        }
+    }
+    Ok(JSValue::Number(-1.0))
+}
+
+fn flatten_values(value: JSValue, depth: usize, output: &mut Vec<JSValue>) {
+    if depth > 0
+        && let JSValue::Object(object) = &value
+        && object.borrow().has_own_property("__pixi_array__")
+    {
+        for index in 0..length(object) {
+            flatten_values(object.borrow().get(&index.to_string()), depth - 1, output);
+        }
+        return;
+    }
+    output.push(value);
+}
+
+fn array_flat(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let array = receiver(&args, "flat")?;
+    let depth = args.get(1).map(JSValue::to_number).unwrap_or(1.0).max(0.0) as usize;
+    let mut values = Vec::new();
+    for index in 0..length(&array) {
+        flatten_values(array.borrow().get(&index.to_string()), depth, &mut values);
+    }
+    Ok(vm.array_from_values(values))
+}
+
+fn array_flat_map(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let array = receiver(&args, "flatMap")?;
+    let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
+    let array_value = JSValue::Object(Rc::clone(&array));
+    let mut values = Vec::new();
+    for index in 0..length(&array) {
+        let value = array.borrow().get(&index.to_string());
+        let mapped = vm.call(
+            callback.clone(),
+            this_arg.clone(),
+            vec![value, JSValue::Number(index as f64), array_value.clone()],
+        )?;
+        flatten_values(mapped, 1, &mut values);
+    }
+    Ok(vm.array_from_values(values))
+}
+
+fn array_reverse(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let array = receiver(&args, "reverse")?;
+    let length = length(&array);
+    for index in 0..length / 2 {
+        let opposite = length - index - 1;
+        let left = array.borrow().get(&index.to_string());
+        let right = array.borrow().get(&opposite.to_string());
+        array.borrow_mut().set(index.to_string(), right);
+        array.borrow_mut().set(opposite.to_string(), left);
+    }
+    Ok(JSValue::Object(array))
+}
+
+fn array_at(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let array = receiver(&args, "at")?;
+    let length = length(&array) as isize;
+    let requested = args.get(1).map(JSValue::to_number).unwrap_or(0.0) as isize;
+    let index = if requested < 0 {
+        length + requested
+    } else {
+        requested
+    };
+    if index < 0 || index >= length {
+        Ok(JSValue::Undefined)
+    } else {
+        Ok(array.borrow().get(&index.to_string()))
+    }
 }
 
 fn array_is_array(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
@@ -566,6 +767,10 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     proto.set("every".to_string(), JSValue::NativeFunction(array_every));
     proto.set("reduce".to_string(), JSValue::NativeFunction(array_reduce));
     proto.set(
+        "reduceRight".to_string(),
+        JSValue::NativeFunction(array_reduce_right),
+    );
+    proto.set(
         "indexOf".to_string(),
         JSValue::NativeFunction(array_index_of),
     );
@@ -574,6 +779,22 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         JSValue::NativeFunction(array_includes),
     );
     proto.set("join".to_string(), JSValue::NativeFunction(array_join));
+    proto.set("sort".to_string(), JSValue::NativeFunction(array_sort));
+    proto.set("find".to_string(), JSValue::NativeFunction(array_find));
+    proto.set(
+        "findIndex".to_string(),
+        JSValue::NativeFunction(array_find_index),
+    );
+    proto.set("flat".to_string(), JSValue::NativeFunction(array_flat));
+    proto.set(
+        "flatMap".to_string(),
+        JSValue::NativeFunction(array_flat_map),
+    );
+    proto.set(
+        "reverse".to_string(),
+        JSValue::NativeFunction(array_reverse),
+    );
+    proto.set("at".to_string(), JSValue::NativeFunction(array_at));
 
     array_ctor.set(
         "prototype".to_string(),

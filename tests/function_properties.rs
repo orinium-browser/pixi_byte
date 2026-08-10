@@ -98,3 +98,16 @@ fn nested_constructor_keeps_its_assigned_prototype_methods() {
         .unwrap();
     assert_eq!(result, JSValue::String("ready".to_string()));
 }
+
+#[test]
+fn callable_builtin_objects_inherit_function_prototype_methods() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            String.call(null, 42) + ":" + Number.call(null, "3");
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("42:3".to_string()));
+}

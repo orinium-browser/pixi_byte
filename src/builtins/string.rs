@@ -270,6 +270,27 @@ fn string_includes(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::Boolean(input[start..].contains(&needle)))
 }
 
+fn string_starts_with(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let input = receiver(&args, "startsWith")?;
+    let needle = args.get(1).map(JSValue::to_string).unwrap_or_default();
+    let start = args.get(2).map(JSValue::to_number).unwrap_or(0.0).max(0.0) as usize;
+    let start = byte_index(&input, start);
+    Ok(JSValue::Boolean(input[start..].starts_with(&needle)))
+}
+
+fn string_ends_with(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let input = receiver(&args, "endsWith")?;
+    let needle = args.get(1).map(JSValue::to_string).unwrap_or_default();
+    let length = input.chars().count();
+    let end = args
+        .get(2)
+        .map(JSValue::to_number)
+        .unwrap_or(length as f64)
+        .max(0.0) as usize;
+    let end = byte_index(&input, end.min(length));
+    Ok(JSValue::Boolean(input[..end].ends_with(&needle)))
+}
+
 fn string_to_lower_case(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::String(
         receiver(&args, "toLowerCase")?.to_lowercase(),
@@ -380,6 +401,14 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     prototype.set(
         "includes".to_string(),
         JSValue::NativeFunction(string_includes),
+    );
+    prototype.set(
+        "startsWith".to_string(),
+        JSValue::NativeFunction(string_starts_with),
+    );
+    prototype.set(
+        "endsWith".to_string(),
+        JSValue::NativeFunction(string_ends_with),
     );
     prototype.set(
         "toLowerCase".to_string(),

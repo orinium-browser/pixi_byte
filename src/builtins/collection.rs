@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use crate::error::{JSError, JSResult};
 use crate::value::JSValue;
-use crate::value::jsobject::JSObject;
+use crate::value::jsobject::{JSObject, Property};
 use crate::vm::VM;
 
 const COUNT: &str = "__collection_count";
@@ -24,6 +24,32 @@ fn receiver(args: &[JSValue], method: &str) -> JSResult<Rc<RefCell<JSObject>>> {
 
 fn count(object: &Rc<RefCell<JSObject>>) -> usize {
     object.borrow().get(COUNT).to_number() as usize
+}
+
+fn collection_size(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let collection = receiver(&args, "collection.size")?;
+    let size = (0..count(&collection))
+        .filter(|index| {
+            matches!(
+                collection
+                    .borrow()
+                    .get(&format!("__collection_present_{index}")),
+                JSValue::Boolean(true)
+            )
+        })
+        .count();
+    Ok(JSValue::Number(size as f64))
+}
+
+fn size_property() -> Property {
+    Property {
+        value: JSValue::Undefined,
+        enumerable: false,
+        writable: false,
+        configurable: true,
+        getter: Some(JSValue::NativeFunction(collection_size)),
+        setter: None,
+    }
 }
 
 fn find(object: &Rc<RefCell<JSObject>>, key: &JSValue) -> Option<usize> {
@@ -71,12 +97,57 @@ fn create_collection(vm: &VM, constructor_name: &str) -> Rc<RefCell<JSObject>> {
     Rc::new(RefCell::new(object))
 }
 
+fn iterable_values(vm: &mut VM, value: &JSValue) -> JSResult<Vec<JSValue>> {
+    let JSValue::Object(object) = value else {
+        return Ok(Vec::new());
+    };
+    let length = object.borrow().get("length").to_number();
+    if length.is_finite() && length >= 0.0 {
+        return Ok((0..length.floor() as usize)
+            .map(|index| object.borrow().get(&index.to_string()))
+            .collect());
+    }
+    let iterator_method = object.borrow().get("@@iterator");
+    if !is_callable(&iterator_method) {
+        return Ok(Vec::new());
+    }
+    let iterator = vm.call(iterator_method, value.clone(), Vec::new())?;
+    let JSValue::Object(iterator_object) = &iterator else {
+        return Err(JSError::TypeError(
+            "collection iterator must return an object".to_string(),
+        ));
+    };
+    let next = iterator_object.borrow().get("next");
+    let mut values = Vec::new();
+    loop {
+        let result = vm.call(next.clone(), iterator.clone(), Vec::new())?;
+        let JSValue::Object(result) = result else {
+            return Err(JSError::TypeError(
+                "collection iterator result must be an object".to_string(),
+            ));
+        };
+        if result.borrow().get("done").to_boolean() {
+            break;
+        }
+        values.push(result.borrow().get("value"));
+    }
+    Ok(values)
+}
+
+fn is_callable(value: &JSValue) -> bool {
+    matches!(
+        value,
+        JSValue::Function(..)
+            | JSValue::ArrowFunction(..)
+            | JSValue::NativeFunction(..)
+            | JSValue::BoundFunction(..)
+    )
+}
+
 fn set_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let set = create_collection(vm, "Set");
-    if let Some(JSValue::Object(iterable)) = args.get(1) {
-        let length = iterable.borrow().get("length").to_number() as usize;
-        for index in 0..length {
-            let value = iterable.borrow().get(&index.to_string());
+    if let Some(iterable) = args.get(1) {
+        for value in iterable_values(vm, iterable)? {
             insert(&set, value.clone(), value);
         }
     }
@@ -251,10 +322,9 @@ fn map_entries(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 
 fn map_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let map = create_collection(vm, "Map");
-    if let Some(JSValue::Object(iterable)) = args.get(1) {
-        let length = iterable.borrow().get("length").to_number() as usize;
-        for index in 0..length {
-            let JSValue::Object(entry) = iterable.borrow().get(&index.to_string()) else {
+    if let Some(iterable) = args.get(1) {
+        for entry in iterable_values(vm, iterable)? {
+            let JSValue::Object(entry) = entry else {
                 return Err(JSError::TypeError(
                     "Map constructor entry must be array-like".to_string(),
                 ));
@@ -267,10 +337,9 @@ fn map_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 
 fn weak_map_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let map = create_collection(vm, "WeakMap");
-    if let Some(JSValue::Object(iterable)) = args.get(1) {
-        let length = iterable.borrow().get("length").to_number() as usize;
-        for index in 0..length {
-            let JSValue::Object(entry) = iterable.borrow().get(&index.to_string()) else {
+    if let Some(iterable) = args.get(1) {
+        for entry in iterable_values(vm, iterable)? {
+            let JSValue::Object(entry) = entry else {
                 return Err(JSError::TypeError(
                     "WeakMap constructor entry must be array-like".to_string(),
                 ));
@@ -346,6 +415,7 @@ fn constructor(
 /// Installs Map and Set constructors.
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut set_prototype = JSObject::new();
+    set_prototype.define_property("size".to_string(), size_property());
     set_prototype.set("add".to_string(), JSValue::NativeFunction(set_add));
     set_prototype.set("has".to_string(), JSValue::NativeFunction(collection_has));
     set_prototype.set("forEach".to_string(), JSValue::NativeFunction(set_for_each));
@@ -361,6 +431,7 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         JSValue::NativeFunction(collection_delete),
     );
     let mut map_prototype = JSObject::new();
+    map_prototype.define_property("size".to_string(), size_property());
     map_prototype.set("set".to_string(), JSValue::NativeFunction(map_set));
     map_prototype.set("get".to_string(), JSValue::NativeFunction(map_get));
     map_prototype.set("has".to_string(), JSValue::NativeFunction(collection_has));

@@ -290,6 +290,10 @@ impl Expression {
                     println!("{prefix}{branch}Number({n})");
                 }
 
+                Literal::BigInt(n) => {
+                    println!("{prefix}{branch}BigInt({n})");
+                }
+
                 Literal::String(s) => {
                     println!("{prefix}{branch}String(\"{s}\")");
                 }

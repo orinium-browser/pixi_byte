@@ -44,7 +44,79 @@ fn normalize_pattern(pattern: &str) -> String {
         output.push('\\');
         index += 1;
     }
-    strip_unsupported_lookarounds(&normalize_character_classes(&output))
+    strip_unsupported_lookarounds(&normalize_braces(&normalize_character_classes(&output)))
+}
+
+fn normalize_braces(pattern: &str) -> String {
+    let characters = pattern.chars().collect::<Vec<_>>();
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0;
+    let mut in_class = false;
+    while index < characters.len() {
+        match characters[index] {
+            '\\' => {
+                output.push('\\');
+                index += 1;
+                if let Some(character) = characters.get(index) {
+                    output.push(*character);
+                    index += 1;
+                }
+            }
+            '[' => {
+                in_class = true;
+                output.push('[');
+                index += 1;
+            }
+            ']' if in_class => {
+                in_class = false;
+                output.push(']');
+                index += 1;
+            }
+            '{' if !in_class => {
+                let closing = characters[index + 1..]
+                    .iter()
+                    .position(|character| *character == '}')
+                    .map(|offset| index + 1 + offset);
+                let valid_unicode_escape = output.ends_with("\\x")
+                    && closing.is_some_and(|closing| {
+                        let content = &characters[index + 1..closing];
+                        !content.is_empty()
+                            && content
+                                .iter()
+                                .all(|character| character.is_ascii_hexdigit())
+                    });
+                let valid_quantifier = closing.is_some_and(|closing| {
+                    let content = characters[index + 1..closing].iter().collect::<String>();
+                    let mut parts = content.split(',');
+                    let minimum = parts.next().unwrap_or_default();
+                    let maximum = parts.next();
+                    !minimum.is_empty()
+                        && minimum.chars().all(|character| character.is_ascii_digit())
+                        && maximum.is_none_or(|maximum| {
+                            maximum.chars().all(|character| character.is_ascii_digit())
+                        })
+                        && parts.next().is_none()
+                });
+                if valid_unicode_escape || valid_quantifier {
+                    let closing = closing.unwrap();
+                    output.extend(characters[index..=closing].iter());
+                    index = closing + 1;
+                } else {
+                    output.push_str("\\{");
+                    index += 1;
+                }
+            }
+            '}' if !in_class => {
+                output.push_str("\\}");
+                index += 1;
+            }
+            character => {
+                output.push(character);
+                index += 1;
+            }
+        }
+    }
+    output
 }
 
 fn normalize_character_classes(pattern: &str) -> String {
@@ -163,7 +235,35 @@ fn regexp_test(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         ));
     };
     let input = args.get(1).map(JSValue::to_string).unwrap_or_default();
-    Ok(JSValue::Boolean(compile(object)?.is_match(&input)))
+    let expression = compile(object)?;
+    let flags = flags(object);
+    let stateful = flags.contains('g') || flags.contains('y');
+    let start = if stateful {
+        let last_index = object.borrow().get("lastIndex").to_number().max(0.0) as usize;
+        match byte_offset_for_utf16(&input, last_index) {
+            Some(start) => start,
+            None => {
+                object
+                    .borrow_mut()
+                    .set("lastIndex".to_string(), JSValue::Number(0.0));
+                return Ok(JSValue::Boolean(false));
+            }
+        }
+    } else {
+        0
+    };
+    let matched = expression
+        .find_at(&input, start)
+        .filter(|matched| !flags.contains('y') || matched.start() == start);
+    if stateful {
+        let last_index = matched
+            .map(|matched| utf16_offset(&input, matched.end()) as f64)
+            .unwrap_or(0.0);
+        object
+            .borrow_mut()
+            .set("lastIndex".to_string(), JSValue::Number(last_index));
+    }
+    Ok(JSValue::Boolean(matched.is_some()))
 }
 
 fn regexp_exec(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -174,9 +274,40 @@ fn regexp_exec(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     };
     let input = args.get(1).map(JSValue::to_string).unwrap_or_default();
     let expression = compile(object)?;
-    let Some(captures) = expression.captures(&input) else {
+    let flags = flags(object);
+    let stateful = flags.contains('g') || flags.contains('y');
+    let start = if stateful {
+        let last_index = object.borrow().get("lastIndex").to_number().max(0.0) as usize;
+        let Some(start) = byte_offset_for_utf16(&input, last_index) else {
+            object
+                .borrow_mut()
+                .set("lastIndex".to_string(), JSValue::Number(0.0));
+            return Ok(JSValue::Null);
+        };
+        start
+    } else {
+        0
+    };
+    let captures = expression.captures_at(&input, start).filter(|captures| {
+        !flags.contains('y') || captures.get(0).is_some_and(|m| m.start() == start)
+    });
+    let Some(captures) = captures else {
+        if stateful {
+            object
+                .borrow_mut()
+                .set("lastIndex".to_string(), JSValue::Number(0.0));
+        }
         return Ok(JSValue::Null);
     };
+    if stateful {
+        let last_index = captures
+            .get(0)
+            .map(|matched| utf16_offset(&input, matched.end()) as f64)
+            .unwrap_or(0.0);
+        object
+            .borrow_mut()
+            .set("lastIndex".to_string(), JSValue::Number(last_index));
+    }
     let values = captures
         .iter()
         .map(|capture| {
@@ -196,6 +327,24 @@ fn regexp_exec(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
             .set("input".to_string(), JSValue::String(input));
     }
     Ok(result)
+}
+
+fn byte_offset_for_utf16(input: &str, target: usize) -> Option<usize> {
+    let mut offset = 0;
+    for (byte, character) in input.char_indices() {
+        if offset == target {
+            return Some(byte);
+        }
+        offset += character.len_utf16();
+        if offset > target {
+            return None;
+        }
+    }
+    (offset == target).then_some(input.len())
+}
+
+fn utf16_offset(input: &str, byte: usize) -> usize {
+    input[..byte].encode_utf16().count()
 }
 
 /// Creates a RegExp object for a parsed literal.

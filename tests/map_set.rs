@@ -9,7 +9,9 @@ fn set_constructs_from_arrays_and_mutates_membership() {
             const values = new Set(["a", "b", "a"]);
             values.add("c");
             const deleted = values.delete("b");
-            values.has("a") && values.has("c") && deleted && !values.has("b");
+            const copy = new Set(values);
+            values.has("a") && values.has("c") && deleted && !values.has("b") &&
+                values.size === 2 && copy.size === 2 && copy.has("c");
             "#,
         )
         .unwrap();
@@ -26,8 +28,26 @@ fn map_supports_identity_keys_and_chained_set() {
             const other = {};
             const values = new Map;
             values.set(key, 1).set(other, 2);
-            values.get(key) === 1 && values.get(other) === 2 && !values.has({});
+            const copy = new Map(values);
+            values.get(key) === 1 && values.get(other) === 2 && !values.has({}) &&
+                values.size === 2 && copy.get(other) === 2;
             "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}
+
+#[test]
+fn map_keeps_large_bigint_keys_distinct() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+        const values = new Map;
+        values.set(1n << 70n, "large");
+        values.set(1n << 6n, "small");
+        values.size === 2 && values.get(1n << 70n) === "large";
+    "#,
         )
         .unwrap();
     assert_eq!(result, JSValue::Boolean(true));
@@ -85,6 +105,21 @@ fn set_exposes_the_iterator_protocol() {
         )
         .unwrap();
     assert_eq!(result, JSValue::String("abfalsetrue".to_string()));
+}
+
+#[test]
+fn for_of_consumes_set_values() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            let joined = "";
+            for (const value of new Set(["a", "b"])) joined += value;
+            joined;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("ab".to_string()));
 }
 
 #[test]
