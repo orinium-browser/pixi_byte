@@ -51,3 +51,19 @@ fn char_code_at_uses_utf16_code_units() {
         .unwrap();
     assert_eq!(result, JSValue::Boolean(true));
 }
+
+#[test]
+fn last_index_of_honors_the_search_position() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            "text-blue-600".lastIndexOf("-") === 9 &&
+                "text-blue-600".lastIndexOf("-", 8) === 4 &&
+                "A😀B😀".lastIndexOf("😀") === 4 &&
+                "abc".lastIndexOf("", 2) === 2;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}

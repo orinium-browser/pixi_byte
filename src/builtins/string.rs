@@ -388,6 +388,43 @@ fn string_index_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::Number(index))
 }
 
+fn string_last_index_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let input = receiver(&args, "lastIndexOf")?;
+    let input: Vec<u16> = input.encode_utf16().collect();
+    let needle: Vec<u16> = args
+        .get(1)
+        .map(JSValue::to_string)
+        .unwrap_or_default()
+        .encode_utf16()
+        .collect();
+    let position = match args.get(2) {
+        None => input.len(),
+        Some(value) => {
+            let value = value.to_number();
+            if value.is_nan() || value <= 0.0 {
+                0
+            } else if value.is_infinite() {
+                input.len()
+            } else {
+                (value.trunc() as usize).min(input.len())
+            }
+        }
+    };
+    if needle.is_empty() {
+        return Ok(JSValue::Number(position as f64));
+    }
+    if needle.len() > input.len() {
+        return Ok(JSValue::Number(-1.0));
+    }
+    let last_start = position.min(input.len() - needle.len());
+    let index = (0..=last_start)
+        .rev()
+        .find(|start| input[*start..*start + needle.len()] == needle)
+        .map(|index| index as f64)
+        .unwrap_or(-1.0);
+    Ok(JSValue::Number(index))
+}
+
 /// Installs String and the methods used by React's production bundle.
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut prototype = JSObject::new();
@@ -442,6 +479,10 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     prototype.set(
         "indexOf".to_string(),
         JSValue::NativeFunction(string_index_of),
+    );
+    prototype.set(
+        "lastIndexOf".to_string(),
+        JSValue::NativeFunction(string_last_index_of),
     );
 
     let mut constructor = JSObject::new();
