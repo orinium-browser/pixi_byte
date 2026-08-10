@@ -112,6 +112,11 @@ fn collection_delete(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 fn set_for_each(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let set = receiver(&args, "Set.forEach")?;
     let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    if matches!(&callback, JSValue::Undefined | JSValue::Null) {
+        return Err(crate::error::JSError::TypeError(
+            "Set.prototype.forEach: callback is not callable".to_string(),
+        ));
+    }
     let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
     let set_value = JSValue::Object(Rc::clone(&set));
     let mut index = 0;
@@ -135,6 +140,11 @@ fn set_for_each(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 fn map_for_each(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let map = receiver(&args, "Map.forEach")?;
     let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    if matches!(&callback, JSValue::Undefined | JSValue::Null) {
+        return Err(crate::error::JSError::TypeError(
+            "Map.prototype.forEach: callback is not callable".to_string(),
+        ));
+    }
     let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
     let map_value = JSValue::Object(Rc::clone(&map));
     let mut index = 0;
@@ -255,6 +265,52 @@ fn map_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::Object(map))
 }
 
+fn weak_map_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let map = create_collection(vm, "WeakMap");
+    if let Some(JSValue::Object(iterable)) = args.get(1) {
+        let length = iterable.borrow().get("length").to_number() as usize;
+        for index in 0..length {
+            let JSValue::Object(entry) = iterable.borrow().get(&index.to_string()) else {
+                return Err(JSError::TypeError(
+                    "WeakMap constructor entry must be array-like".to_string(),
+                ));
+            };
+            let key = entry.borrow().get("0");
+            if !is_weak_key(&key) {
+                return Err(JSError::TypeError(
+                    "Invalid value used as weak map key".to_string(),
+                ));
+            }
+            insert(&map, key, entry.borrow().get("1"));
+        }
+    }
+    Ok(JSValue::Object(map))
+}
+
+fn is_weak_key(value: &JSValue) -> bool {
+    matches!(
+        value,
+        JSValue::Object(..)
+            | JSValue::Function(..)
+            | JSValue::ArrowFunction(..)
+            | JSValue::NativeFunction(..)
+            | JSValue::BoundFunction(..)
+    )
+}
+
+fn weak_map_set(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let map = receiver(&args, "WeakMap.set")?;
+    let key = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    if !is_weak_key(&key) {
+        return Err(JSError::TypeError(
+            "Invalid value used as weak map key".to_string(),
+        ));
+    }
+    let value = args.get(2).cloned().unwrap_or(JSValue::Undefined);
+    insert(&map, key, value);
+    Ok(JSValue::Object(map))
+}
+
 fn map_set(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let map = receiver(&args, "Map.set")?;
     let key = args.get(1).cloned().unwrap_or(JSValue::Undefined);
@@ -320,6 +376,14 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         "delete".to_string(),
         JSValue::NativeFunction(collection_delete),
     );
+    let mut weak_map_prototype = JSObject::new();
+    weak_map_prototype.set("set".to_string(), JSValue::NativeFunction(weak_map_set));
+    weak_map_prototype.set("get".to_string(), JSValue::NativeFunction(map_get));
+    weak_map_prototype.set("has".to_string(), JSValue::NativeFunction(collection_has));
+    weak_map_prototype.set(
+        "delete".to_string(),
+        JSValue::NativeFunction(collection_delete),
+    );
 
     global.borrow_mut().set(
         "Set".to_string(),
@@ -333,6 +397,13 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         JSValue::Object(Rc::new(RefCell::new(constructor(
             map_prototype,
             map_constructor,
+        )))),
+    );
+    global.borrow_mut().set(
+        "WeakMap".to_string(),
+        JSValue::Object(Rc::new(RefCell::new(constructor(
+            weak_map_prototype,
+            weak_map_constructor,
         )))),
     );
 }

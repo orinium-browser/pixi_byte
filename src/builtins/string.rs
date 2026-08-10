@@ -51,6 +51,33 @@ fn string_from_char_code(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> 
     Ok(JSValue::String(String::from_utf16_lossy(&units)))
 }
 
+fn string_raw(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let Some(JSValue::Object(template)) = args.get(1) else {
+        return Err(JSError::TypeError(
+            "String.raw requires a template object".to_string(),
+        ));
+    };
+    let raw = match template.borrow().get("raw") {
+        JSValue::Object(raw) => raw,
+        _ => Rc::clone(template),
+    };
+    let length = raw.borrow().get("length").to_number().max(0.0) as usize;
+    let mut output = String::new();
+    for index in 0..length {
+        output.push_str(&raw.borrow().get(&index.to_string()).to_string());
+        if index + 1 < length {
+            output.push_str(
+                &args
+                    .get(index + 2)
+                    .cloned()
+                    .unwrap_or(JSValue::Undefined)
+                    .to_string(),
+            );
+        }
+    }
+    Ok(JSValue::String(output))
+}
+
 fn string_replace(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = receiver(&args, "replace")?;
     let search = args.get(1).cloned().unwrap_or(JSValue::Undefined);
@@ -271,6 +298,21 @@ fn string_char_at(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     ))
 }
 
+fn string_char_code_at(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let input = receiver(&args, "charCodeAt")?;
+    let index = args.get(1).map(JSValue::to_number).unwrap_or(0.0);
+    if !index.is_finite() || index < 0.0 {
+        return Ok(JSValue::Number(f64::NAN));
+    }
+    Ok(JSValue::Number(
+        input
+            .encode_utf16()
+            .nth(index.trunc() as usize)
+            .map(f64::from)
+            .unwrap_or(f64::NAN),
+    ))
+}
+
 fn string_substring(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = receiver(&args, "substring")?;
     let length = input.chars().count();
@@ -360,6 +402,10 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         JSValue::NativeFunction(string_char_at),
     );
     prototype.set(
+        "charCodeAt".to_string(),
+        JSValue::NativeFunction(string_char_code_at),
+    );
+    prototype.set(
         "substring".to_string(),
         JSValue::NativeFunction(string_substring),
     );
@@ -382,6 +428,7 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         "fromCharCode".to_string(),
         JSValue::NativeFunction(string_from_char_code),
     );
+    constructor.set("raw".to_string(), JSValue::NativeFunction(string_raw));
     constructor.set(
         "prototype".to_string(),
         JSValue::Object(Rc::new(RefCell::new(prototype))),

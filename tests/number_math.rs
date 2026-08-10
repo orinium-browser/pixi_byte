@@ -20,6 +20,10 @@ fn math_exposes_functions_used_by_react() {
         .eval(
             r#"
             Math.min(8, 3, 5) === 3 &&
+            Math.max(8, 3, 5) === 8 &&
+            Math.abs(-4) === 4 &&
+            Math.pow(2, 3) === 8 &&
+            Math.PI > 3.14 &&
             Math.clz32(1) === 31 &&
             Math.ceil(1.2) === 2 &&
             Math.floor(1.8) === 1 &&

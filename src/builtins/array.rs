@@ -203,6 +203,7 @@ fn array_concat(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
 fn array_for_each(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     let object = receiver(&args, "forEach")?;
     let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    require_callback("Array.prototype.forEach", &callback)?;
     let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
     let array = JSValue::Object(Rc::clone(&object));
     for index in 0..length(&object) {
@@ -222,6 +223,7 @@ fn array_for_each(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::J
 fn array_map(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     let object = receiver(&args, "map")?;
     let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    require_callback("Array.prototype.map", &callback)?;
     let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
     let array = JSValue::Object(Rc::clone(&object));
     let length = length(&object);
@@ -244,6 +246,7 @@ fn array_map(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResu
 fn array_filter(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     let object = receiver(&args, "filter")?;
     let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    require_callback("Array.prototype.filter", &callback)?;
     let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
     let array = JSValue::Object(Rc::clone(&object));
     let mut values = Vec::new();
@@ -269,6 +272,7 @@ fn array_filter(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
 fn array_some(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     let object = receiver(&args, "some")?;
     let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    require_callback("Array.prototype.some", &callback)?;
     let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
     let array = JSValue::Object(Rc::clone(&object));
     for index in 0..length(&object) {
@@ -293,6 +297,7 @@ fn array_some(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRes
 fn array_every(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     let object = receiver(&args, "every")?;
     let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    require_callback("Array.prototype.every", &callback)?;
     let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
     let array = JSValue::Object(Rc::clone(&object));
     for index in 0..length(&object) {
@@ -317,6 +322,7 @@ fn array_every(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRe
 fn array_reduce(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     let object = receiver(&args, "reduce")?;
     let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    require_callback("Array.prototype.reduce", &callback)?;
     let array = JSValue::Object(Rc::clone(&object));
     let length = length(&object);
     let mut index = 0;
@@ -354,6 +360,17 @@ fn array_reduce(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
         index += 1;
     }
     Ok(accumulator)
+}
+
+fn require_callback(name: &str, callback: &JSValue) -> crate::error::JSResult<()> {
+    if matches!(callback, JSValue::Undefined | JSValue::Null) {
+        Err(crate::error::JSError::TypeError(format!(
+            "{name}: callback is not callable (found {})",
+            callback.type_of()
+        )))
+    } else {
+        Ok(())
+    }
 }
 
 fn array_index_of(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
@@ -415,6 +432,92 @@ fn array_is_array(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::
             if object.borrow().has_own_property("__pixi_array__")
     );
     Ok(JSValue::Boolean(is_array))
+}
+
+fn array_from(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let source = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    if matches!(source, JSValue::Null | JSValue::Undefined) {
+        return Err(crate::error::JSError::TypeError(
+            "Array.from requires an array-like or iterable value".to_string(),
+        ));
+    }
+    let mapper = args
+        .get(2)
+        .cloned()
+        .filter(|value| !matches!(value, JSValue::Undefined | JSValue::Null));
+    let mapper_this = args.get(3).cloned().unwrap_or(JSValue::Undefined);
+
+    let mut values = match &source {
+        JSValue::String(value) => value
+            .chars()
+            .map(|character| JSValue::String(character.to_string()))
+            .collect::<Vec<_>>(),
+        JSValue::Object(object) => {
+            let length = object.borrow().get("length").to_number();
+            if length.is_finite() && length >= 0.0 {
+                (0..length.floor() as usize)
+                    .map(|index| object.borrow().get(&index.to_string()))
+                    .collect()
+            } else {
+                let iterator_method = object.borrow().get("@@iterator");
+                if matches!(iterator_method, JSValue::Undefined | JSValue::Null) {
+                    Vec::new()
+                } else {
+                    let iterator = vm
+                        .call(iterator_method, source.clone(), Vec::new())
+                        .map_err(|error| {
+                            crate::error::JSError::TypeError(format!(
+                                "Array.from iterator method failed: {error}"
+                            ))
+                        })?;
+                    let JSValue::Object(iterator_object) = &iterator else {
+                        return Err(crate::error::JSError::TypeError(
+                            "Array.from iterator must return an object".to_string(),
+                        ));
+                    };
+                    let next = iterator_object.borrow().get("next");
+                    let mut output = Vec::new();
+                    loop {
+                        let result = vm
+                            .call(next.clone(), iterator.clone(), Vec::new())
+                            .map_err(|error| {
+                                crate::error::JSError::TypeError(format!(
+                                    "Array.from iterator next failed: {error}"
+                                ))
+                            })?;
+                        let JSValue::Object(result) = result else {
+                            return Err(crate::error::JSError::TypeError(
+                                "Array.from iterator result must be an object".to_string(),
+                            ));
+                        };
+                        if result.borrow().get("done").to_boolean() {
+                            break;
+                        }
+                        output.push(result.borrow().get("value"));
+                    }
+                    output
+                }
+            }
+        }
+        _ => Vec::new(),
+    };
+
+    if let Some(mapper) = mapper {
+        for (index, value) in values.iter_mut().enumerate() {
+            *value = vm
+                .call(
+                    mapper.clone(),
+                    mapper_this.clone(),
+                    vec![value.clone(), JSValue::Number(index as f64)],
+                )
+                .map_err(|error| {
+                    crate::error::JSError::TypeError(format!(
+                        "Array.from mapping callback failed: {error}"
+                    ))
+                })?;
+        }
+    }
+    Ok(vm.array_from_values(values))
 }
 
 fn array_constructor(
@@ -480,6 +583,7 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         "isArray".to_string(),
         JSValue::NativeFunction(array_is_array),
     );
+    array_ctor.set("from".to_string(), JSValue::NativeFunction(array_from));
     array_ctor.set(
         "__call__".to_string(),
         JSValue::NativeFunction(array_constructor),

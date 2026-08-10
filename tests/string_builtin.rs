@@ -39,3 +39,12 @@ fn string_constructor_and_from_char_code_are_callable() {
         .unwrap();
     assert_eq!(result, JSValue::String("42AB".to_string()));
 }
+
+#[test]
+fn char_code_at_uses_utf16_code_units() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(r#""A😀".charCodeAt(0) === 65 && "A😀".charCodeAt(1) === 55357"#)
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}

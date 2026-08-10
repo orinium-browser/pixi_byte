@@ -27,6 +27,23 @@ fn math_min(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::Number(value))
 }
 
+fn math_max(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = args
+        .iter()
+        .skip(1)
+        .map(JSValue::to_number)
+        .fold(f64::NEG_INFINITY, f64::max);
+    Ok(JSValue::Number(value))
+}
+
+fn math_abs(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    Ok(JSValue::Number(argument(&args, 0).abs()))
+}
+
+fn math_pow(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    Ok(JSValue::Number(argument(&args, 0).powf(argument(&args, 1))))
+}
+
 fn math_clz32(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::Number(
         (argument(&args, 0) as u32).leading_zeros() as f64
@@ -65,6 +82,9 @@ fn math_random(_vm: &mut VM, _args: Vec<JSValue>) -> JSResult<JSValue> {
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut math = JSObject::new();
     math.set("min".to_string(), JSValue::NativeFunction(math_min));
+    math.set("max".to_string(), JSValue::NativeFunction(math_max));
+    math.set("abs".to_string(), JSValue::NativeFunction(math_abs));
+    math.set("pow".to_string(), JSValue::NativeFunction(math_pow));
     math.set("clz32".to_string(), JSValue::NativeFunction(math_clz32));
     math.set("ceil".to_string(), JSValue::NativeFunction(math_ceil));
     math.set("floor".to_string(), JSValue::NativeFunction(math_floor));
@@ -73,6 +93,10 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     math.define_property(
         "LN2".to_string(),
         Property::read_only(JSValue::Number(std::f64::consts::LN_2)),
+    );
+    math.define_property(
+        "PI".to_string(),
+        Property::read_only(JSValue::Number(std::f64::consts::PI)),
     );
     global.borrow_mut().set(
         "Math".to_string(),

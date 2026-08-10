@@ -15,6 +15,7 @@ fn object_static_arguments(vm: &crate::vm::VM, mut args: Vec<JSValue>) -> Vec<JS
         (Some(JSValue::Object(receiver)), JSValue::Object(constructor)) => {
             Rc::ptr_eq(receiver, &vm.global_object) || Rc::ptr_eq(receiver, &constructor)
         }
+        (Some(JSValue::Undefined | JSValue::Null), _) => true,
         _ => false,
     };
     if has_receiver {
@@ -91,7 +92,7 @@ fn object_get_prototype_of(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResu
 
     let obj = args.remove(0);
 
-    match obj {
+    match &obj {
         JSValue::Object(obj_ref) => {
             if let Some(proto) = obj_ref.borrow().get_prototype() {
                 Ok(JSValue::Object(proto.clone()))
@@ -99,8 +100,21 @@ fn object_get_prototype_of(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResu
                 Ok(JSValue::Null)
             }
         }
-        _ => Err(JSError::TypeError(
-            "Object.getPrototypeOf: argument is not an object".to_string(),
+        JSValue::Function(..) | JSValue::ArrowFunction(..) => {
+            let prototype = vm
+                .user_function_object(&obj)
+                .and_then(|object| object.borrow().get_prototype())
+                .unwrap_or_else(|| vm.function_prototype.clone());
+            Ok(JSValue::Object(prototype))
+        }
+        JSValue::NativeFunction(..) | JSValue::BoundFunction(..) => {
+            Ok(JSValue::Object(vm.function_prototype.clone()))
+        }
+        JSValue::String(_) => Ok(JSValue::Object(vm.string_prototype.clone())),
+        JSValue::Number(_) => Ok(JSValue::Object(vm.number_prototype.clone())),
+        JSValue::Boolean(_) => Ok(JSValue::Object(vm.object_prototype.clone())),
+        JSValue::Null | JSValue::Undefined => Err(JSError::TypeError(
+            "Object.getPrototypeOf: cannot convert null or undefined to object".to_string(),
         )),
     }
 }
@@ -178,34 +192,50 @@ fn object_set_prototype_of(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResu
     let obj = args.remove(0);
     let proto = args.remove(0);
 
-    match obj {
-        JSValue::Object(obj_ref) => match proto {
-            JSValue::Object(o) => {
-                // Prevent prototype cycles: ensure obj_ref is not reachable from o
-                let mut current = Some(o.clone());
-                while let Some(p) = current {
-                    if Rc::ptr_eq(&p, &obj_ref) {
-                        return Err(JSError::TypeError(
-                            "Object.setPrototypeOf: setting prototype would create a cycle"
-                                .to_string(),
-                        ));
-                    }
-                    current = p.borrow().get_prototype();
-                }
+    let obj_ref = match &obj {
+        JSValue::Object(object) => Some(Rc::clone(object)),
+        JSValue::Function(..) | JSValue::ArrowFunction(..) => vm.user_function_object(&obj),
+        _ => None,
+    };
+    let Some(obj_ref) = obj_ref else {
+        return Err(JSError::TypeError(format!(
+            "Object.setPrototypeOf: first argument must be an object (found {}: {})",
+            obj.type_of(),
+            obj.to_console_string()
+        )));
+    };
 
-                obj_ref.borrow_mut().set_prototype(Some(o));
-                Ok(JSValue::Object(obj_ref.clone()))
+    match proto {
+        JSValue::Object(o) => {
+            // Prevent prototype cycles: ensure obj_ref is not reachable from o
+            let mut current = Some(o.clone());
+            while let Some(p) = current {
+                if Rc::ptr_eq(&p, &obj_ref) {
+                    return Err(JSError::TypeError(
+                        "Object.setPrototypeOf: setting prototype would create a cycle".to_string(),
+                    ));
+                }
+                current = p.borrow().get_prototype();
             }
-            JSValue::Null => {
-                obj_ref.borrow_mut().set_prototype(None);
-                Ok(JSValue::Object(obj_ref.clone()))
-            }
-            _ => Err(JSError::TypeError(
-                "Object.setPrototypeOf: prototype must be an object or null".to_string(),
-            )),
-        },
+
+            obj_ref.borrow_mut().set_prototype(Some(o));
+            Ok(obj)
+        }
+        value @ (JSValue::Function(..) | JSValue::ArrowFunction(..)) => {
+            let Some(prototype) = vm.user_function_object(&value) else {
+                return Err(JSError::TypeError(
+                    "Object.setPrototypeOf: prototype must be an object or null".to_string(),
+                ));
+            };
+            obj_ref.borrow_mut().set_prototype(Some(prototype));
+            Ok(obj)
+        }
+        JSValue::Null => {
+            obj_ref.borrow_mut().set_prototype(None);
+            Ok(obj)
+        }
         _ => Err(JSError::TypeError(
-            "Object.setPrototypeOf: first argument must be an object".to_string(),
+            "Object.setPrototypeOf: prototype must be an object or null".to_string(),
         )),
     }
 }
@@ -295,21 +325,27 @@ fn object_define_property(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResul
 
     let key = prop_name.to_string();
 
-    match obj {
-        JSValue::Object(obj_ref) => {
+    let object = match &obj {
+        JSValue::Object(object) => Some(object.clone()),
+        JSValue::Function(..) | JSValue::ArrowFunction(..) => vm.user_function_object(&obj),
+        _ => None,
+    };
+
+    match object {
+        Some(obj_ref) => {
             if let JSValue::Object(desc_ref) = desc {
                 // use define_property_descriptor to apply descriptor semantics
                 obj_ref
                     .borrow_mut()
                     .define_property_descriptor(key, desc_ref.clone());
-                Ok(JSValue::Object(obj_ref.clone()))
+                Ok(obj.clone())
             } else {
                 Err(JSError::TypeError(
                     "Object.defineProperty: descriptor must be an object".to_string(),
                 ))
             }
         }
-        _ => Err(JSError::TypeError(
+        None => Err(JSError::TypeError(
             "Object.defineProperty: first argument must be an object".to_string(),
         )),
     }
@@ -426,8 +462,14 @@ fn object_get_own_property_descriptor(
     let prop_name = args.remove(0);
     let key = prop_name.to_string();
 
-    match obj {
-        JSValue::Object(obj_ref) => {
+    let object = match &obj {
+        JSValue::Object(object) => Some(object.clone()),
+        JSValue::Function(..) | JSValue::ArrowFunction(..) => vm.user_function_object(&obj),
+        _ => None,
+    };
+
+    match object {
+        Some(obj_ref) => {
             if let Some(prop) = obj_ref.borrow().get_property_descriptor(&key) {
                 // build descriptor object
                 let mut desc = JSObject::new();
@@ -458,7 +500,7 @@ fn object_get_own_property_descriptor(
                 Ok(JSValue::Undefined)
             }
         }
-        _ => Err(JSError::TypeError(
+        None => Err(JSError::TypeError(
             "Object.getOwnPropertyDescriptor: first argument must be an object".to_string(),
         )),
     }
@@ -486,28 +528,165 @@ fn object_keys(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> 
     Ok(vm.array_from_values(keys))
 }
 
+fn object_get_own_property_names(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let args = object_static_arguments(vm, args);
+    let Some(value) = args.into_iter().next() else {
+        return Err(JSError::TypeError(
+            "Object.getOwnPropertyNames: missing object argument".to_string(),
+        ));
+    };
+    let object = match &value {
+        JSValue::Object(object) => Some(object.clone()),
+        JSValue::Function(..) | JSValue::ArrowFunction(..) => vm.user_function_object(&value),
+        _ => None,
+    };
+    let Some(object) = object else {
+        return Err(JSError::TypeError(
+            "Object.getOwnPropertyNames: argument must be an object".to_string(),
+        ));
+    };
+    let names = object
+        .borrow()
+        .own_property_names()
+        .into_iter()
+        .map(JSValue::String)
+        .collect();
+    Ok(vm.array_from_values(names))
+}
+
+fn object_get_own_property_symbols(
+    vm: &mut crate::vm::VM,
+    args: Vec<JSValue>,
+) -> JSResult<JSValue> {
+    let args = object_static_arguments(vm, args);
+    if args.is_empty() {
+        return Err(JSError::TypeError(
+            "Object.getOwnPropertySymbols: missing object argument".to_string(),
+        ));
+    }
+    Ok(vm.array_from_values(Vec::new()))
+}
+
+fn enumerable_object(vm: &crate::vm::VM, value: &JSValue) -> Option<Rc<RefCell<JSObject>>> {
+    match value {
+        JSValue::Object(object) => Some(Rc::clone(object)),
+        JSValue::Function(..) | JSValue::ArrowFunction(..) => vm.user_function_object(value),
+        _ => None,
+    }
+}
+
+fn object_entries(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let args = object_static_arguments(vm, args);
+    let Some(value) = args.first() else {
+        return Err(JSError::TypeError(
+            "Object.entries: missing object argument".to_string(),
+        ));
+    };
+    let Some(object) = enumerable_object(vm, value) else {
+        return Err(JSError::TypeError(
+            "Object.entries: argument must be an object".to_string(),
+        ));
+    };
+    let entries = object
+        .borrow()
+        .keys()
+        .into_iter()
+        .map(|key| {
+            let value = object.borrow().get(&key);
+            vm.array_from_values(vec![JSValue::String(key), value])
+        })
+        .collect();
+    Ok(vm.array_from_values(entries))
+}
+
+fn object_values(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let args = object_static_arguments(vm, args);
+    let Some(value) = args.first() else {
+        return Err(JSError::TypeError(
+            "Object.values: missing object argument".to_string(),
+        ));
+    };
+    let Some(object) = enumerable_object(vm, value) else {
+        return Err(JSError::TypeError(
+            "Object.values: argument must be an object".to_string(),
+        ));
+    };
+    let values = object
+        .borrow()
+        .keys()
+        .into_iter()
+        .map(|key| object.borrow().get(&key))
+        .collect();
+    Ok(vm.array_from_values(values))
+}
+
+fn object_from_entries(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let args = object_static_arguments(vm, args);
+    let source = args.first().cloned().unwrap_or(JSValue::Undefined);
+    let array_constructor = vm.global_object.borrow().get("Array");
+    let JSValue::Object(array_object) = &array_constructor else {
+        return Err(JSError::InternalError(
+            "Array constructor is missing".into(),
+        ));
+    };
+    let array_from = array_object.borrow().get("from");
+    let entries = vm.call(array_from, array_constructor, vec![source])?;
+    let JSValue::Object(entries) = entries else {
+        return Err(JSError::TypeError(
+            "Object.fromEntries requires an iterable".to_string(),
+        ));
+    };
+    let length = entries.borrow().get("length").to_number() as usize;
+    let target = Rc::new(RefCell::new(JSObject::new()));
+    for index in 0..length {
+        let JSValue::Object(entry) = entries.borrow().get(&index.to_string()) else {
+            return Err(JSError::TypeError(
+                "Object.fromEntries iterator value must be an object".to_string(),
+            ));
+        };
+        let key = entry.borrow().get("0").to_string();
+        let value = entry.borrow().get("1");
+        target.borrow_mut().set(key, value);
+    }
+    Ok(JSValue::Object(target))
+}
+
 /// Object.assign(target, ...sources)
 fn object_assign(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let mut args = object_static_arguments(vm, args).into_iter();
-    let Some(JSValue::Object(target)) = args.next() else {
+    let Some(target_value) = args.next() else {
+        return Err(JSError::TypeError(
+            "Object.assign: target must be an object".to_string(),
+        ));
+    };
+    let target = match &target_value {
+        JSValue::Object(target) => Some(Rc::clone(target)),
+        JSValue::Function(..) | JSValue::ArrowFunction(..) => {
+            vm.user_function_object(&target_value)
+        }
+        _ => None,
+    };
+    let Some(target) = target else {
         return Err(JSError::TypeError(
             "Object.assign: target must be an object".to_string(),
         ));
     };
 
     for source in args {
-        let source = match source {
-            JSValue::Object(source) => source,
-            JSValue::Null | JSValue::Undefined => continue,
-            _ => continue,
+        let source = match &source {
+            JSValue::Object(source) => Some(Rc::clone(source)),
+            JSValue::Function(..) | JSValue::ArrowFunction(..) => vm.user_function_object(&source),
+            JSValue::Null | JSValue::Undefined => None,
+            _ => None,
         };
+        let Some(source) = source else { continue };
         let keys = source.borrow().keys();
         for key in keys {
             let value = source.borrow().get(&key);
             target.borrow_mut().set(key, value);
         }
     }
-    Ok(JSValue::Object(target))
+    Ok(target_value)
 }
 
 /// Object.is(value1, value2)
@@ -623,6 +802,23 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         JSValue::NativeFunction(object_get_own_property_descriptor),
     );
     obj.set("keys".to_string(), JSValue::NativeFunction(object_keys));
+    obj.set(
+        "entries".to_string(),
+        JSValue::NativeFunction(object_entries),
+    );
+    obj.set("values".to_string(), JSValue::NativeFunction(object_values));
+    obj.set(
+        "fromEntries".to_string(),
+        JSValue::NativeFunction(object_from_entries),
+    );
+    obj.set(
+        "getOwnPropertyNames".to_string(),
+        JSValue::NativeFunction(object_get_own_property_names),
+    );
+    obj.set(
+        "getOwnPropertySymbols".to_string(),
+        JSValue::NativeFunction(object_get_own_property_symbols),
+    );
     obj.set("assign".to_string(), JSValue::NativeFunction(object_assign));
     obj.set("is".to_string(), JSValue::NativeFunction(object_is));
 

@@ -24,6 +24,7 @@ fn function_call(
     };
 
     vm.call(func, this_arg, args)
+        .map_err(|error| crate::error::JSError::TypeError(format!("Function.call: {error}")))
 }
 
 fn function_apply(
@@ -73,6 +74,7 @@ fn function_apply(
     }
 
     vm.call(func, this_arg, call_args_vec)
+        .map_err(|error| crate::error::JSError::TypeError(format!("Function.apply: {error}")))
 }
 
 fn function_bind(

@@ -4,6 +4,7 @@
 //! Each built-in has an `install` function which receives the global object.
 
 pub mod array;
+pub mod boolean;
 pub mod collection;
 pub mod date;
 pub mod error_object;
@@ -13,6 +14,7 @@ pub mod math;
 pub mod number;
 pub mod object;
 pub mod promise;
+pub mod proxy;
 pub mod regexp;
 pub mod string;
 pub mod symbol;
@@ -38,7 +40,9 @@ impl Builtins {
         self::object::install(global);
         // Array 関連の組み込みを登録
         self::array::install(global);
+        self::boolean::install(global);
         self::promise::install(global);
+        self::proxy::install(global);
         self::regexp::install(global);
         self::string::install(global);
         self::number::install(global);

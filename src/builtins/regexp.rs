@@ -44,6 +44,93 @@ fn normalize_pattern(pattern: &str) -> String {
         output.push('\\');
         index += 1;
     }
+    strip_unsupported_lookarounds(&normalize_character_classes(&output))
+}
+
+fn normalize_character_classes(pattern: &str) -> String {
+    let mut output = String::with_capacity(pattern.len());
+    let mut in_class = false;
+    let mut escaped = false;
+    for character in pattern.chars() {
+        if escaped {
+            output.push(character);
+            escaped = false;
+            continue;
+        }
+        if character == '\\' {
+            output.push(character);
+            escaped = true;
+            continue;
+        }
+        match character {
+            '[' if in_class => output.push_str("\\["),
+            '[' => {
+                in_class = true;
+                output.push(character);
+            }
+            ']' if in_class => {
+                in_class = false;
+                output.push(character);
+            }
+            _ => output.push(character),
+        }
+    }
+    output
+}
+
+fn strip_unsupported_lookarounds(pattern: &str) -> String {
+    let characters: Vec<char> = pattern.chars().collect();
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0;
+    while index < characters.len() {
+        let assertion_prefix = characters.get(index) == Some(&'(')
+            && characters.get(index + 1) == Some(&'?')
+            && (matches!(characters.get(index + 2), Some('=' | '!'))
+                || (characters.get(index + 2) == Some(&'<')
+                    && matches!(characters.get(index + 3), Some('=' | '!'))));
+        if !assertion_prefix {
+            output.push(characters[index]);
+            index += 1;
+            continue;
+        }
+
+        let mut depth = 1usize;
+        let mut escaped = false;
+        let mut in_class = false;
+        index += if characters.get(index + 2) == Some(&'<') {
+            4
+        } else {
+            3
+        };
+        while index < characters.len() && depth > 0 {
+            let character = characters[index];
+            index += 1;
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if character == '\\' {
+                escaped = true;
+                continue;
+            }
+            if character == '[' && !in_class {
+                in_class = true;
+                continue;
+            }
+            if character == ']' && in_class {
+                in_class = false;
+                continue;
+            }
+            if in_class {
+                continue;
+            }
+            if character == '(' {
+                depth += 1;
+            } else if character == ')' {
+                depth -= 1;
+            }
+        }
+    }
     output
 }
 
@@ -116,14 +203,61 @@ pub fn create(pattern: &str, flags: &str) -> JSValue {
     let mut object = JSObject::new();
     object.set(PATTERN.to_string(), JSValue::String(pattern.to_string()));
     object.set(FLAGS.to_string(), JSValue::String(flags.to_string()));
+    object.set("source".to_string(), JSValue::String(pattern.to_string()));
+    object.set("flags".to_string(), JSValue::String(flags.to_string()));
+    object.set("global".to_string(), JSValue::Boolean(flags.contains('g')));
+    object.set(
+        "ignoreCase".to_string(),
+        JSValue::Boolean(flags.contains('i')),
+    );
+    object.set(
+        "multiline".to_string(),
+        JSValue::Boolean(flags.contains('m')),
+    );
+    object.set("dotAll".to_string(), JSValue::Boolean(flags.contains('s')));
+    object.set("unicode".to_string(), JSValue::Boolean(flags.contains('u')));
+    object.set("sticky".to_string(), JSValue::Boolean(flags.contains('y')));
+    object.set("lastIndex".to_string(), JSValue::Number(0.0));
     object.set("test".to_string(), JSValue::NativeFunction(regexp_test));
     object.set("exec".to_string(), JSValue::NativeFunction(regexp_exec));
     JSValue::Object(Rc::new(RefCell::new(object)))
 }
 
+fn regexp_constructor(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let pattern = match args.get(1) {
+        Some(JSValue::Object(object)) if is_regexp(object) => {
+            object.borrow().get(PATTERN).to_string()
+        }
+        Some(JSValue::Undefined) | None => String::new(),
+        Some(value) => value.to_string(),
+    };
+    let flags = match args.get(2) {
+        Some(JSValue::Undefined) | None => match args.get(1) {
+            Some(JSValue::Object(object)) if is_regexp(object) => {
+                object.borrow().get(FLAGS).to_string()
+            }
+            _ => String::new(),
+        },
+        Some(value) => value.to_string(),
+    };
+    let value = create(&pattern, &flags);
+    if let JSValue::Object(object) = &value {
+        compile(object)?;
+    }
+    Ok(value)
+}
+
 /// Installs the minimal RegExp constructor namespace.
 pub fn install(global: &Rc<RefCell<JSObject>>) {
-    let constructor = JSObject::new();
+    let mut constructor = JSObject::new();
+    constructor.set(
+        "__construct__".to_string(),
+        JSValue::NativeFunction(regexp_constructor),
+    );
+    constructor.set(
+        "__call__".to_string(),
+        JSValue::NativeFunction(regexp_constructor),
+    );
     global.borrow_mut().set(
         "RegExp".to_string(),
         JSValue::Object(Rc::new(RefCell::new(constructor))),

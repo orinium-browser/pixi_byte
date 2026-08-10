@@ -186,6 +186,11 @@ impl JSObject {
             .collect()
     }
 
+    /// 文字列のown property名を列挙可能性に関係なく取得します。
+    pub fn own_property_names(&self) -> Vec<String> {
+        self.properties.borrow().keys().cloned().collect()
+    }
+
     /// Returns enumerable string keys from this object and its prototype chain.
     pub fn enumerable_keys(&self) -> Vec<String> {
         let mut keys = self.keys();

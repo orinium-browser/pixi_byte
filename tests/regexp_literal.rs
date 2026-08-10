@@ -43,3 +43,35 @@ fn javascript_unicode_escapes_are_supported_in_regexp_literals() {
 
     assert_eq!(result, JSValue::Boolean(true));
 }
+
+#[test]
+fn regexp_constructor_exposes_source_flags_and_test() {
+    let mut engine = pixi_byte::JSEngine::new();
+    let result = engine
+        .eval("const r = new RegExp('^a+$', 'i'); [r.source, r.flags, r.ignoreCase, r.test('AAA')].join('|')")
+        .unwrap();
+    assert_eq!(result.to_string(), "^a+$|i|true|true");
+}
+
+#[test]
+fn regexp_is_callable_without_new() {
+    let mut engine = pixi_byte::JSEngine::new();
+    let result = engine.eval("RegExp('^ok$').test('ok')").unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}
+
+#[test]
+fn javascript_character_classes_allow_a_literal_open_bracket() {
+    let mut engine = pixi_byte::JSEngine::new();
+    let result = engine.eval(r#"/[\\^$.*+?()[\]{}|]/g.test("[")"#).unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}
+
+#[test]
+fn unsupported_lookarounds_do_not_prevent_regexp_construction() {
+    let mut engine = pixi_byte::JSEngine::new();
+    let result = engine
+        .eval(r#"new RegExp("\\s+(add|subtract)\\b(?!\\))\\s*(?=[,])").test(" add ,")"#)
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}

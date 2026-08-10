@@ -103,3 +103,20 @@ fn map_iterators_expose_keys_values_and_entries() {
         .unwrap();
     assert_eq!(result, JSValue::String("a1a1".to_string()));
 }
+
+#[test]
+fn weak_map_supports_object_keys_without_iteration() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const first = {};
+            const second = function () {};
+            const values = new WeakMap([[first, 1]]);
+            values.set(second, 2);
+            values.get(first) === 1 && values.get(second) === 2 && values.has(first);
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}
