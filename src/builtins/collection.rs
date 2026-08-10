@@ -246,7 +246,15 @@ fn make_iterator(collection: Rc<RefCell<JSObject>>, kind: &str) -> JSValue {
         "next".to_string(),
         JSValue::NativeFunction(collection_iterator_next),
     );
+    iterator.set(
+        "@@iterator".to_string(),
+        JSValue::NativeFunction(iterator_identity),
+    );
     JSValue::Object(Rc::new(RefCell::new(iterator)))
+}
+
+fn iterator_identity(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    Ok(args.first().cloned().unwrap_or(JSValue::Undefined))
 }
 
 fn iterator_result(value: JSValue, done: bool) -> JSValue {
@@ -262,10 +270,21 @@ fn collection_iterator_next(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue
             "collection iterator next: invalid receiver".to_string(),
         ));
     };
+    let value = iterator_step(vm, iterator)?.ok_or_else(|| {
+        JSError::TypeError("collection iterator next: invalid receiver".to_string())
+    })?;
+    Ok(match value {
+        Some(value) => iterator_result(value, false),
+        None => iterator_result(JSValue::Undefined, true),
+    })
+}
+
+pub(crate) fn iterator_step(
+    vm: &VM,
+    iterator: &Rc<RefCell<JSObject>>,
+) -> JSResult<Option<Option<JSValue>>> {
     let JSValue::Object(collection) = iterator.borrow().get(ITERATOR_COLLECTION) else {
-        return Err(JSError::TypeError(
-            "collection iterator next: invalid receiver".to_string(),
-        ));
+        return Ok(None);
     };
     let kind = iterator.borrow().get(ITERATOR_KIND).to_string();
     let mut index = iterator.borrow().get(ITERATOR_INDEX).to_number() as usize;
@@ -293,11 +312,11 @@ fn collection_iterator_next(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue
                 "set-entry" => vm.array_from_values(vec![key.clone(), key]),
                 _ => JSValue::Undefined,
             };
-            return Ok(iterator_result(value, false));
+            return Ok(Some(Some(value)));
         }
         index += 1;
     }
-    Ok(iterator_result(JSValue::Undefined, true))
+    Ok(Some(None))
 }
 
 fn set_values(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {

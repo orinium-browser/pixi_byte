@@ -91,6 +91,25 @@ fn map_for_each_visits_values_and_keys_in_insertion_order() {
 }
 
 #[test]
+fn map_iteration_can_update_existing_entries_without_extending_iteration() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const values = new Map([["a", [1]], ["b", [2]], ["c", [3]]]);
+            let visits = 0;
+            for (const [key, value] of values.entries()) {
+                values.set(key, value.map(item => item + 1));
+                visits++;
+            }
+            visits + ":" + values.get("a")[0] + values.get("c")[0];
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("3:24".to_string()));
+}
+
+#[test]
 fn set_exposes_the_iterator_protocol() {
     let mut engine = JSEngine::new();
     let result = engine

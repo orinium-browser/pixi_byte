@@ -1254,6 +1254,15 @@ impl VM {
                 let JSValue::Object(iterator_object) = &iterator else {
                     return Err(JSError::TypeError("iterator is not an object".into()));
                 };
+                if let Some(value) = indexed_iterator_step(iterator_object)?.or(
+                    crate::builtins::collection::iterator_step(self, iterator_object)?,
+                ) {
+                    let Some(value) = value else {
+                        return Ok(ControlFlow::Jump(*exit_target));
+                    };
+                    self.stack.push(value);
+                    return Ok(ControlFlow::Continue);
+                }
                 let next = iterator_object.borrow().get("next");
                 let result = self.call(next, iterator.clone(), Vec::new())?;
                 let JSValue::Object(result) = result else {
@@ -1783,24 +1792,31 @@ fn indexed_iterator_next(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> 
     let Some(JSValue::Object(iterator)) = args.first() else {
         return Err(JSError::TypeError("iterator next: invalid receiver".into()));
     };
+    let value = indexed_iterator_step(iterator)?
+        .ok_or_else(|| JSError::TypeError("iterator next: invalid source".into()))?;
+    let mut result = JSObject::new();
+    result.set(
+        "value".to_string(),
+        value.clone().unwrap_or(JSValue::Undefined),
+    );
+    result.set("done".to_string(), JSValue::Boolean(value.is_none()));
+    Ok(JSValue::Object(Rc::new(RefCell::new(result))))
+}
+
+fn indexed_iterator_step(iterator: &Rc<RefCell<JSObject>>) -> JSResult<Option<Option<JSValue>>> {
     let JSValue::Object(source) = iterator.borrow().get(INDEXED_ITERATOR_SOURCE) else {
-        return Err(JSError::TypeError("iterator next: invalid source".into()));
+        return Ok(None);
     };
     let index = iterator.borrow().get(INDEXED_ITERATOR_INDEX).to_number() as usize;
     let length = source.borrow().get("length").to_number().max(0.0) as usize;
-    let mut result = JSObject::new();
     if index >= length {
-        result.set("value".to_string(), JSValue::Undefined);
-        result.set("done".to_string(), JSValue::Boolean(true));
-    } else {
-        iterator.borrow_mut().set(
-            INDEXED_ITERATOR_INDEX.to_string(),
-            JSValue::Number((index + 1) as f64),
-        );
-        result.set("value".to_string(), source.borrow().get(&index.to_string()));
-        result.set("done".to_string(), JSValue::Boolean(false));
+        return Ok(Some(None));
     }
-    Ok(JSValue::Object(Rc::new(RefCell::new(result))))
+    iterator.borrow_mut().set(
+        INDEXED_ITERATOR_INDEX.to_string(),
+        JSValue::Number((index + 1) as f64),
+    );
+    Ok(Some(Some(source.borrow().get(&index.to_string()))))
 }
 
 impl Default for VM {
