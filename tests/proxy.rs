@@ -19,3 +19,18 @@ fn proxy_get_and_set_traps_are_invoked() {
         .unwrap();
     assert_eq!(result, JSValue::Number(9.0));
 }
+
+#[test]
+fn proxy_internal_properties_do_not_leak_through_enumeration() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                const proxy = new Proxy({}, {});
+                const copy = { ...proxy };
+                Object.keys(proxy).length === 0 && Object.keys(copy).length === 0;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}

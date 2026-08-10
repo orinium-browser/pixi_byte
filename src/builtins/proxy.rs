@@ -1,6 +1,6 @@
 use crate::error::{JSError, JSResult};
 use crate::value::JSValue;
-use crate::value::jsobject::{HOST_GET_PROPERTY, HOST_SET_PROPERTY, JSObject};
+use crate::value::jsobject::{HOST_GET_PROPERTY, HOST_SET_PROPERTY, JSObject, Property};
 use crate::vm::VM;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -22,17 +22,28 @@ fn proxy_constructor(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     }
 
     let mut proxy = JSObject::new();
-    proxy.set(PROXY_TARGET.to_string(), target);
-    proxy.set(PROXY_HANDLER.to_string(), handler);
-    proxy.set(
+    proxy.define_property(PROXY_TARGET.to_string(), internal_property(target));
+    proxy.define_property(PROXY_HANDLER.to_string(), internal_property(handler));
+    proxy.define_property(
         HOST_GET_PROPERTY.to_string(),
-        JSValue::NativeFunction(proxy_get),
+        internal_property(JSValue::NativeFunction(proxy_get)),
     );
-    proxy.set(
+    proxy.define_property(
         HOST_SET_PROPERTY.to_string(),
-        JSValue::NativeFunction(proxy_set),
+        internal_property(JSValue::NativeFunction(proxy_set)),
     );
     Ok(JSValue::Object(Rc::new(RefCell::new(proxy))))
+}
+
+fn internal_property(value: JSValue) -> Property {
+    Property {
+        value,
+        enumerable: false,
+        writable: false,
+        configurable: false,
+        getter: None,
+        setter: None,
+    }
 }
 
 fn proxy_get(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
