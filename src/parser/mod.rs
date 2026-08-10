@@ -29,6 +29,7 @@ pub enum Statement {
         name: String,
         params: Vec<String>,
         body: Vec<Statement>,
+        is_generator: bool,
     },
     If {
         test: Expression,
@@ -50,10 +51,21 @@ pub enum Statement {
         body: Vec<Statement>,
     },
     ForIn {
-        binding: String,
+        binding: BindingPattern,
         kind: Option<VarKind>,
         right: Expression,
         body: Vec<Statement>,
+    },
+    ForOf {
+        binding: BindingPattern,
+        kind: Option<VarKind>,
+        right: Expression,
+        body: Vec<Statement>,
+    },
+    PatternDeclaration {
+        kind: VarKind,
+        binding: BindingPattern,
+        init: Expression,
     },
     Throw(Expression),
     Try {
@@ -76,6 +88,16 @@ pub enum VarKind {
     Var,
     Let,
     Const,
+}
+
+#[derive(Debug, Clone)]
+pub enum BindingPattern {
+    Identifier(String),
+    Target(Expression),
+    Array(Vec<Option<BindingPattern>>),
+    Object(Vec<(String, BindingPattern)>),
+    Rest(Box<BindingPattern>),
+    Default(Box<BindingPattern>, Expression),
 }
 
 /// 式
@@ -108,7 +130,12 @@ pub enum Expression {
     },
     Sequence(Vec<Expression>),
     This,
+    Super,
     ArrayLiteral(Vec<Expression>),
+    TemplateObject {
+        cooked: Vec<String>,
+        raw: Vec<String>,
+    },
     ObjectLiteral(Vec<ObjectProperty>),
     RegExpLiteral {
         pattern: String,
@@ -119,7 +146,16 @@ pub enum Expression {
         property: Box<Expression>,
         computed: bool,
     },
+    OptionalMemberAccess {
+        object: Box<Expression>,
+        property: Box<Expression>,
+        computed: bool,
+    },
     Call {
+        callee: Box<Expression>,
+        args: Vec<Expression>,
+    },
+    OptionalCall {
         callee: Box<Expression>,
         args: Vec<Expression>,
     },
@@ -131,12 +167,42 @@ pub enum Expression {
         name: Option<String>,
         params: Vec<String>,
         body: Vec<Statement>,
+        is_generator: bool,
     },
     ArrowFunction {
         params: Vec<String>,
         body: Vec<Statement>,
     },
+    Yield {
+        value: Box<Expression>,
+        delegate: bool,
+    },
+    Spread(Box<Expression>),
+    Class {
+        name: Option<String>,
+        super_class: Option<Box<Expression>>,
+        constructor: Option<ClassMethod>,
+        methods: Vec<ClassMethod>,
+    },
     // TODO: 他の式を追加
+}
+
+#[derive(Debug, Clone)]
+pub struct ClassMethod {
+    pub name: String,
+    pub computed_name: Option<Box<Expression>>,
+    pub params: Vec<String>,
+    pub body: Vec<Statement>,
+    pub is_static: bool,
+    pub is_generator: bool,
+    pub kind: ClassMethodKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClassMethodKind {
+    Method,
+    Getter,
+    Setter,
 }
 
 #[derive(Debug, Clone)]
@@ -154,6 +220,11 @@ pub enum ObjectProperty {
         parameter: String,
         body: Vec<Statement>,
     },
+    ComputedData {
+        key: Expression,
+        value: Expression,
+    },
+    Spread(Expression),
 }
 
 /// リテラル
@@ -187,6 +258,7 @@ pub enum BinaryOp {
     Instanceof,
     And,
     Or,
+    Nullish,
     BitAnd,
     BitOr,
     BitXor,
@@ -214,6 +286,7 @@ pub struct Parser {
 
     current: Token,
     next: Token,
+    next_temporary: usize,
 }
 
 impl Parser {
@@ -233,6 +306,7 @@ impl Parser {
             lexer,
             current,
             next,
+            next_temporary: 0,
         })
     }
 
@@ -249,6 +323,10 @@ impl Parser {
 
     /// 文をパース
     fn parse_statement(&mut self) -> JSResult<Statement> {
+        if self.check(&TokenKind::Async) && matches!(self.next.kind, TokenKind::Function) {
+            self.advance()?;
+            return self.parse_function_declaration();
+        }
         if matches!(self.current.kind, TokenKind::Identifier(_))
             && matches!(self.next.kind, TokenKind::Colon)
         {
@@ -272,6 +350,7 @@ impl Parser {
             TokenKind::Const => self.parse_var_declaration(VarKind::Const),
             TokenKind::Return => self.parse_return_statement(),
             TokenKind::Function => self.parse_function_declaration(),
+            TokenKind::Class => self.parse_class_declaration(),
             TokenKind::If => self.parse_if_statement(),
             TokenKind::While => self.parse_while_statement(),
             TokenKind::Do => self.parse_do_while_statement(),
@@ -453,21 +532,26 @@ impl Parser {
             };
             let mut candidate = self.clone();
             candidate.advance()?;
-            if matches!(candidate.current().kind, TokenKind::Identifier(_)) {
-                candidate.advance()?;
-                if candidate.check(&TokenKind::In) {
-                    self.advance()?;
-                    let binding = self.expect_identifier("Expected for-in binding")?;
-                    self.expect(&TokenKind::In, "Expected 'in' after for-in binding")?;
+            if let Ok(binding) = candidate.parse_binding_pattern()
+                && (candidate.check(&TokenKind::In) || candidate.check(&TokenKind::Of))
+            {
+                *self = candidate;
+                if self.eat(&TokenKind::In)? {
                     return self.parse_for_in_tail(binding, Some(kind));
                 }
+                self.expect(&TokenKind::Of, "Expected 'of' after for-of binding")?;
+                return self.parse_for_of_tail(binding, Some(kind));
             }
         } else if matches!(self.current().kind, TokenKind::Identifier(_))
-            && matches!(self.next.kind, TokenKind::In)
+            && matches!(self.next.kind, TokenKind::In | TokenKind::Of)
         {
-            let binding = self.expect_identifier("Expected for-in binding")?;
-            self.expect(&TokenKind::In, "Expected 'in' after for-in binding")?;
-            return self.parse_for_in_tail(binding, None);
+            let binding =
+                BindingPattern::Identifier(self.expect_identifier("Expected for-in binding")?);
+            if self.eat(&TokenKind::In)? {
+                return self.parse_for_in_tail(binding, None);
+            }
+            self.expect(&TokenKind::Of, "Expected 'of' after for-of binding")?;
+            return self.parse_for_of_tail(binding, None);
         }
 
         let init = if self.eat(&TokenKind::Semicolon)? {
@@ -517,7 +601,11 @@ impl Parser {
         })
     }
 
-    fn parse_for_in_tail(&mut self, binding: String, kind: Option<VarKind>) -> JSResult<Statement> {
+    fn parse_for_in_tail(
+        &mut self,
+        binding: BindingPattern,
+        kind: Option<VarKind>,
+    ) -> JSResult<Statement> {
         let right = self.parse_expression()?;
         self.expect(
             &TokenKind::RightParen,
@@ -529,6 +617,29 @@ impl Parser {
             vec![self.parse_statement()?]
         };
         Ok(Statement::ForIn {
+            binding,
+            kind,
+            right,
+            body,
+        })
+    }
+
+    fn parse_for_of_tail(
+        &mut self,
+        binding: BindingPattern,
+        kind: Option<VarKind>,
+    ) -> JSResult<Statement> {
+        let right = self.parse_expression()?;
+        self.expect(
+            &TokenKind::RightParen,
+            "Expected ')' after for-of expression",
+        )?;
+        let body = if self.check(&TokenKind::LeftBrace) {
+            self.parse_block()?
+        } else {
+            vec![self.parse_statement()?]
+        };
+        Ok(Statement::ForOf {
             binding,
             kind,
             right,
@@ -579,20 +690,22 @@ impl Parser {
 
     /// 関数宣言をパース: function name(params) { body }
     fn parse_function_declaration(&mut self) -> JSResult<Statement> {
-        let (name, params, body) = self.parse_function(true)?;
+        let (name, params, body, is_generator) = self.parse_function(true)?;
 
         Ok(Statement::FunctionDeclaration {
             name: name.unwrap(),
             params,
             body,
+            is_generator,
         })
     }
 
     fn parse_function(
         &mut self,
         require_name: bool,
-    ) -> JSResult<(Option<String>, Vec<String>, Vec<Statement>)> {
+    ) -> JSResult<(Option<String>, Vec<String>, Vec<Statement>, bool)> {
         self.expect(&TokenKind::Function, "Expected function")?;
+        let is_generator = self.eat(&TokenKind::Star)?;
 
         let name = if require_name || matches!(&self.current().kind, TokenKind::Identifier(_)) {
             Some(self.expect_identifier("Expected function name")?)
@@ -600,23 +713,11 @@ impl Parser {
             None
         };
 
-        self.expect(&TokenKind::LeftParen, "Expected '('")?;
+        let (params, mut prologue) = self.parse_method_parameters()?;
+        let mut body = self.parse_block()?;
+        prologue.append(&mut body);
 
-        let mut params = Vec::new();
-
-        while !self.check(&TokenKind::RightParen) {
-            params.push(self.expect_identifier("Expected parameter name")?);
-
-            if !self.check(&TokenKind::RightParen) {
-                self.expect(&TokenKind::Comma, "Expected ','")?;
-            }
-        }
-
-        self.expect(&TokenKind::RightParen, "Expected ')'")?;
-
-        let body = self.parse_block()?;
-
-        Ok((name, params, body))
+        Ok((name, params, prologue, is_generator))
     }
 
     /// 式をパース
@@ -692,48 +793,69 @@ impl Parser {
     }
 
     fn try_parse_arrow_function(&mut self) -> JSResult<Option<Expression>> {
+        if self.check(&TokenKind::Async) {
+            let mut candidate = self.clone();
+            candidate.advance()?;
+            if let TokenKind::Identifier(param) = &candidate.current().kind
+                && matches!(candidate.next.kind, TokenKind::Arrow)
+            {
+                let param = param.clone();
+                candidate.advance()?;
+                candidate.advance()?;
+                let arrow = candidate.parse_arrow_body(vec![param], Vec::new())?;
+                *self = candidate;
+                return Ok(Some(arrow));
+            }
+            if candidate.check(&TokenKind::LeftParen)
+                && let Ok((params, prologue)) = candidate.parse_method_parameters()
+                && candidate.eat(&TokenKind::Arrow)?
+            {
+                let arrow = candidate.parse_arrow_body(params, prologue)?;
+                *self = candidate;
+                return Ok(Some(arrow));
+            }
+        }
+
         if let TokenKind::Identifier(param) = &self.current().kind
             && matches!(self.next.kind, TokenKind::Arrow)
         {
             let param = param.clone();
             self.advance()?;
             self.advance()?;
-            return self.parse_arrow_body(vec![param]).map(Some);
+            return self.parse_arrow_body(vec![param], Vec::new()).map(Some);
         }
 
         if !self.check(&TokenKind::LeftParen) {
             return Ok(None);
         }
         let mut candidate = self.clone();
-        candidate.advance()?;
-        let mut params = Vec::new();
-        while !candidate.check(&TokenKind::RightParen) {
-            let TokenKind::Identifier(param) = &candidate.current().kind else {
-                return Ok(None);
-            };
-            params.push(param.clone());
-            candidate.advance()?;
-            if !candidate.check(&TokenKind::RightParen) && !candidate.eat(&TokenKind::Comma)? {
-                return Ok(None);
-            }
-        }
-        candidate.advance()?;
+        let Ok((params, prologue)) = candidate.parse_method_parameters() else {
+            return Ok(None);
+        };
         if !candidate.eat(&TokenKind::Arrow)? {
             return Ok(None);
         }
 
-        let arrow = candidate.parse_arrow_body(params)?;
+        let arrow = candidate.parse_arrow_body(params, prologue)?;
         *self = candidate;
         Ok(Some(arrow))
     }
 
-    fn parse_arrow_body(&mut self, params: Vec<String>) -> JSResult<Expression> {
-        let body = if self.check(&TokenKind::LeftBrace) {
+    fn parse_arrow_body(
+        &mut self,
+        params: Vec<String>,
+        mut prologue: Vec<Statement>,
+    ) -> JSResult<Expression> {
+        let mut body = if self.check(&TokenKind::LeftBrace) {
             self.parse_block()?
         } else {
             vec![Statement::Return(Some(self.parse_assignment()?))]
         };
-        Ok(Expression::ArrowFunction { params, body })
+        prologue.append(&mut body);
+        Ok(Expression::ArrowFunction {
+            params,
+            body: prologue,
+        })
     }
 
     fn parse_expression_bp(&mut self, min_bp: u8) -> JSResult<Expression> {
@@ -761,6 +883,9 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> JSResult<Expression> {
+        if self.eat(&TokenKind::Await)? {
+            return self.parse_unary();
+        }
         if self.check(&TokenKind::PlusPlus) || self.check(&TokenKind::MinusMinus) {
             let increment = self.check(&TokenKind::PlusPlus);
             self.advance()?;
@@ -793,15 +918,30 @@ impl Parser {
     fn parse_var_declaration(&mut self, kind: VarKind) -> JSResult<Statement> {
         self.advance()?; // var/let/const
 
-        let mut declarations = Vec::new();
+        let mut statements = Vec::new();
         loop {
-            let name = self.expect_identifier("Expected variable name")?;
-            let init = if self.eat(&TokenKind::Eq)? {
-                Some(self.parse_assignment()?)
+            if self.check(&TokenKind::LeftBracket) || self.check(&TokenKind::LeftBrace) {
+                let binding = self.parse_binding_pattern()?;
+                self.expect(&TokenKind::Eq, "Expected initializer for destructuring")?;
+                let init = self.parse_assignment()?;
+                statements.push(Statement::PatternDeclaration {
+                    kind,
+                    binding,
+                    init,
+                });
             } else {
-                None
-            };
-            declarations.push((name, init));
+                let name = self.expect_identifier("Expected variable name")?;
+                let init = if self.eat(&TokenKind::Eq)? {
+                    Some(self.parse_assignment()?)
+                } else {
+                    None
+                };
+                statements.push(Statement::VariableDeclaration {
+                    kind,
+                    declarations: vec![(name, init)],
+                });
+            }
+
             if !self.eat(&TokenKind::Comma)? {
                 break;
             }
@@ -809,13 +949,257 @@ impl Parser {
 
         self.consume_semicolon()?;
 
-        Ok(Statement::VariableDeclaration { kind, declarations })
+        if statements.len() == 1 {
+            Ok(statements.pop().expect("declaration statement must exist"))
+        } else {
+            Ok(Statement::Block(statements))
+        }
+    }
+
+    fn parse_binding_pattern(&mut self) -> JSResult<BindingPattern> {
+        match &self.current().kind {
+            TokenKind::Identifier(_) | TokenKind::Of | TokenKind::From | TokenKind::As => Ok(
+                BindingPattern::Identifier(self.expect_identifier("Expected binding name")?),
+            ),
+            TokenKind::LeftBracket => {
+                self.advance()?;
+                let mut items = Vec::new();
+                while !self.check(&TokenKind::RightBracket) {
+                    if self.eat(&TokenKind::Comma)? {
+                        items.push(None);
+                        continue;
+                    }
+                    let pattern = if self.eat(&TokenKind::DotDotDot)? {
+                        BindingPattern::Rest(Box::new(self.parse_binding_pattern()?))
+                    } else {
+                        self.parse_binding_pattern()?
+                    };
+                    let pattern = if self.eat(&TokenKind::Eq)? {
+                        BindingPattern::Default(Box::new(pattern), self.parse_assignment()?)
+                    } else {
+                        pattern
+                    };
+                    items.push(Some(pattern));
+                    if !self.check(&TokenKind::RightBracket) {
+                        self.expect(&TokenKind::Comma, "Expected ',' in array pattern")?;
+                    }
+                }
+                self.expect(&TokenKind::RightBracket, "Expected ']' after array pattern")?;
+                Ok(BindingPattern::Array(items))
+            }
+            TokenKind::LeftBrace => {
+                self.advance()?;
+                let mut properties = Vec::new();
+                while !self.check(&TokenKind::RightBrace) {
+                    if self.eat(&TokenKind::DotDotDot)? {
+                        let rest = self.parse_binding_pattern()?;
+                        properties.push((String::new(), BindingPattern::Rest(Box::new(rest))));
+                        if !self.check(&TokenKind::RightBrace) {
+                            return Err(JSError::SyntaxError(
+                                "Object rest binding must be last".to_string(),
+                                self.current().span,
+                            ));
+                        }
+                        break;
+                    }
+                    let key = self.expect_object_property_key()?;
+                    let value = if self.eat(&TokenKind::Colon)? {
+                        self.parse_binding_pattern()?
+                    } else {
+                        BindingPattern::Identifier(key.clone())
+                    };
+                    let value = if self.eat(&TokenKind::Eq)? {
+                        BindingPattern::Default(Box::new(value), self.parse_assignment()?)
+                    } else {
+                        value
+                    };
+                    properties.push((key, value));
+                    if !self.check(&TokenKind::RightBrace) {
+                        self.expect(&TokenKind::Comma, "Expected ',' in object pattern")?;
+                    }
+                }
+                self.expect(&TokenKind::RightBrace, "Expected '}' after object pattern")?;
+                Ok(BindingPattern::Object(properties))
+            }
+            _ => Err(JSError::SyntaxError(
+                format!("Expected binding pattern: found {:?}", self.current().kind),
+                self.current().span,
+            )),
+        }
     }
 
     fn parse_function_expression(&mut self) -> JSResult<Expression> {
-        let (name, params, body) = self.parse_function(false)?;
+        let (name, params, body, is_generator) = self.parse_function(false)?;
 
-        Ok(Expression::Function { name, params, body })
+        Ok(Expression::Function {
+            name,
+            params,
+            body,
+            is_generator,
+        })
+    }
+
+    fn parse_class_declaration(&mut self) -> JSResult<Statement> {
+        let class = self.parse_class_expression(true)?;
+        let Expression::Class {
+            name: Some(name), ..
+        } = &class
+        else {
+            unreachable!("class declaration requires a name")
+        };
+        Ok(Statement::VariableDeclaration {
+            kind: VarKind::Let,
+            declarations: vec![(name.clone(), Some(class))],
+        })
+    }
+
+    fn parse_class_expression(&mut self, require_name: bool) -> JSResult<Expression> {
+        self.expect(&TokenKind::Class, "Expected class")?;
+        let has_optional_name =
+            matches!(&self.current().kind, TokenKind::Identifier(name) if name != "extends");
+        let name = if require_name || has_optional_name {
+            Some(self.expect_identifier("Expected class name")?)
+        } else {
+            None
+        };
+        let super_class = if self.eat_identifier_name("extends")? {
+            Some(Box::new(self.parse_postfix()?))
+        } else {
+            None
+        };
+        self.expect(&TokenKind::LeftBrace, "Expected '{' before class body")?;
+        let mut constructor = None;
+        let mut methods = Vec::new();
+        while !self.check(&TokenKind::RightBrace) {
+            if self.eat(&TokenKind::Semicolon)? {
+                continue;
+            }
+            let is_static = self.eat_identifier_name("static")?;
+            if self.check(&TokenKind::Async) && !matches!(self.next.kind, TokenKind::LeftParen) {
+                self.advance()?;
+            }
+            let is_generator = self.eat(&TokenKind::Star)?;
+            let kind = if !is_generator
+                && matches!(&self.current.kind, TokenKind::Identifier(name) if name == "get")
+                && !matches!(self.next.kind, TokenKind::LeftParen)
+            {
+                self.advance()?;
+                ClassMethodKind::Getter
+            } else if !is_generator
+                && matches!(&self.current.kind, TokenKind::Identifier(name) if name == "set")
+                && !matches!(self.next.kind, TokenKind::LeftParen)
+            {
+                self.advance()?;
+                ClassMethodKind::Setter
+            } else {
+                ClassMethodKind::Method
+            };
+            let (method_name, computed_name) = if self.eat(&TokenKind::LeftBracket)? {
+                let expression = self.parse_expression()?;
+                self.expect(&TokenKind::RightBracket, "Expected ']' after method name")?;
+                ("<computed>".to_string(), Some(Box::new(expression)))
+            } else {
+                (
+                    self.expect_identifier_name("Expected class method name")?,
+                    None,
+                )
+            };
+            let (params, mut prologue) = self.parse_method_parameters()?;
+            let mut body = self.parse_block()?;
+            prologue.append(&mut body);
+            let method = ClassMethod {
+                name: method_name.clone(),
+                computed_name,
+                params,
+                body: prologue,
+                is_static,
+                is_generator,
+                kind,
+            };
+            if method_name == "constructor" && !is_static && kind == ClassMethodKind::Method {
+                constructor = Some(method);
+            } else {
+                methods.push(method);
+            }
+        }
+        self.expect(&TokenKind::RightBrace, "Expected '}' after class body")?;
+        Ok(Expression::Class {
+            name,
+            super_class,
+            constructor,
+            methods,
+        })
+    }
+
+    fn parse_method_parameters(&mut self) -> JSResult<(Vec<String>, Vec<Statement>)> {
+        self.expect(
+            &TokenKind::LeftParen,
+            "Expected '(' before method parameters",
+        )?;
+        let mut params = Vec::new();
+        let mut prologue = Vec::new();
+        while !self.check(&TokenKind::RightParen) {
+            let rest = self.eat(&TokenKind::DotDotDot)?;
+            let pattern = if matches!(
+                self.current().kind,
+                TokenKind::LeftBracket | TokenKind::LeftBrace
+            ) {
+                Some(self.parse_binding_pattern()?)
+            } else {
+                None
+            };
+            let parameter = if pattern.is_some() {
+                let name = format!("__pixi_parameter_{}", self.next_temporary);
+                self.next_temporary += 1;
+                name
+            } else {
+                self.expect_identifier("Expected parameter name")?
+            };
+            params.push(if rest {
+                format!("...{parameter}")
+            } else {
+                parameter.clone()
+            });
+            if self.eat(&TokenKind::Eq)? {
+                let default = self.parse_assignment()?;
+                prologue.push(Statement::If {
+                    test: Expression::Binary {
+                        op: BinaryOp::StrictEq,
+                        left: Box::new(Expression::Identifier(parameter.clone())),
+                        right: Box::new(Expression::Literal(Literal::Undefined)),
+                    },
+                    consequent: vec![Statement::Expression(Expression::Assignment {
+                        left: Box::new(Expression::Identifier(parameter.clone())),
+                        right: Box::new(default),
+                    })],
+                    alternate: None,
+                });
+            }
+            if let Some(pattern) = pattern {
+                prologue.push(Statement::PatternDeclaration {
+                    kind: VarKind::Let,
+                    binding: pattern,
+                    init: Expression::Identifier(parameter),
+                });
+            }
+            if rest {
+                if !self.check(&TokenKind::RightParen) {
+                    return Err(JSError::SyntaxError(
+                        "Rest parameter must be last".to_string(),
+                        self.current().span,
+                    ));
+                }
+                break;
+            }
+            if !self.check(&TokenKind::RightParen) {
+                self.expect(&TokenKind::Comma, "Expected ',' between parameters")?;
+            }
+        }
+        self.expect(
+            &TokenKind::RightParen,
+            "Expected ')' after method parameters",
+        )?;
+        Ok((params, prologue))
     }
 
     /// return 文をパース
@@ -836,31 +1220,110 @@ impl Parser {
     /// 後置式をパース（メンバーアクセス等）
     fn parse_postfix(&mut self) -> JSResult<Expression> {
         let mut expr = self.parse_primary()?;
+        let mut optional_chain = false;
 
         loop {
-            if self.eat(&TokenKind::Dot)? {
+            if self.eat(&TokenKind::OptionalChain)? {
+                optional_chain = true;
+                if self.eat(&TokenKind::LeftParen)? {
+                    let args = self.parse_arguments()?;
+                    self.expect(&TokenKind::RightParen, "Expected ')'")?;
+                    expr = Expression::OptionalCall {
+                        callee: Box::new(expr),
+                        args,
+                    };
+                } else if self.eat(&TokenKind::LeftBracket)? {
+                    let property = self.parse_expression()?;
+                    self.expect(&TokenKind::RightBracket, "Expected ']'")?;
+                    expr = Expression::OptionalMemberAccess {
+                        object: Box::new(expr),
+                        property: Box::new(property),
+                        computed: true,
+                    };
+                } else {
+                    let property = self.expect_identifier_name("Expected property name")?;
+                    expr = Expression::OptionalMemberAccess {
+                        object: Box::new(expr),
+                        property: Box::new(Expression::Literal(Literal::String(property))),
+                        computed: false,
+                    };
+                }
+            } else if self.eat(&TokenKind::Dot)? {
                 let property = self.expect_identifier_name("Expected property name")?;
 
-                expr = Expression::MemberAccess {
-                    object: Box::new(expr),
-                    property: Box::new(Expression::Literal(Literal::String(property))),
-                    computed: false,
+                let member = if optional_chain {
+                    Expression::OptionalMemberAccess {
+                        object: Box::new(expr),
+                        property: Box::new(Expression::Literal(Literal::String(property))),
+                        computed: false,
+                    }
+                } else {
+                    Expression::MemberAccess {
+                        object: Box::new(expr),
+                        property: Box::new(Expression::Literal(Literal::String(property))),
+                        computed: false,
+                    }
                 };
+                expr = member;
             } else if self.eat(&TokenKind::LeftBracket)? {
                 let property = self.parse_expression()?;
 
-                self.expect(&TokenKind::RightBracket, "Expected '}'")?;
+                self.expect(&TokenKind::RightBracket, "Expected ']'")?;
 
-                expr = Expression::MemberAccess {
-                    object: Box::new(expr),
-                    property: Box::new(property),
-                    computed: true,
+                expr = if optional_chain {
+                    Expression::OptionalMemberAccess {
+                        object: Box::new(expr),
+                        property: Box::new(property),
+                        computed: true,
+                    }
+                } else {
+                    Expression::MemberAccess {
+                        object: Box::new(expr),
+                        property: Box::new(property),
+                        computed: true,
+                    }
                 };
             } else if self.eat(&TokenKind::LeftParen)? {
                 let args = self.parse_arguments()?;
 
                 self.expect(&TokenKind::RightParen, "Expected ')'")?;
 
+                expr = if optional_chain {
+                    Expression::OptionalCall {
+                        callee: Box::new(expr),
+                        args,
+                    }
+                } else {
+                    Expression::Call {
+                        callee: Box::new(expr),
+                        args,
+                    }
+                };
+            } else if let TokenKind::TemplateLiteral {
+                strings,
+                raw_strings,
+                expressions,
+            } = &self.current().kind
+            {
+                let strings = strings.clone();
+                let raw_strings = raw_strings.clone();
+                let expressions = expressions.clone();
+                self.advance()?;
+                let mut args = vec![Expression::TemplateObject {
+                    cooked: strings,
+                    raw: raw_strings,
+                }];
+                for source in expressions {
+                    let mut parser = Parser::new(Lexer::new(&source))?;
+                    let value = parser.parse_expression()?;
+                    if !parser.is_at_end() {
+                        return Err(JSError::SyntaxError(
+                            "Unexpected token in tagged template expression".to_string(),
+                            parser.current().span,
+                        ));
+                    }
+                    args.push(value);
+                }
                 expr = Expression::Call {
                     callee: Box::new(expr),
                     args,
@@ -887,7 +1350,11 @@ impl Parser {
         let mut args = Vec::new();
 
         while !self.check(&TokenKind::RightParen) {
-            args.push(self.parse_assignment()?);
+            if self.eat(&TokenKind::DotDotDot)? {
+                args.push(Expression::Spread(Box::new(self.parse_assignment()?)));
+            } else {
+                args.push(self.parse_assignment()?);
+            }
 
             if !self.eat(&TokenKind::Comma)? {
                 break;
@@ -913,6 +1380,42 @@ impl Parser {
                 self.advance()?;
 
                 Ok(Expression::Literal(Literal::String(s)))
+            }
+            TokenKind::TemplateLiteral {
+                strings,
+                raw_strings: _,
+                expressions,
+            } => {
+                let strings = strings.clone();
+                let expressions = expressions.clone();
+                self.advance()?;
+
+                let mut result = Expression::Literal(Literal::String(
+                    strings.first().cloned().unwrap_or_default(),
+                ));
+                for (index, source) in expressions.into_iter().enumerate() {
+                    let mut parser = Parser::new(Lexer::new(&source))?;
+                    let expression = parser.parse_expression()?;
+                    if !parser.is_at_end() {
+                        return Err(JSError::SyntaxError(
+                            "Unexpected token in template expression".to_string(),
+                            parser.current().span,
+                        ));
+                    }
+                    result = Expression::Binary {
+                        op: BinaryOp::Add,
+                        left: Box::new(result),
+                        right: Box::new(expression),
+                    };
+                    result = Expression::Binary {
+                        op: BinaryOp::Add,
+                        left: Box::new(result),
+                        right: Box::new(Expression::Literal(Literal::String(
+                            strings.get(index + 1).cloned().unwrap_or_default(),
+                        ))),
+                    };
+                }
+                Ok(result)
             }
             TokenKind::RegExpLiteral(pattern, flags) => {
                 let pattern = pattern.clone();
@@ -940,14 +1443,31 @@ impl Parser {
                 self.advance()?;
                 Ok(Expression::This)
             }
+            TokenKind::Super => {
+                self.advance()?;
+                Ok(Expression::Super)
+            }
             TokenKind::Identifier(s) => {
                 let s = s.clone();
 
                 self.advance()?;
 
+                if s == "yield" {
+                    let delegate = self.eat(&TokenKind::Star)?;
+                    let value = self.parse_assignment()?;
+                    return Ok(Expression::Yield {
+                        value: Box::new(value),
+                        delegate,
+                    });
+                }
+
                 Ok(Expression::Identifier(s))
             }
             TokenKind::Of | TokenKind::From | TokenKind::As | TokenKind::Async => {
+                if self.check(&TokenKind::Async) && matches!(self.next.kind, TokenKind::Function) {
+                    self.advance()?;
+                    return self.parse_function_expression();
+                }
                 let name = match self.current().kind {
                     TokenKind::Of => "of",
                     TokenKind::From => "from",
@@ -971,6 +1491,7 @@ impl Parser {
             TokenKind::LeftBracket => self.parse_array_literal(),
             TokenKind::LeftBrace => self.parse_object_literal(),
             TokenKind::Function => self.parse_function_expression(),
+            TokenKind::Class => self.parse_class_expression(false),
             TokenKind::New => self.parse_new_expression(),
 
             _ => Err(JSError::SyntaxError(
@@ -1037,7 +1558,11 @@ impl Parser {
                 continue;
             }
 
-            elements.push(self.parse_assignment()?);
+            if self.eat(&TokenKind::DotDotDot)? {
+                elements.push(Expression::Spread(Box::new(self.parse_assignment()?)));
+            } else {
+                elements.push(self.parse_assignment()?);
+            }
 
             if !self.check(&TokenKind::RightBracket) && !self.eat(&TokenKind::Comma)? {
                 return Err(JSError::SyntaxError(
@@ -1059,9 +1584,37 @@ impl Parser {
         let mut properties = Vec::new();
 
         while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+            if self.eat(&TokenKind::DotDotDot)? {
+                properties.push(ObjectProperty::Spread(self.parse_assignment()?));
+                if !self.check(&TokenKind::RightBrace) && !self.eat(&TokenKind::Comma)? {
+                    return Err(JSError::SyntaxError(
+                        "Expected ',' or '}' after object spread".into(),
+                        self.current().span,
+                    ));
+                }
+                continue;
+            }
+
+            if self.eat(&TokenKind::LeftBracket)? {
+                let key = self.parse_expression()?;
+                self.expect(&TokenKind::RightBracket, "Expected ']' after computed key")?;
+                self.expect(&TokenKind::Colon, "Expected ':' after computed key")?;
+                let value = self.parse_assignment()?;
+                properties.push(ObjectProperty::ComputedData { key, value });
+                if !self.check(&TokenKind::RightBrace) && !self.eat(&TokenKind::Comma)? {
+                    return Err(JSError::SyntaxError(
+                        "Expected ',' or '}' in object literal".into(),
+                        self.current().span,
+                    ));
+                }
+                continue;
+            }
             if let TokenKind::Identifier(kind) = &self.current().kind
                 && (kind == "get" || kind == "set")
-                && !matches!(self.next.kind, TokenKind::Colon | TokenKind::Comma)
+                && !matches!(
+                    self.next.kind,
+                    TokenKind::Colon | TokenKind::Comma | TokenKind::LeftParen
+                )
             {
                 let is_getter = kind == "get";
                 self.advance()?;
@@ -1115,7 +1668,17 @@ impl Parser {
                 _ => (self.expect_identifier_name("Expected property key")?, None),
             };
 
-            let value = if self.eat(&TokenKind::Colon)? {
+            let value = if self.check(&TokenKind::LeftParen) {
+                let (params, mut prologue) = self.parse_method_parameters()?;
+                let mut body = self.parse_block()?;
+                prologue.append(&mut body);
+                Expression::Function {
+                    name: Some(key.clone()),
+                    params,
+                    body: prologue,
+                    is_generator: false,
+                }
+            } else if self.eat(&TokenKind::Colon)? {
                 self.parse_assignment()?
             } else if let Some(value) = shorthand {
                 value
@@ -1240,6 +1803,15 @@ impl Parser {
         }
     }
 
+    fn eat_identifier_name(&mut self, expected: &str) -> JSResult<bool> {
+        if matches!(&self.current().kind, TokenKind::Identifier(name) if name == expected) {
+            self.advance()?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     fn expect_identifier_name(&mut self, message: &str) -> JSResult<String> {
         let name = match &self.current().kind {
             TokenKind::Identifier(name) => name.as_str(),
@@ -1300,6 +1872,7 @@ fn precedence(kind: &TokenKind) -> Option<(u8, BinaryOp)> {
     match kind {
         // logical (lowest)
         TokenKind::Or => Some((1, BinaryOp::Or)),
+        TokenKind::Nullish => Some((1, BinaryOp::Nullish)),
         TokenKind::And => Some((2, BinaryOp::And)),
 
         // bitwise

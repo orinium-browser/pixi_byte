@@ -32,7 +32,9 @@ impl Statement {
                 println!("{prefix}{branch}Label({label})");
                 body.dump_impl(next_prefix, true);
             }
-            Statement::FunctionDeclaration { name, params, body } => {
+            Statement::FunctionDeclaration {
+                name, params, body, ..
+            } => {
                 println!("{prefix}{branch}Function {}({})", name, params.join(", "));
 
                 for (i, stmt) in body.iter().enumerate() {
@@ -76,6 +78,10 @@ impl Statement {
                         );
                     }
                 }
+            }
+            Statement::PatternDeclaration { binding, init, .. } => {
+                println!("{prefix}{branch}Pattern({binding:?})");
+                init.dump_impl(next_prefix, true);
             }
             Statement::If {
                 test,
@@ -140,7 +146,19 @@ impl Statement {
                 right,
                 body,
             } => {
-                println!("{prefix}{branch}ForIn({binding})");
+                println!("{prefix}{branch}ForIn({binding:?})");
+                right.dump_impl(next_prefix.clone(), body.is_empty());
+                for (index, statement) in body.iter().enumerate() {
+                    statement.dump_impl(next_prefix.clone(), index + 1 == body.len());
+                }
+            }
+            Statement::ForOf {
+                binding,
+                kind: _,
+                right,
+                body,
+            } => {
+                println!("{prefix}{branch}ForOf({binding:?})");
                 right.dump_impl(next_prefix.clone(), body.is_empty());
                 for (index, statement) in body.iter().enumerate() {
                     statement.dump_impl(next_prefix.clone(), index + 1 == body.len());
@@ -304,6 +322,16 @@ impl Expression {
                 }
             }
 
+            Expression::OptionalCall { callee, args } => {
+                println!("{prefix}{branch}OptionalCall");
+
+                let total = args.len() + 1;
+                callee.dump_impl(next_prefix.clone(), total == 1);
+                for (i, arg) in args.iter().enumerate() {
+                    arg.dump_impl(next_prefix.clone(), i == args.len() - 1);
+                }
+            }
+
             Expression::New { callee, args } => {
                 println!("{prefix}{branch}New");
 
@@ -333,12 +361,20 @@ impl Expression {
                 println!("{prefix}{branch}This");
             }
 
+            Expression::Super => {
+                println!("{prefix}{branch}Super");
+            }
+
             Expression::ArrayLiteral(items) => {
                 println!("{prefix}{branch}Array");
 
                 for (i, item) in items.iter().enumerate() {
                     item.dump_impl(next_prefix.clone(), i == items.len() - 1);
                 }
+            }
+
+            Expression::TemplateObject { cooked, raw } => {
+                println!("{prefix}{branch}TemplateObject cooked={cooked:?} raw={raw:?}");
             }
 
             Expression::ObjectLiteral(props) => {
@@ -358,6 +394,15 @@ impl Expression {
                         ObjectProperty::Setter { key, .. } => {
                             println!("{next_prefix}{prop_branch}set {key}");
                         }
+                        ObjectProperty::ComputedData { key, value } => {
+                            println!("{next_prefix}{prop_branch}computed");
+                            key.dump_impl(format!("{next_prefix}│  "), false);
+                            value.dump_impl(format!("{next_prefix}│  "), true);
+                        }
+                        ObjectProperty::Spread(value) => {
+                            println!("{next_prefix}{prop_branch}spread");
+                            value.dump_impl(format!("{next_prefix}│  "), true);
+                        }
                     }
                 }
             }
@@ -371,6 +416,16 @@ impl Expression {
 
                 object.dump_impl(next_prefix.clone(), false);
 
+                property.dump_impl(next_prefix, true);
+            }
+
+            Expression::OptionalMemberAccess {
+                object,
+                property,
+                computed: _,
+            } => {
+                println!("{prefix}{branch}OptionalMemberAccess");
+                object.dump_impl(next_prefix.clone(), false);
                 property.dump_impl(next_prefix, true);
             }
 
@@ -388,6 +443,54 @@ impl Expression {
                 for (i, statement) in body.iter().enumerate() {
                     statement.dump_impl(next_prefix.clone(), i == body.len() - 1);
                 }
+            }
+
+            Expression::Class {
+                name,
+                super_class,
+                constructor,
+                methods,
+            } => {
+                println!(
+                    "{prefix}{branch}Class({})",
+                    name.as_deref().unwrap_or("<anonymous>")
+                );
+                if let Some(super_class) = super_class {
+                    super_class.dump_impl(next_prefix.clone(), false);
+                }
+                if let Some(constructor) = constructor {
+                    println!(
+                        "{next_prefix}├─ constructor({})",
+                        constructor.params.join(", ")
+                    );
+                }
+                for (index, method) in methods.iter().enumerate() {
+                    let method_branch = if index + 1 == methods.len() {
+                        "└─ "
+                    } else {
+                        "├─ "
+                    };
+                    println!(
+                        "{next_prefix}{method_branch}{}{}({})",
+                        if method.is_static {
+                            "static "
+                        } else if method.is_generator {
+                            "*"
+                        } else {
+                            ""
+                        },
+                        method.name,
+                        method.params.join(", ")
+                    );
+                }
+            }
+            Expression::Yield { value, delegate } => {
+                println!("{prefix}{branch}Yield{}", if *delegate { "*" } else { "" });
+                value.dump_impl(next_prefix, true);
+            }
+            Expression::Spread(value) => {
+                println!("{prefix}{branch}Spread");
+                value.dump_impl(next_prefix, true);
             }
         }
     }

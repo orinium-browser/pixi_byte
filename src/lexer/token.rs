@@ -6,6 +6,11 @@ pub enum TokenKind {
     // リテラル
     NumberLiteral(String),
     String(String),
+    TemplateLiteral {
+        strings: Vec<String>,
+        raw_strings: Vec<String>,
+        expressions: Vec<String>,
+    },
     RegExpLiteral(String, String),
     True,
     False,
@@ -86,8 +91,10 @@ pub enum TokenKind {
     PlusPlus,   // ++
     MinusMinus, // --
 
-    Question, // ?
-    Colon,    // :
+    Question,      // ?
+    OptionalChain, // ?.
+    Nullish,       // ??
+    Colon,         // :
 
     // 代入演算子
     PlusEq,               // +=

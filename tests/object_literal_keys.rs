@@ -47,3 +47,53 @@ fn object_literals_support_getters_and_setters() {
         .unwrap();
     assert_eq!(result, JSValue::Number(12.0));
 }
+
+#[test]
+fn object_literals_support_method_shorthand() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const target = {
+                value: 4,
+                read(extra = 1) { return this.value + extra; }
+            };
+            target.read(2);
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Number(6.0));
+}
+
+#[test]
+fn methods_named_get_and_set_are_not_parsed_as_accessors() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const target = {
+                get(value) { return value + 1; },
+                set(value) { return value + 2; }
+            };
+            target.get(2) + target.set(3);
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Number(8.0));
+}
+
+#[test]
+fn object_literals_support_spread_and_computed_keys() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const source = { first: 2 };
+            const key = "second";
+            const target = { ...source, [key]: 3 };
+            target.first + target.second;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Number(5.0));
+}

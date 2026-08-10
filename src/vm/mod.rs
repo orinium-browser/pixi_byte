@@ -182,7 +182,7 @@ impl VM {
             .insert(identity, Rc::new(RefCell::new(properties)));
     }
 
-    fn user_function_object(&self, value: &JSValue) -> Option<Rc<RefCell<JSObject>>> {
+    pub(crate) fn user_function_object(&self, value: &JSValue) -> Option<Rc<RefCell<JSObject>>> {
         let identity = value.user_function_identity()?;
         self.callable_objects.get(&identity).cloned()
     }
@@ -695,6 +695,47 @@ impl VM {
                     return Err(JSError::TypeError("ArrayPush: not an object".to_string()));
                 }
             }
+            Opcode::ArrayAppend => {
+                let value = self.pop()?;
+                let array = self.pop()?;
+                let JSValue::Object(array_ref) = &array else {
+                    return Err(JSError::TypeError("ArrayAppend: not an array".to_string()));
+                };
+                let index = array_ref.borrow().get("length").to_number() as usize;
+                array_ref.borrow_mut().set(index.to_string(), value);
+                array_ref
+                    .borrow_mut()
+                    .set("length".to_string(), JSValue::Number((index + 1) as f64));
+                self.stack.push(array);
+            }
+            Opcode::ArrayExtend => {
+                let iterable = self.pop()?;
+                let array = self.pop()?;
+                let values = match iterable {
+                    JSValue::Object(object) => {
+                        let length = object.borrow().get("length").to_number() as usize;
+                        (0..length)
+                            .map(|index| object.borrow().get(&index.to_string()))
+                            .collect::<Vec<_>>()
+                    }
+                    JSValue::String(value) => value
+                        .chars()
+                        .map(|character| JSValue::String(character.to_string()))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let JSValue::Object(array_ref) = &array else {
+                    return Err(JSError::TypeError("ArrayExtend: not an array".to_string()));
+                };
+                for value in values {
+                    let index = array_ref.borrow().get("length").to_number() as usize;
+                    array_ref.borrow_mut().set(index.to_string(), value);
+                    array_ref
+                        .borrow_mut()
+                        .set("length".to_string(), JSValue::Number((index + 1) as f64));
+                }
+                self.stack.push(array);
+            }
             Opcode::ObjectSetProperty => {
                 // スタック: [object, value, key]
                 let key = self.pop()?;
@@ -710,10 +751,46 @@ impl VM {
                     ));
                 }
             }
+            Opcode::ObjectSpread => {
+                let source = self.pop()?;
+                let target = self.stack.last().cloned();
+                if let (Some(JSValue::Object(target)), JSValue::Object(source)) = (target, source) {
+                    let keys = source.borrow().enumerable_keys();
+                    for key in keys {
+                        let value = source.borrow().get(&key);
+                        target.borrow_mut().set(key, value);
+                    }
+                }
+            }
+            Opcode::ObjectRest(excluded) => {
+                let source = self.pop()?;
+                let mut result =
+                    crate::value::JSObject::with_prototype(Some(Rc::clone(&self.object_prototype)));
+                if let JSValue::Object(source) = source {
+                    for key in source.borrow().enumerable_keys() {
+                        if !excluded.contains(&key) {
+                            let value = source.borrow().get(&key);
+                            result.set(key, value);
+                        }
+                    }
+                }
+                self.stack
+                    .push(JSValue::Object(Rc::new(RefCell::new(result))));
+            }
             Opcode::ObjectDefineGetter | Opcode::ObjectDefineSetter => {
                 let key = self.pop()?.to_string();
                 let accessor = self.pop()?;
-                let Some(JSValue::Object(object)) = self.stack.last() else {
+                let target = self.stack.last().cloned().ok_or_else(|| {
+                    JSError::TypeError("Object accessor target is missing".to_string())
+                })?;
+                let object = match target {
+                    JSValue::Object(object) => Some(object),
+                    JSValue::Function(..) | JSValue::ArrowFunction(..) => {
+                        self.user_function_object(&target)
+                    }
+                    _ => None,
+                };
+                let Some(object) = object else {
                     return Err(JSError::TypeError(
                         "Object accessor target is not an object".to_string(),
                     ));
@@ -793,6 +870,105 @@ impl VM {
 
                 let result = self.call(func, this, args)?;
 
+                self.stack.push(result);
+            }
+            Opcode::CallFunctionNamed(arg_count, name) => {
+                let mut args = Vec::new();
+                for _ in 0..*arg_count {
+                    args.push(self.pop()?);
+                }
+                args.reverse();
+                let func = self.pop()?;
+                if matches!(&func, JSValue::Undefined | JSValue::Null) {
+                    return Err(JSError::TypeError(format!(
+                        "function '{name}' is not callable (found {})",
+                        func.type_of()
+                    )));
+                }
+                let this = JSValue::Object(self.global_object.clone());
+                let result = self.call(func, this, args)?;
+                self.stack.push(result);
+            }
+            Opcode::CallFunctionArray => {
+                let arguments = self.pop()?;
+                let JSValue::Object(arguments) = arguments else {
+                    return Err(JSError::TypeError(
+                        "CallFunctionArray: arguments are not an array".to_string(),
+                    ));
+                };
+                let length = arguments.borrow().get("length").to_number() as usize;
+                let args = (0..length)
+                    .map(|index| arguments.borrow().get(&index.to_string()))
+                    .collect();
+                let func = self.pop()?;
+                if matches!(&func, JSValue::Undefined | JSValue::Null) {
+                    return Err(JSError::TypeError(format!(
+                        "spread call target is not callable (found {})",
+                        func.type_of()
+                    )));
+                }
+                let this = JSValue::Object(self.global_object.clone());
+                let result = self.call(func, this, args)?;
+                self.stack.push(result);
+            }
+            Opcode::CallFunctionOptional(arg_count) => {
+                let mut args = Vec::new();
+                for _ in 0..*arg_count {
+                    args.push(self.pop()?);
+                }
+                args.reverse();
+                let func = self.pop()?;
+                if matches!(&func, JSValue::Null | JSValue::Undefined) {
+                    self.stack.push(JSValue::Undefined);
+                } else {
+                    let this = JSValue::Object(self.global_object.clone());
+                    let result = self.call(func, this, args)?;
+                    self.stack.push(result);
+                }
+            }
+            Opcode::CallMethodOptional(arg_count) => {
+                let mut args = Vec::new();
+                for _ in 0..*arg_count {
+                    args.push(self.pop()?);
+                }
+                args.reverse();
+                let property = self.pop()?;
+                let object = self.pop()?;
+                if matches!(&object, JSValue::Null | JSValue::Undefined) {
+                    self.stack.push(JSValue::Undefined);
+                } else {
+                    let key = property.to_string();
+                    let method = self.resolve_method_property(&object, &key)?;
+                    if matches!(&method, JSValue::Null | JSValue::Undefined) {
+                        self.stack.push(JSValue::Undefined);
+                    } else {
+                        let result = self.call(method, object, args)?;
+                        self.stack.push(result);
+                    }
+                }
+            }
+            Opcode::CallMethodArray => {
+                let arguments = self.pop()?;
+                let JSValue::Object(arguments) = arguments else {
+                    return Err(JSError::TypeError(
+                        "CallMethodArray: arguments are not an array".to_string(),
+                    ));
+                };
+                let length = arguments.borrow().get("length").to_number() as usize;
+                let args = (0..length)
+                    .map(|index| arguments.borrow().get(&index.to_string()))
+                    .collect();
+                let property = self.pop()?;
+                let object = self.pop()?;
+                let key = property.to_string();
+                let method = self.resolve_method_property(&object, &key)?;
+                if matches!(&method, JSValue::Undefined | JSValue::Null) {
+                    return Err(JSError::TypeError(format!(
+                        "spread call property '{key}' is not callable (found {})",
+                        method.type_of()
+                    )));
+                }
+                let result = self.call(method, object, args)?;
                 self.stack.push(result);
             }
             Opcode::CallMethod(arg_count) => {
@@ -898,7 +1074,7 @@ impl VM {
 
                 self.stack.push(result);
             }
-            Opcode::Construct(arg_count) => {
+            Opcode::Construct(arg_count, constructor_name) => {
                 let mut args = Vec::new();
                 for _ in 0..*arg_count {
                     args.push(self.pop()?);
@@ -916,11 +1092,29 @@ impl VM {
                         let callable = object.borrow().get("__construct__");
                         if matches!(callable, JSValue::Undefined) {
                             let keys = object.borrow().keys();
+                            let name = constructor_name
+                                .as_deref()
+                                .map(|name| format!(" '{name}'"))
+                                .unwrap_or_default();
                             return Err(JSError::TypeError(format!(
-                                "object is not a constructor (own properties: {keys:?})"
+                                "object{name} is not a constructor (own properties: {keys:?})"
                             )));
                         }
                         callable
+                    }
+                    JSValue::Undefined
+                    | JSValue::Null
+                    | JSValue::Boolean(_)
+                    | JSValue::Number(_)
+                    | JSValue::String(_) => {
+                        let name = constructor_name
+                            .as_deref()
+                            .map(|name| format!(" '{name}'"))
+                            .unwrap_or_default();
+                        return Err(JSError::TypeError(format!(
+                            "value{name} is not a constructor (found {})",
+                            constructor.type_of()
+                        )));
                     }
                     _ => constructor.clone(),
                 };
@@ -991,6 +1185,14 @@ impl VM {
             Opcode::JumpIfTrue(offset) => {
                 let condition = self.pop()?;
                 if condition.to_boolean() {
+                    return Ok(ControlFlow::Jump(*offset));
+                } else {
+                    return Ok(ControlFlow::Continue);
+                }
+            }
+            Opcode::JumpIfNotNullish(offset) => {
+                let condition = self.pop()?;
+                if !matches!(condition, JSValue::Null | JSValue::Undefined) {
                     return Ok(ControlFlow::Jump(*offset));
                 } else {
                     return Ok(ControlFlow::Continue);
@@ -1111,6 +1313,56 @@ impl VM {
         Ok(())
     }
 
+    fn resolve_method_property(&mut self, object: &JSValue, key: &str) -> JSResult<JSValue> {
+        match object {
+            JSValue::Object(obj_ref) => {
+                let own_property = obj_ref.borrow().get_property_descriptor(key);
+                if let Some(property) = own_property {
+                    if let Some(getter) = property.getter {
+                        self.call(getter, object.clone(), Vec::new())
+                    } else {
+                        Ok(property.value)
+                    }
+                } else if let Some(property) = inherited_property_descriptor(obj_ref, key) {
+                    if let Some(getter) = property.getter {
+                        self.call(getter, object.clone(), Vec::new())
+                    } else {
+                        Ok(property.value)
+                    }
+                } else {
+                    let host_getter = obj_ref
+                        .borrow()
+                        .get(crate::value::jsobject::HOST_GET_PROPERTY);
+                    if matches!(
+                        &host_getter,
+                        JSValue::Function(..)
+                            | JSValue::ArrowFunction(..)
+                            | JSValue::NativeFunction(..)
+                            | JSValue::BoundFunction(..)
+                    ) {
+                        self.call(
+                            host_getter,
+                            object.clone(),
+                            vec![JSValue::String(key.to_string())],
+                        )
+                    } else {
+                        Ok(self.object_prototype.borrow().get(key))
+                    }
+                }
+            }
+            JSValue::Function(..) | JSValue::ArrowFunction(..) => Ok(self
+                .user_function_object(object)
+                .map(|properties| properties.borrow().get(key))
+                .unwrap_or_else(|| self.function_prototype.borrow().get(key))),
+            JSValue::NativeFunction(..) | JSValue::BoundFunction(..) => {
+                Ok(self.function_prototype.borrow().get(key))
+            }
+            JSValue::String(_) => Ok(self.string_prototype.borrow().get(key)),
+            JSValue::Number(_) => Ok(self.number_prototype.borrow().get(key)),
+            _ => Ok(JSValue::Undefined),
+        }
+    }
+
     /// Calls a function (native / JS / bound function).
     ///
     /// Exposed so the host can invoke a JS function directly.
@@ -1120,6 +1372,21 @@ impl VM {
         this: JSValue,
         args: Vec<JSValue>,
     ) -> JSResult<JSValue> {
+        const MAX_CALL_DEPTH: usize = 256;
+        if self.frames.len() >= MAX_CALL_DEPTH {
+            let stack = self
+                .frames
+                .iter()
+                .rev()
+                .take(32)
+                .rev()
+                .map(|frame| frame.function_name.as_deref().unwrap_or("<anonymous>"))
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            return Err(JSError::RangeError(format!(
+                "Maximum call stack size exceeded (JS stack: {stack})"
+            )));
+        }
         let callee_clone = callee.clone();
 
         match callee {
@@ -1211,13 +1478,18 @@ impl VM {
             );
         }
 
-        for (i, arg) in args.into_iter().enumerate() {
-            let key = params
-                .get(i)
-                .cloned()
-                .unwrap_or_else(|| format!("arg{}", i));
-
-            env.define(key, arg);
+        for (index, parameter) in params.into_iter().enumerate() {
+            if let Some(name) = parameter.strip_prefix("...") {
+                env.define(
+                    name.to_string(),
+                    self.array_from_values(args.get(index..).unwrap_or_default().to_vec()),
+                );
+                break;
+            }
+            env.define(
+                parameter,
+                args.get(index).cloned().unwrap_or(JSValue::Undefined),
+            );
         }
 
         env

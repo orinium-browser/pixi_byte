@@ -85,7 +85,15 @@ impl Lexer {
             ';' => TokenKind::Semicolon,
             ',' => TokenKind::Comma,
             '~' => TokenKind::BitNot,
-            '?' => TokenKind::Question,
+            '?' => {
+                if self.match_char('.') {
+                    TokenKind::OptionalChain
+                } else if self.match_char('?') {
+                    TokenKind::Nullish
+                } else {
+                    TokenKind::Question
+                }
+            }
             ':' => TokenKind::Colon,
 
             // ドット
@@ -243,6 +251,7 @@ impl Lexer {
 
             // 文字列リテラル
             '"' | '\'' => return self.scan_string(ch),
+            '`' => return self.scan_template_literal(),
 
             // 数値リテラル
             '0'..='9' => return self.scan_number(),
@@ -316,6 +325,12 @@ impl Lexer {
             ));
         }
 
+        // BigInt literals currently share the numeric representation. This keeps
+        // the syntax usable until JSValue gains a dedicated arbitrary-precision type.
+        if self.peek() == Some('n') {
+            self.advance();
+        }
+
         let span = Span::new(start, self.position, start_line, start_column);
         Ok(Token::new(TokenKind::NumberLiteral(text), span))
     }
@@ -371,6 +386,126 @@ impl Lexer {
 
         let span = Span::new(start, self.position, start_line, start_column);
         Ok(Token::new(TokenKind::String(value), span))
+    }
+
+    fn scan_template_literal(&mut self) -> JSResult<Token> {
+        let start = self.position - 1;
+        let start_line = self.line;
+        let start_column = self.column - 1;
+        let mut strings = Vec::new();
+        let mut raw_strings = Vec::new();
+        let mut expressions = Vec::new();
+        let mut value = String::new();
+        let mut raw_value = String::new();
+
+        loop {
+            let Some(ch) = self.peek() else {
+                return Err(JSError::SyntaxError(
+                    "Unterminated template literal".to_string(),
+                    Span::new(start, self.position, start_line, start_column),
+                ));
+            };
+            match ch {
+                '`' => {
+                    self.advance();
+                    strings.push(value);
+                    raw_strings.push(raw_value);
+                    break;
+                }
+                '$' if self.peek_ahead(1) == Some('{') => {
+                    self.advance();
+                    self.advance();
+                    strings.push(std::mem::take(&mut value));
+                    raw_strings.push(std::mem::take(&mut raw_value));
+                    expressions.push(self.scan_template_expression(
+                        start,
+                        start_line,
+                        start_column,
+                    )?);
+                }
+                '\\' => {
+                    self.advance();
+                    let Some(escaped) = self.peek() else {
+                        continue;
+                    };
+                    raw_value.push('\\');
+                    raw_value.push(escaped);
+                    self.advance();
+                    match escaped {
+                        'n' => value.push('\n'),
+                        'r' => value.push('\r'),
+                        't' => value.push('\t'),
+                        '\n' => {}
+                        other => value.push(other),
+                    }
+                }
+                _ => {
+                    value.push(ch);
+                    raw_value.push(ch);
+                    self.advance();
+                }
+            }
+        }
+
+        let span = Span::new(start, self.position, start_line, start_column);
+        Ok(Token::new(
+            TokenKind::TemplateLiteral {
+                strings,
+                raw_strings,
+                expressions,
+            },
+            span,
+        ))
+    }
+
+    fn scan_template_expression(
+        &mut self,
+        literal_start: usize,
+        start_line: usize,
+        start_column: usize,
+    ) -> JSResult<String> {
+        let mut expression = String::new();
+        let mut brace_depth = 1_usize;
+        let mut quote = None;
+        let mut escaped = false;
+
+        while let Some(ch) = self.peek() {
+            self.advance();
+            if let Some(active_quote) = quote {
+                expression.push(ch);
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == active_quote {
+                    quote = None;
+                }
+                continue;
+            }
+            match ch {
+                '\'' | '"' | '`' => {
+                    quote = Some(ch);
+                    expression.push(ch);
+                }
+                '{' => {
+                    brace_depth += 1;
+                    expression.push(ch);
+                }
+                '}' => {
+                    brace_depth -= 1;
+                    if brace_depth == 0 {
+                        return Ok(expression);
+                    }
+                    expression.push(ch);
+                }
+                _ => expression.push(ch),
+            }
+        }
+
+        Err(JSError::SyntaxError(
+            "Unterminated template expression".to_string(),
+            Span::new(literal_start, self.position, start_line, start_column),
+        ))
     }
 
     fn scan_hex_escape(
@@ -454,6 +589,12 @@ impl Lexer {
     }
 
     fn can_start_regular_expression(&self) -> bool {
+        if matches!(
+            self.previous.as_ref(),
+            Some(TokenKind::Identifier(name)) if name == "yield"
+        ) {
+            return true;
+        }
         !matches!(
             self.previous.as_ref(),
             Some(
