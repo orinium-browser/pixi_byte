@@ -157,3 +157,51 @@ fn array_prototype_methods_are_not_enumerable() {
         .unwrap();
     assert_eq!(result, JSValue::String("0:0".to_string()));
 }
+
+#[test]
+fn array_join_uses_custom_object_to_string() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const selector = { toString() { return ".py-2"; } };
+            [selector, "padding:0.5rem"].join("{") + "}";
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String(".py-2{padding:0.5rem}".to_string()));
+}
+
+#[test]
+fn array_to_string_delegates_to_join() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const selector = { toString() { return ".py-2"; } };
+            [selector, "padding:0.5rem"].toString();
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String(".py-2,padding:0.5rem".to_string()));
+}
+
+#[test]
+fn reduce_callbacks_capture_each_invocation_parameters() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const callbacks = [["px", "horizontal"], ["py", "vertical"]].reduce(
+                (result, [name, value]) => Object.assign(result, { [name]: () => name + ":" + value }),
+                {}
+            );
+            callbacks.px() + "," + callbacks.py();
+            "#,
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        JSValue::String("px:horizontal,py:vertical".to_string())
+    );
+}

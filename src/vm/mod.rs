@@ -1600,9 +1600,11 @@ impl VM {
     fn add_op(&mut self) -> JSResult<()> {
         let b = self.pop()?;
         let a = self.pop()?;
+        let a = self.to_primitive(a)?;
+        let b = self.to_primitive(b)?;
         let result = match (a, b) {
-            (JSValue::String(a), b) => JSValue::String(format!("{a}{b}")),
-            (a, JSValue::String(b)) => JSValue::String(format!("{a}{b}")),
+            (JSValue::String(a), b) => JSValue::String(format!("{a}{}", b.to_console_string())),
+            (a, JSValue::String(b)) => JSValue::String(format!("{}{b}", a.to_console_string())),
             (JSValue::BigInt(a), JSValue::BigInt(b)) => JSValue::BigInt(a + b),
             (JSValue::BigInt(_), _) | (_, JSValue::BigInt(_)) => {
                 return Err(JSError::TypeError(
@@ -1613,6 +1615,51 @@ impl VM {
         };
         self.stack.push(result);
         Ok(())
+    }
+
+    pub(crate) fn to_string_value(&mut self, value: JSValue) -> JSResult<String> {
+        Ok(self.to_primitive(value)?.to_console_string())
+    }
+
+    fn to_primitive(&mut self, value: JSValue) -> JSResult<JSValue> {
+        if !matches!(
+            value,
+            JSValue::Object(_)
+                | JSValue::Function(..)
+                | JSValue::ArrowFunction(..)
+                | JSValue::NativeFunction(..)
+                | JSValue::BoundFunction(..)
+        ) {
+            return Ok(value);
+        }
+
+        for name in ["valueOf", "toString"] {
+            let method = self.resolve_method_property(&value, name)?;
+            let callable = matches!(
+                &method,
+                JSValue::Function(..)
+                    | JSValue::ArrowFunction(..)
+                    | JSValue::NativeFunction(..)
+                    | JSValue::BoundFunction(..)
+            ) || matches!(&method, JSValue::Object(object) if !matches!(object.borrow().get("__call__"), JSValue::Undefined));
+            if callable {
+                let result = self.call(method, value.clone(), Vec::new())?;
+                if !matches!(
+                    result,
+                    JSValue::Object(_)
+                        | JSValue::Function(..)
+                        | JSValue::ArrowFunction(..)
+                        | JSValue::NativeFunction(..)
+                        | JSValue::BoundFunction(..)
+                ) {
+                    return Ok(result);
+                }
+            }
+        }
+
+        Err(JSError::TypeError(
+            "Cannot convert object to primitive value".to_string(),
+        ))
     }
 
     fn binary_arithmetic_op(&mut self, op: ArithmeticOp) -> JSResult<()> {

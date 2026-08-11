@@ -36,10 +36,12 @@ fn byte_index(input: &str, character_index: usize) -> usize {
         .unwrap_or(input.len())
 }
 
-fn string_constructor(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(JSValue::String(
-        args.get(1).map(JSValue::to_string).unwrap_or_default(),
-    ))
+fn string_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = match args.get(1) {
+        Some(value) => vm.to_string_value(value.clone())?,
+        None => String::new(),
+    };
+    Ok(JSValue::String(value))
 }
 
 fn string_from_char_code(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -116,7 +118,7 @@ fn string_replace(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         return Ok(JSValue::String(output));
     }
 
-    let needle = search.to_string();
+    let needle = vm.to_string_value(search)?;
     let Some(start) = input.find(&needle) else {
         return Ok(JSValue::String(input));
     };
@@ -150,12 +152,11 @@ fn replacement_text(
             .collect();
         arguments.push(JSValue::Number(start as f64));
         arguments.push(JSValue::String(input.to_string()));
-        return Ok(vm
-            .call(replacement.clone(), JSValue::Undefined, arguments)?
-            .to_string());
+        let result = vm.call(replacement.clone(), JSValue::Undefined, arguments)?;
+        return vm.to_string_value(result);
     }
 
-    let template = replacement.to_string();
+    let template = vm.to_string_value(replacement.clone())?;
     let mut output = String::new();
     let mut characters = template.chars().peekable();
     while let Some(character) = characters.next() {

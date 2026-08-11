@@ -536,21 +536,27 @@ fn array_includes(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::
     Ok(JSValue::Boolean(false))
 }
 
-fn array_join(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+fn array_join(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     let object = receiver(&args, "join")?;
-    let separator = args
-        .get(1)
-        .filter(|value| !matches!(value, JSValue::Undefined))
-        .map(JSValue::to_string)
-        .unwrap_or_else(|| ",".to_string());
-    let values = (0..length(&object))
-        .map(|index| match object.borrow().get(&index.to_string()) {
+    let separator = match args.get(1) {
+        Some(value) if !matches!(value, JSValue::Undefined) => vm.to_string_value(value.clone())?,
+        _ => ",".to_string(),
+    };
+    let mut parts = Vec::with_capacity(length(&object));
+    for index in 0..length(&object) {
+        let value = object.borrow().get(&index.to_string());
+        parts.push(match value {
             JSValue::Null | JSValue::Undefined => String::new(),
-            value => value.to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join(&separator);
+            value => vm.to_string_value(value)?,
+        });
+    }
+    let values = parts.join(&separator);
     Ok(JSValue::String(values))
+}
+
+fn array_to_string(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let receiver = args.first().cloned().unwrap_or(JSValue::Undefined);
+    array_join(vm, vec![receiver])
 }
 
 fn array_sort(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
@@ -851,6 +857,7 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     define_method(&mut proto, "indexOf", array_index_of);
     define_method(&mut proto, "includes", array_includes);
     define_method(&mut proto, "join", array_join);
+    define_method(&mut proto, "toString", array_to_string);
     define_method(&mut proto, "sort", array_sort);
     define_method(&mut proto, "find", array_find);
     define_method(&mut proto, "findIndex", array_find_index);

@@ -24,6 +24,68 @@ fn template_literal_supports_object_literals_in_interpolation() {
 }
 
 #[test]
+fn string_concatenation_uses_custom_object_to_string() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                const selector = {
+                    toString() { return ".py-2"; }
+                };
+                `${selector}{padding:0.5rem}` + ":" + ("rule=" + selector);
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(
+        result,
+        JSValue::String(".py-2{padding:0.5rem}:rule=.py-2".to_string())
+    );
+}
+
+#[test]
+fn addition_uses_custom_object_value_of() {
+    let mut engine = JSEngine::new();
+    let result = engine.eval("({ valueOf() { return 40; } }) + 2").unwrap();
+
+    assert_eq!(result, JSValue::Number(42.0));
+}
+
+#[test]
+fn string_replace_uses_custom_object_to_string() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                const selector = { toString() { return ".py-2"; } };
+                "&{padding:0.5rem}".replace("&", selector) + ":" +
+                    "&{padding:0.5rem}".replace("&", () => selector);
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(
+        result,
+        JSValue::String(".py-2{padding:0.5rem}:.py-2{padding:0.5rem}".to_string())
+    );
+}
+
+#[test]
+fn string_constructor_uses_custom_object_to_string() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                const selector = { toString() { return ".py-2"; } };
+                String(selector);
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::String(".py-2".to_string()));
+}
+
+#[test]
 fn tagged_template_receives_strings_and_values() {
     let mut engine = JSEngine::new();
     let result = engine
