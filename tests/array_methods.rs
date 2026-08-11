@@ -187,6 +187,36 @@ fn array_to_string_delegates_to_join() {
 }
 
 #[test]
+fn array_to_string_uses_an_overridden_join_method() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const values = [1, 2];
+            values.join = function() { return "custom"; };
+            values.toString();
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("custom".to_string()));
+}
+
+#[test]
+fn array_to_string_falls_back_when_join_is_not_callable() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const values = [1, 2];
+            values.join = 1;
+            values.toString();
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("[object Array]".to_string()));
+}
+
+#[test]
 fn reduce_callbacks_capture_each_invocation_parameters() {
     let mut engine = JSEngine::new();
     let result = engine

@@ -41,6 +41,10 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         "toStringTag".to_string(),
         Property::read_only(JSValue::String("@@toStringTag".to_string())),
     );
+    symbol.define_property(
+        "toPrimitive".to_string(),
+        Property::read_only(JSValue::String("@@toPrimitive".to_string())),
+    );
     global.borrow_mut().set(
         "Symbol".to_string(),
         JSValue::Object(Rc::new(RefCell::new(symbol))),

@@ -556,7 +556,12 @@ fn array_join(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRes
 
 fn array_to_string(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     let receiver = args.first().cloned().unwrap_or(JSValue::Undefined);
-    array_join(vm, vec![receiver])
+    let join = vm.resolve_method_property(&receiver, "join")?;
+    if vm.is_callable(&join) {
+        vm.call(join, receiver, Vec::new())
+    } else {
+        crate::builtins::object::object_to_string(vm, vec![receiver])
+    }
 }
 
 fn array_sort(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {

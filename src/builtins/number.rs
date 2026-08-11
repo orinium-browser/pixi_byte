@@ -21,10 +21,9 @@ fn receiver(args: &[JSValue], method: &str) -> JSResult<f64> {
     }
 }
 
-fn number_constructor(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(JSValue::Number(
-        args.get(1).map(JSValue::to_number).unwrap_or(0.0),
-    ))
+fn number_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = args.get(1).cloned().unwrap_or(JSValue::Number(0.0));
+    Ok(JSValue::Number(vm.to_number_value(value)?))
 }
 
 fn big_int_constructor(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {

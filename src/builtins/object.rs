@@ -315,12 +315,18 @@ fn object_is_prototype_of(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JS
 }
 
 /// Object.prototype.toString のネイティブ実装
-fn object_to_string(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
+pub(crate) fn object_to_string(
+    _vm: &mut crate::vm::VM,
+    mut args: Vec<JSValue>,
+) -> JSResult<JSValue> {
     if args.is_empty() {
         return Ok(JSValue::String("[object Object]".to_string()));
     }
     let receiver = args.remove(0);
     match receiver {
+        JSValue::Object(object) if object.borrow().has_own_property("__pixi_array__") => {
+            Ok(JSValue::String("[object Array]".to_string()))
+        }
         JSValue::Object(_) => Ok(JSValue::String("[object Object]".to_string())),
         JSValue::Function(..)
         | JSValue::ArrowFunction(..)
@@ -332,6 +338,15 @@ fn object_to_string(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult
         JSValue::Boolean(_) => Ok(JSValue::String("[object Boolean]".to_string())),
         JSValue::Null => Ok(JSValue::String("[object Null]".to_string())),
         JSValue::Undefined => Ok(JSValue::String("[object Undefined]".to_string())),
+    }
+}
+
+fn object_value_of(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    match args.first().cloned().unwrap_or(JSValue::Undefined) {
+        JSValue::Null | JSValue::Undefined => Err(JSError::TypeError(
+            "Object.prototype.valueOf: invalid receiver".to_string(),
+        )),
+        value => Ok(value),
     }
 }
 
@@ -784,6 +799,7 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         builtin_method(object_is_prototype_of),
     );
     proto.define_property("toString".to_string(), builtin_method(object_to_string));
+    proto.define_property("valueOf".to_string(), builtin_method(object_value_of));
     proto.define_property(
         "propertyIsEnumerable".to_string(),
         builtin_method(object_property_is_enumerable),

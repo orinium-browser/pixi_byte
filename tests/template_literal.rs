@@ -52,6 +52,47 @@ fn addition_uses_custom_object_value_of() {
 }
 
 #[test]
+fn string_and_number_conversion_use_their_respective_primitive_hints() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                const value = {
+                    toString() { return "string"; },
+                    valueOf() { return 42; }
+                };
+                String(value) + ":" + Number(value) + ":" + (value + 1);
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::String("string:42:43".to_string()));
+}
+
+#[test]
+fn conversion_calls_symbol_to_primitive_with_the_requested_hint() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                const hints = [];
+                const value = {};
+                value[Symbol.toPrimitive] = function(hint) {
+                    hints.push(hint);
+                    return hint === "string" ? "text" : 5;
+                };
+                String(value) + ":" + Number(value) + ":" + (value + 1) + ":" + hints.join(",");
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(
+        result,
+        JSValue::String("text:5:6:string,number,default".to_string())
+    );
+}
+
+#[test]
 fn string_replace_uses_custom_object_to_string() {
     let mut engine = JSEngine::new();
     let result = engine

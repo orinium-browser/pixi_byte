@@ -40,6 +40,23 @@ enum BitwiseOp {
     RightShift,
 }
 
+#[derive(Clone, Copy)]
+enum PrimitiveHint {
+    Default,
+    Number,
+    String,
+}
+
+impl PrimitiveHint {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Number => "number",
+            Self::String => "string",
+        }
+    }
+}
+
 /// 仮想マシン
 pub struct VM {
     /// オペランドスタック
@@ -419,6 +436,7 @@ impl VM {
             // 単項演算
             Opcode::Neg => {
                 let value = self.pop()?;
+                let value = self.to_primitive(value, PrimitiveHint::Number)?;
                 self.stack.push(match value {
                     JSValue::BigInt(value) => JSValue::BigInt(-value),
                     value => JSValue::Number(-value.to_number()),
@@ -430,6 +448,7 @@ impl VM {
             }
             Opcode::BitNot => {
                 let value = self.pop()?;
+                let value = self.to_primitive(value, PrimitiveHint::Number)?;
                 self.stack.push(match value {
                     JSValue::BigInt(value) => JSValue::BigInt(!value),
                     value => JSValue::Number((!to_int32(value.to_number())) as f64),
@@ -437,6 +456,7 @@ impl VM {
             }
             Opcode::Increment | Opcode::Decrement => {
                 let value = self.pop()?;
+                let value = self.to_primitive(value, PrimitiveHint::Number)?;
                 let increment = matches!(opcode, Opcode::Increment);
                 self.stack.push(match value {
                     JSValue::BigInt(value) => JSValue::BigInt(if increment {
@@ -581,6 +601,8 @@ impl VM {
             Opcode::UnsignedRightShift => {
                 let b = self.pop()?;
                 let a = self.pop()?;
+                let a = self.to_primitive(a, PrimitiveHint::Number)?;
+                let b = self.to_primitive(b, PrimitiveHint::Number)?;
                 if matches!(a, JSValue::BigInt(_)) || matches!(b, JSValue::BigInt(_)) {
                     return Err(JSError::TypeError(
                         "BigInts have no unsigned right shift".into(),
@@ -1433,7 +1455,11 @@ impl VM {
         Ok(())
     }
 
-    fn resolve_method_property(&mut self, object: &JSValue, key: &str) -> JSResult<JSValue> {
+    pub(crate) fn resolve_method_property(
+        &mut self,
+        object: &JSValue,
+        key: &str,
+    ) -> JSResult<JSValue> {
         match object {
             JSValue::Object(obj_ref) => {
                 let own_property = obj_ref.borrow().get_property_descriptor(key);
@@ -1627,8 +1653,8 @@ impl VM {
     fn add_op(&mut self) -> JSResult<()> {
         let b = self.pop()?;
         let a = self.pop()?;
-        let a = self.to_primitive(a)?;
-        let b = self.to_primitive(b)?;
+        let a = self.to_primitive(a, PrimitiveHint::Default)?;
+        let b = self.to_primitive(b, PrimitiveHint::Default)?;
         let result = match (a, b) {
             (JSValue::String(a), b) => JSValue::String(format!("{a}{}", b.to_console_string())),
             (a, JSValue::String(b)) => JSValue::String(format!("{}{b}", a.to_console_string())),
@@ -1645,10 +1671,26 @@ impl VM {
     }
 
     pub(crate) fn to_string_value(&mut self, value: JSValue) -> JSResult<String> {
-        Ok(self.to_primitive(value)?.to_console_string())
+        Ok(self
+            .to_primitive(value, PrimitiveHint::String)?
+            .to_console_string())
     }
 
-    fn to_primitive(&mut self, value: JSValue) -> JSResult<JSValue> {
+    pub(crate) fn to_number_value(&mut self, value: JSValue) -> JSResult<f64> {
+        Ok(self.to_primitive(value, PrimitiveHint::Number)?.to_number())
+    }
+
+    pub(crate) fn is_callable(&self, value: &JSValue) -> bool {
+        matches!(
+            value,
+            JSValue::Function(..)
+                | JSValue::ArrowFunction(..)
+                | JSValue::NativeFunction(..)
+                | JSValue::BoundFunction(..)
+        ) || matches!(value, JSValue::Object(object) if !matches!(object.borrow().get("__call__"), JSValue::Undefined))
+    }
+
+    fn to_primitive(&mut self, value: JSValue, hint: PrimitiveHint) -> JSResult<JSValue> {
         if !matches!(
             value,
             JSValue::Object(_)
@@ -1660,16 +1702,40 @@ impl VM {
             return Ok(value);
         }
 
-        for name in ["valueOf", "toString"] {
-            let method = self.resolve_method_property(&value, name)?;
-            let callable = matches!(
-                &method,
-                JSValue::Function(..)
+        let exotic = self.resolve_method_property(&value, "@@toPrimitive")?;
+        if !matches!(exotic, JSValue::Undefined) {
+            if !self.is_callable(&exotic) {
+                return Err(JSError::TypeError(
+                    "@@toPrimitive is not callable".to_string(),
+                ));
+            }
+            let result = self.call(
+                exotic,
+                value.clone(),
+                vec![JSValue::String(hint.as_str().to_string())],
+            )?;
+            if matches!(
+                result,
+                JSValue::Object(_)
+                    | JSValue::Function(..)
                     | JSValue::ArrowFunction(..)
                     | JSValue::NativeFunction(..)
                     | JSValue::BoundFunction(..)
-            ) || matches!(&method, JSValue::Object(object) if !matches!(object.borrow().get("__call__"), JSValue::Undefined));
-            if callable {
+            ) {
+                return Err(JSError::TypeError(
+                    "@@toPrimitive must return a primitive value".to_string(),
+                ));
+            }
+            return Ok(result);
+        }
+
+        let method_names = match hint {
+            PrimitiveHint::String => ["toString", "valueOf"],
+            PrimitiveHint::Default | PrimitiveHint::Number => ["valueOf", "toString"],
+        };
+        for name in method_names {
+            let method = self.resolve_method_property(&value, name)?;
+            if self.is_callable(&method) {
                 let result = self.call(method, value.clone(), Vec::new())?;
                 if !matches!(
                     result,
@@ -1692,6 +1758,8 @@ impl VM {
     fn binary_arithmetic_op(&mut self, op: ArithmeticOp) -> JSResult<()> {
         let b = self.pop()?;
         let a = self.pop()?;
+        let a = self.to_primitive(a, PrimitiveHint::Number)?;
+        let b = self.to_primitive(b, PrimitiveHint::Number)?;
         let result = match (a, b) {
             (JSValue::BigInt(a), JSValue::BigInt(b)) => {
                 if matches!(op, ArithmeticOp::Div | ArithmeticOp::Mod) && b == BigInt::from(0) {
@@ -1749,14 +1817,14 @@ impl VM {
     {
         let b = self.pop()?;
         let a = self.pop()?;
+        let a = self.to_primitive(a, PrimitiveHint::Number)?;
+        let b = self.to_primitive(b, PrimitiveHint::Number)?;
         let ordering = match (&a, &b) {
-            (JSValue::BigInt(a), JSValue::BigInt(b)) => a.cmp(b),
-            _ => a
-                .to_number()
-                .partial_cmp(&b.to_number())
-                .unwrap_or(std::cmp::Ordering::Equal),
+            (JSValue::String(a), JSValue::String(b)) => Some(a.cmp(b)),
+            (JSValue::BigInt(a), JSValue::BigInt(b)) => Some(a.cmp(b)),
+            _ => a.to_number().partial_cmp(&b.to_number()),
         };
-        let result = op(ordering);
+        let result = ordering.map(op).unwrap_or(false);
         self.stack.push(JSValue::Boolean(result));
         Ok(())
     }
@@ -1765,6 +1833,8 @@ impl VM {
     fn bitwise_op(&mut self, op: BitwiseOp) -> JSResult<()> {
         let b = self.pop()?;
         let a = self.pop()?;
+        let a = self.to_primitive(a, PrimitiveHint::Number)?;
+        let b = self.to_primitive(b, PrimitiveHint::Number)?;
         let result = match (a, b) {
             (JSValue::BigInt(a), JSValue::BigInt(b)) => JSValue::BigInt(match op {
                 BitwiseOp::And => a & b,
