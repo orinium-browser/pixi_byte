@@ -44,7 +44,66 @@ fn normalize_pattern(pattern: &str) -> String {
         output.push('\\');
         index += 1;
     }
-    strip_unsupported_lookarounds(&normalize_braces(&normalize_character_classes(&output)))
+    strip_unsupported_lookarounds(&normalize_braces(&normalize_legacy_character_class_ranges(
+        &normalize_character_classes(&output),
+    )))
+}
+
+fn normalize_legacy_character_class_ranges(pattern: &str) -> String {
+    let characters = pattern.chars().collect::<Vec<_>>();
+    let mut output = String::with_capacity(pattern.len());
+    let mut index = 0;
+    let mut in_class = false;
+    let mut previous_was_class_escape = false;
+
+    while index < characters.len() {
+        let character = characters[index];
+        if character == '\\' {
+            output.push(character);
+            if let Some(escaped) = characters.get(index + 1) {
+                output.push(*escaped);
+                previous_was_class_escape =
+                    in_class && matches!(escaped, 'd' | 'D' | 's' | 'S' | 'w' | 'W');
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+
+        match character {
+            '[' if !in_class => {
+                in_class = true;
+                previous_was_class_escape = false;
+                output.push(character);
+            }
+            ']' if in_class => {
+                in_class = false;
+                previous_was_class_escape = false;
+                output.push(character);
+            }
+            '-' if in_class => {
+                let next_is_class_escape = characters.get(index + 1) == Some(&'\\')
+                    && matches!(
+                        characters.get(index + 2),
+                        Some('d' | 'D' | 's' | 'S' | 'w' | 'W')
+                    );
+                if previous_was_class_escape || next_is_class_escape {
+                    output.push_str("\\-");
+                } else {
+                    output.push(character);
+                }
+                previous_was_class_escape = false;
+            }
+            _ => {
+                output.push(character);
+                previous_was_class_escape = false;
+            }
+        }
+        index += 1;
+    }
+
+    output
 }
 
 fn normalize_braces(pattern: &str) -> String {

@@ -77,6 +77,15 @@ fn javascript_character_classes_allow_a_literal_open_bracket() {
 }
 
 #[test]
+fn legacy_character_class_ranges_allow_class_escapes_as_endpoints() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(r#"/^[\w-_]+$/.test("min-h-") && /[a-\s]/.test(" ")"#)
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}
+
+#[test]
 fn unsupported_lookarounds_do_not_prevent_regexp_construction() {
     let mut engine = pixi_byte::JSEngine::new();
     let result = engine
