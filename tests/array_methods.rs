@@ -115,3 +115,45 @@ fn array_iteration_methods_support_component_data_transforms() {
         JSValue::String("1,3,5,7:5,7:12:true:true:4321".to_string())
     );
 }
+
+#[test]
+fn array_iterators_expose_keys_values_and_entries() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const values = ["a", "b"];
+            const entries = [];
+            for (const [index, value] of values.entries()) {
+                entries.push(index + value);
+            }
+            entries.join(",") === "0a,1b" &&
+                values.keys().next().value === 0 &&
+                values.values().next().value === "a" &&
+                values[Symbol.iterator]().next().value === "a";
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}
+
+#[test]
+fn array_prototype_methods_are_not_enumerable() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const values = ["first"];
+            const keys = [];
+            for (const key in values) keys.push(key);
+            function argumentKeys() {
+                const result = [];
+                for (const key in arguments) result.push(key);
+                return result.join(",");
+            }
+            keys.join(",") + ":" + argumentKeys("value");
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("0:0".to_string()));
+}

@@ -1,11 +1,26 @@
 //! 組み込み Array objectの 実装
 
 use crate::value::JSValue;
-use crate::value::jsobject::JSObject;
+use crate::value::jsobject::{JSObject, Property};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 // NativeFunction シグネチャ: fn(&mut VM, Vec<JSValue>) -> JSResult<JSValue>
+
+fn builtin_method(function: crate::NativeFunctionType) -> Property {
+    Property {
+        value: JSValue::NativeFunction(function),
+        enumerable: false,
+        writable: true,
+        configurable: true,
+        getter: None,
+        setter: None,
+    }
+}
+
+fn define_method(object: &mut JSObject, name: &str, function: crate::NativeFunctionType) {
+    object.define_property(name.to_string(), builtin_method(function));
+}
 
 fn receiver(args: &[JSValue], method: &str) -> crate::error::JSResult<Rc<RefCell<JSObject>>> {
     match args.first() {
@@ -33,6 +48,79 @@ fn normalized_index(value: Option<&JSValue>, length: usize, default: isize) -> u
     } else {
         (index as usize).min(length)
     }
+}
+
+const ITERATOR_SOURCE: &str = "__array_iterator_source";
+const ITERATOR_INDEX: &str = "__array_iterator_index";
+const ITERATOR_KIND: &str = "__array_iterator_kind";
+
+fn array_iterator(source: Rc<RefCell<JSObject>>, kind: &str) -> JSValue {
+    let mut iterator = JSObject::new();
+    iterator.set(ITERATOR_SOURCE.to_string(), JSValue::Object(source));
+    iterator.set(ITERATOR_INDEX.to_string(), JSValue::Number(0.0));
+    iterator.set(ITERATOR_KIND.to_string(), JSValue::String(kind.to_string()));
+    iterator.set(
+        "next".to_string(),
+        JSValue::NativeFunction(array_iterator_next),
+    );
+    iterator.set(
+        "@@iterator".to_string(),
+        JSValue::NativeFunction(array_iterator_identity),
+    );
+    JSValue::Object(Rc::new(RefCell::new(iterator)))
+}
+
+fn array_iterator_identity(
+    _vm: &mut crate::vm::VM,
+    args: Vec<JSValue>,
+) -> crate::error::JSResult<JSValue> {
+    Ok(args.first().cloned().unwrap_or(JSValue::Undefined))
+}
+
+fn array_iterator_next(
+    vm: &mut crate::vm::VM,
+    args: Vec<JSValue>,
+) -> crate::error::JSResult<JSValue> {
+    let iterator = receiver(&args, "iterator.next")?;
+    let JSValue::Object(source) = iterator.borrow().get(ITERATOR_SOURCE) else {
+        return Err(crate::error::JSError::TypeError(
+            "Array iterator has no source".to_string(),
+        ));
+    };
+    let index = iterator.borrow().get(ITERATOR_INDEX).to_number() as usize;
+    let done = index >= length(&source);
+    let value = if done {
+        JSValue::Undefined
+    } else {
+        iterator.borrow_mut().set(
+            ITERATOR_INDEX.to_string(),
+            JSValue::Number((index + 1) as f64),
+        );
+        match iterator.borrow().get(ITERATOR_KIND).to_string().as_str() {
+            "key" => JSValue::Number(index as f64),
+            "entry" => vm.array_from_values(vec![
+                JSValue::Number(index as f64),
+                source.borrow().get(&index.to_string()),
+            ]),
+            _ => source.borrow().get(&index.to_string()),
+        }
+    };
+    let mut result = JSObject::new();
+    result.set("value".to_string(), value);
+    result.set("done".to_string(), JSValue::Boolean(done));
+    Ok(JSValue::Object(Rc::new(RefCell::new(result))))
+}
+
+fn array_entries(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    Ok(array_iterator(receiver(&args, "entries")?, "entry"))
+}
+
+fn array_keys(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    Ok(array_iterator(receiver(&args, "keys")?, "key"))
+}
+
+fn array_values(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    Ok(array_iterator(receiver(&args, "values")?, "value"))
 }
 
 fn array_push(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
@@ -746,55 +834,34 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     // Array.prototype オブジェクト
     let mut proto = JSObject::new();
 
-    // push と pop をネイティブ関数として登録
-    proto.set("push".to_string(), JSValue::NativeFunction(array_push));
-    proto.set("pop".to_string(), JSValue::NativeFunction(array_pop));
-    proto.set("shift".to_string(), JSValue::NativeFunction(array_shift));
-    proto.set(
-        "unshift".to_string(),
-        JSValue::NativeFunction(array_unshift),
-    );
-    proto.set("slice".to_string(), JSValue::NativeFunction(array_slice));
-    proto.set("splice".to_string(), JSValue::NativeFunction(array_splice));
-    proto.set("concat".to_string(), JSValue::NativeFunction(array_concat));
-    proto.set(
-        "forEach".to_string(),
-        JSValue::NativeFunction(array_for_each),
-    );
-    proto.set("map".to_string(), JSValue::NativeFunction(array_map));
-    proto.set("filter".to_string(), JSValue::NativeFunction(array_filter));
-    proto.set("some".to_string(), JSValue::NativeFunction(array_some));
-    proto.set("every".to_string(), JSValue::NativeFunction(array_every));
-    proto.set("reduce".to_string(), JSValue::NativeFunction(array_reduce));
-    proto.set(
-        "reduceRight".to_string(),
-        JSValue::NativeFunction(array_reduce_right),
-    );
-    proto.set(
-        "indexOf".to_string(),
-        JSValue::NativeFunction(array_index_of),
-    );
-    proto.set(
-        "includes".to_string(),
-        JSValue::NativeFunction(array_includes),
-    );
-    proto.set("join".to_string(), JSValue::NativeFunction(array_join));
-    proto.set("sort".to_string(), JSValue::NativeFunction(array_sort));
-    proto.set("find".to_string(), JSValue::NativeFunction(array_find));
-    proto.set(
-        "findIndex".to_string(),
-        JSValue::NativeFunction(array_find_index),
-    );
-    proto.set("flat".to_string(), JSValue::NativeFunction(array_flat));
-    proto.set(
-        "flatMap".to_string(),
-        JSValue::NativeFunction(array_flat_map),
-    );
-    proto.set(
-        "reverse".to_string(),
-        JSValue::NativeFunction(array_reverse),
-    );
-    proto.set("at".to_string(), JSValue::NativeFunction(array_at));
+    define_method(&mut proto, "push", array_push);
+    define_method(&mut proto, "pop", array_pop);
+    define_method(&mut proto, "shift", array_shift);
+    define_method(&mut proto, "unshift", array_unshift);
+    define_method(&mut proto, "slice", array_slice);
+    define_method(&mut proto, "splice", array_splice);
+    define_method(&mut proto, "concat", array_concat);
+    define_method(&mut proto, "forEach", array_for_each);
+    define_method(&mut proto, "map", array_map);
+    define_method(&mut proto, "filter", array_filter);
+    define_method(&mut proto, "some", array_some);
+    define_method(&mut proto, "every", array_every);
+    define_method(&mut proto, "reduce", array_reduce);
+    define_method(&mut proto, "reduceRight", array_reduce_right);
+    define_method(&mut proto, "indexOf", array_index_of);
+    define_method(&mut proto, "includes", array_includes);
+    define_method(&mut proto, "join", array_join);
+    define_method(&mut proto, "sort", array_sort);
+    define_method(&mut proto, "find", array_find);
+    define_method(&mut proto, "findIndex", array_find_index);
+    define_method(&mut proto, "flat", array_flat);
+    define_method(&mut proto, "flatMap", array_flat_map);
+    define_method(&mut proto, "reverse", array_reverse);
+    define_method(&mut proto, "at", array_at);
+    define_method(&mut proto, "entries", array_entries);
+    define_method(&mut proto, "keys", array_keys);
+    define_method(&mut proto, "values", array_values);
+    define_method(&mut proto, "@@iterator", array_values);
 
     array_ctor.set(
         "prototype".to_string(),
