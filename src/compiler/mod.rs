@@ -202,6 +202,7 @@ pub struct Compiler {
     break_scopes: Vec<Vec<usize>>,
     labels: Vec<LabelContext>,
     pending_loop_label: Option<String>,
+    lexical_loop_depth: usize,
     next_temporary: usize,
     super_binding: Option<String>,
     generator_output: Option<String>,
@@ -216,6 +217,7 @@ struct LabelContext {
     is_iteration: bool,
     break_jumps: Vec<usize>,
     continue_jumps: Vec<usize>,
+    cleanup_depth: usize,
 }
 
 impl Compiler {
@@ -227,6 +229,7 @@ impl Compiler {
             break_scopes: Vec::new(),
             labels: Vec::new(),
             pending_loop_label: None,
+            lexical_loop_depth: 0,
             next_temporary: 0,
             super_binding: None,
             generator_output: None,
@@ -327,6 +330,7 @@ impl Compiler {
                     is_iteration,
                     break_jumps: Vec::new(),
                     continue_jumps: Vec::new(),
+                    cleanup_depth: self.lexical_loop_depth,
                 });
                 if is_iteration {
                     self.pending_loop_label = Some(label);
@@ -460,6 +464,7 @@ impl Compiler {
                 for break_jump in self.break_scopes.pop().expect("break scope must exist") {
                     self.patch_jump(break_jump, exit_target);
                 }
+                self.patch_labeled_breaks(loop_label.as_deref(), exit_target)?;
                 if is_last {
                     let undefined = self.chunk.add_constant(JSValue::Undefined);
                     self.chunk.emit(Opcode::LoadConst(undefined));
@@ -494,6 +499,7 @@ impl Compiler {
                 for break_jump in self.break_scopes.pop().expect("break scope must exist") {
                     self.patch_jump(break_jump, exit_target);
                 }
+                self.patch_labeled_breaks(loop_label.as_deref(), exit_target)?;
                 if is_last {
                     let undefined = self.chunk.add_constant(JSValue::Undefined);
                     self.chunk.emit(Opcode::LoadConst(undefined));
@@ -510,8 +516,10 @@ impl Compiler {
                     .as_deref()
                     .map(loop_lexical_binding_names)
                     .unwrap_or_default();
+                self.mark_labeled_loop_scope(loop_label.as_deref(), !lexical_bindings.is_empty())?;
                 if !lexical_bindings.is_empty() {
                     self.chunk.emit(Opcode::EnterScope);
+                    self.lexical_loop_depth += 1;
                 }
                 if let Some(init) = init {
                     self.compile_statement(*init, false)?;
@@ -530,6 +538,9 @@ impl Compiler {
                 });
                 self.break_scopes.push(Vec::new());
                 self.compile_statements(body, false)?;
+                if !lexical_bindings.is_empty() {
+                    self.lexical_loop_depth -= 1;
+                }
 
                 let update_start = self.chunk.code.len();
                 let continue_jumps = {
@@ -559,6 +570,7 @@ impl Compiler {
                 for break_jump in self.break_scopes.pop().expect("break scope must exist") {
                     self.patch_jump(break_jump, exit_cleanup);
                 }
+                self.patch_labeled_breaks(loop_label.as_deref(), exit_cleanup)?;
                 if is_last {
                     let undefined = self.chunk.add_constant(JSValue::Undefined);
                     self.chunk.emit(Opcode::LoadConst(undefined));
@@ -582,6 +594,7 @@ impl Compiler {
                 self.chunk.emit(Opcode::LoadConst(zero));
                 self.chunk.emit(Opcode::DefineVar(index.clone()));
                 let lexical_binding = matches!(kind, Some(VarKind::Let | VarKind::Const));
+                self.mark_labeled_loop_scope(loop_label.as_deref(), lexical_binding)?;
 
                 let loop_start = self.chunk.code.len();
                 self.chunk.emit(Opcode::LoadVar(index.clone()));
@@ -607,7 +620,13 @@ impl Compiler {
                     continue_jumps: Vec::new(),
                 });
                 self.break_scopes.push(Vec::new());
+                if lexical_binding {
+                    self.lexical_loop_depth += 1;
+                }
                 self.compile_statements(body, false)?;
+                if lexical_binding {
+                    self.lexical_loop_depth -= 1;
+                }
 
                 let update_start = self.chunk.code.len();
                 let continue_jumps = {
@@ -638,6 +657,7 @@ impl Compiler {
                 for break_jump in self.break_scopes.pop().expect("break scope must exist") {
                     self.patch_jump(break_jump, break_cleanup);
                 }
+                self.patch_labeled_breaks(loop_label.as_deref(), break_cleanup)?;
                 if is_last {
                     let undefined = self.chunk.add_constant(JSValue::Undefined);
                     self.chunk.emit(Opcode::LoadConst(undefined));
@@ -657,6 +677,7 @@ impl Compiler {
                 self.chunk.emit(Opcode::GetIterator);
                 self.chunk.emit(Opcode::DefineVar(iterator.clone()));
                 let lexical_binding = matches!(kind, Some(VarKind::Let | VarKind::Const));
+                self.mark_labeled_loop_scope(loop_label.as_deref(), lexical_binding)?;
 
                 let loop_start = self.chunk.code.len();
                 self.chunk.emit(Opcode::LoadVar(iterator));
@@ -671,7 +692,13 @@ impl Compiler {
                     continue_jumps: Vec::new(),
                 });
                 self.break_scopes.push(Vec::new());
+                if lexical_binding {
+                    self.lexical_loop_depth += 1;
+                }
                 self.compile_statements(body, false)?;
+                if lexical_binding {
+                    self.lexical_loop_depth -= 1;
+                }
 
                 let update_start = self.chunk.code.len();
                 let continue_jumps = {
@@ -697,6 +724,7 @@ impl Compiler {
                 for break_jump in self.break_scopes.pop().expect("break scope must exist") {
                     self.patch_jump(break_jump, break_cleanup);
                 }
+                self.patch_labeled_breaks(loop_label.as_deref(), break_cleanup)?;
                 if is_last {
                     let undefined = self.chunk.add_constant(JSValue::Undefined);
                     self.chunk.emit(Opcode::LoadConst(undefined));
@@ -828,21 +856,31 @@ impl Compiler {
                 }
             }
             Statement::Break(label) => {
-                let jump = self.chunk.code.len();
-                self.chunk.emit(Opcode::Jump(usize::MAX));
                 if let Some(label) = label {
-                    let Some(context) = self
+                    let Some(cleanup_depth) = self
                         .labels
-                        .iter_mut()
+                        .iter()
                         .rev()
                         .find(|context| context.name == label)
+                        .map(|context| context.cleanup_depth)
                     else {
                         return Err(JSError::InternalError(format!(
                             "unknown break label '{label}'"
                         )));
                     };
+                    self.emit_scope_cleanup(cleanup_depth);
+                    let jump = self.chunk.code.len();
+                    self.chunk.emit(Opcode::Jump(usize::MAX));
+                    let context = self
+                        .labels
+                        .iter_mut()
+                        .rev()
+                        .find(|context| context.name == label)
+                        .expect("validated break label must exist");
                     context.break_jumps.push(jump);
                 } else {
+                    let jump = self.chunk.code.len();
+                    self.chunk.emit(Opcode::Jump(usize::MAX));
                     let Some(break_scope) = self.break_scopes.last_mut() else {
                         return Err(JSError::InternalError(
                             "break used outside of a loop or switch".to_string(),
@@ -852,26 +890,36 @@ impl Compiler {
                 }
             }
             Statement::Continue(label) => {
-                let jump = self.chunk.code.len();
-                self.chunk.emit(Opcode::Jump(usize::MAX));
                 if let Some(label) = label {
-                    let Some(context) = self
+                    let Some((is_iteration, cleanup_depth)) = self
                         .labels
-                        .iter_mut()
+                        .iter()
                         .rev()
                         .find(|context| context.name == label)
+                        .map(|context| (context.is_iteration, context.cleanup_depth))
                     else {
                         return Err(JSError::InternalError(format!(
                             "unknown continue label '{label}'"
                         )));
                     };
-                    if !context.is_iteration {
+                    if !is_iteration {
                         return Err(JSError::InternalError(format!(
                             "continue label '{label}' is not an iteration statement"
                         )));
                     }
+                    self.emit_scope_cleanup(cleanup_depth);
+                    let jump = self.chunk.code.len();
+                    self.chunk.emit(Opcode::Jump(usize::MAX));
+                    let context = self
+                        .labels
+                        .iter_mut()
+                        .rev()
+                        .find(|context| context.name == label)
+                        .expect("validated continue label must exist");
                     context.continue_jumps.push(jump);
                 } else {
+                    let jump = self.chunk.code.len();
+                    self.chunk.emit(Opcode::Jump(usize::MAX));
                     let Some(loop_context) = self.loops.last_mut() else {
                         return Err(JSError::InternalError(
                             "continue used outside of a loop".to_string(),
@@ -924,6 +972,55 @@ impl Compiler {
             self.patch_jump(jump, target);
         }
         Ok(())
+    }
+
+    fn patch_labeled_breaks(&mut self, label: Option<&str>, target: usize) -> JSResult<()> {
+        let Some(label) = label else {
+            return Ok(());
+        };
+        let jumps = {
+            let Some(context) = self
+                .labels
+                .iter_mut()
+                .rev()
+                .find(|context| context.name == label)
+            else {
+                return Err(JSError::InternalError(format!(
+                    "unknown break label '{label}'"
+                )));
+            };
+            std::mem::take(&mut context.break_jumps)
+        };
+        for jump in jumps {
+            self.patch_jump(jump, target);
+        }
+        Ok(())
+    }
+
+    fn mark_labeled_loop_scope(&mut self, label: Option<&str>, lexical: bool) -> JSResult<()> {
+        let Some(label) = label else {
+            return Ok(());
+        };
+        let Some(context) = self
+            .labels
+            .iter_mut()
+            .rev()
+            .find(|context| context.name == label)
+        else {
+            return Err(JSError::InternalError(format!(
+                "unknown loop label '{label}'"
+            )));
+        };
+        if lexical {
+            context.cleanup_depth = self.lexical_loop_depth + 1;
+        }
+        Ok(())
+    }
+
+    fn emit_scope_cleanup(&mut self, target_depth: usize) {
+        for _ in target_depth..self.lexical_loop_depth {
+            self.chunk.emit(Opcode::ExitScope);
+        }
     }
 
     fn patch_try(

@@ -95,3 +95,23 @@ fn catch_binding_is_optional() {
 
     assert_eq!(result, JSValue::Boolean(true));
 }
+
+#[test]
+fn exception_unwinds_loop_lexical_environment_before_catch() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            let value = "outer";
+            try {
+                for (let value of [1]) {
+                    throw "stop";
+                }
+            } catch (error) {}
+            value;
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::String("outer".to_string()));
+}

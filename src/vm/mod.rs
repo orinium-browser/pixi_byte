@@ -101,6 +101,7 @@ enum ControlFlow {
 struct TryHandler {
     catch_target: Option<usize>,
     finally_target: Option<usize>,
+    env: Rc<RefCell<Environment>>,
 }
 
 enum PendingFinally {
@@ -270,6 +271,7 @@ impl VM {
                 } => handlers.push(TryHandler {
                     catch_target,
                     finally_target,
+                    env: self.current_env(),
                 }),
                 ControlFlow::PopTry => {
                     handlers.pop();
@@ -312,6 +314,7 @@ impl VM {
         let Some(handler) = handlers.pop() else {
             return Err(error);
         };
+        self.current_frame_mut().env = handler.env;
         if let Some(catch_target) = handler.catch_target {
             let value = match &error {
                 JSError::Thrown(value) => value.clone(),
@@ -338,6 +341,7 @@ impl VM {
     ) -> Option<JSValue> {
         while let Some(handler) = handlers.pop() {
             if let Some(finally_target) = handler.finally_target {
+                self.current_frame_mut().env = handler.env;
                 pending_finally.push(PendingFinally::Return(value));
                 *pc = finally_target;
                 return None;
