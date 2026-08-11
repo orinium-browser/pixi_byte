@@ -358,6 +358,29 @@ impl VM {
                 let value = self.pop()?;
                 self.current_env().borrow().define(name.clone(), value);
             }
+            Opcode::EnterScope => {
+                let outer = self.current_env();
+                self.current_frame_mut().env =
+                    Rc::new(RefCell::new(Environment::with_outer(outer)));
+            }
+            Opcode::CloneScope(names) => {
+                let current = self.current_env();
+                let outer = current.borrow().outer().ok_or_else(|| {
+                    JSError::InternalError("Cannot clone the outermost scope".to_string())
+                })?;
+                let next = Environment::with_outer(outer);
+                for name in names {
+                    let value = current.borrow().get(name).unwrap_or(JSValue::Undefined);
+                    next.define(name.clone(), value);
+                }
+                self.current_frame_mut().env = Rc::new(RefCell::new(next));
+            }
+            Opcode::ExitScope => {
+                let outer = self.current_env().borrow().outer().ok_or_else(|| {
+                    JSError::InternalError("Cannot exit the outermost scope".to_string())
+                })?;
+                self.current_frame_mut().env = outer;
+            }
             Opcode::Pop => {
                 self.stack.pop();
             }
@@ -1322,6 +1345,10 @@ impl VM {
     /// 現在の CallFrame を返す
     fn current_frame(&self) -> &CallFrame {
         self.frames.last().expect("no call frame")
+    }
+
+    fn current_frame_mut(&mut self) -> &mut CallFrame {
+        self.frames.last_mut().expect("no call frame")
     }
 
     /// 現在の Environment を返す

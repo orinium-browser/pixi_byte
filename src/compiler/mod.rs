@@ -17,9 +17,12 @@ pub enum Opcode {
     LoadVar(String),   // 変数をスタックにロード
     StoreVar(String),  // スタックトップを変数に格納
     DefineVar(String), // スタックトップを現在のスコープへ新しく束縛
-    Pop,               // スタックトップを削除
-    Dup,               // スタックトップを複製
-    Dup2,              // スタックトップの2値を複製
+    EnterScope,
+    CloneScope(Vec<String>),
+    ExitScope,
+    Pop,  // スタックトップを削除
+    Dup,  // スタックトップを複製
+    Dup2, // スタックトップの2値を複製
 
     LoadThis,
 
@@ -503,6 +506,13 @@ impl Compiler {
                 body,
             } => {
                 let loop_label = self.pending_loop_label.take();
+                let lexical_bindings = init
+                    .as_deref()
+                    .map(loop_lexical_binding_names)
+                    .unwrap_or_default();
+                if !lexical_bindings.is_empty() {
+                    self.chunk.emit(Opcode::EnterScope);
+                }
                 if let Some(init) = init {
                     self.compile_statement(*init, false)?;
                 }
@@ -530,17 +540,24 @@ impl Compiler {
                     self.patch_jump(continue_jump, update_start);
                 }
                 self.patch_labeled_continues(loop_label.as_deref(), update_start)?;
+                if !lexical_bindings.is_empty() {
+                    self.chunk
+                        .emit(Opcode::CloneScope(lexical_bindings.clone()));
+                }
                 for update in update {
                     self.compile_expression(update)?;
                     self.chunk.emit(Opcode::Pop);
                 }
                 self.chunk.emit(Opcode::Jump(loop_start));
 
-                let exit_target = self.chunk.code.len();
-                self.patch_jump(exit_jump, exit_target);
+                let exit_cleanup = self.chunk.code.len();
+                if !lexical_bindings.is_empty() {
+                    self.chunk.emit(Opcode::ExitScope);
+                }
+                self.patch_jump(exit_jump, exit_cleanup);
                 self.loops.pop().expect("loop context must exist");
                 for break_jump in self.break_scopes.pop().expect("break scope must exist") {
-                    self.patch_jump(break_jump, exit_target);
+                    self.patch_jump(break_jump, exit_cleanup);
                 }
                 if is_last {
                     let undefined = self.chunk.add_constant(JSValue::Undefined);
@@ -564,9 +581,7 @@ impl Compiler {
                 let zero = self.chunk.add_constant(JSValue::Number(0.0));
                 self.chunk.emit(Opcode::LoadConst(zero));
                 self.chunk.emit(Opcode::DefineVar(index.clone()));
-                if matches!(kind, Some(VarKind::Let | VarKind::Const)) {
-                    self.define_binding_pattern(&binding)?;
-                }
+                let lexical_binding = matches!(kind, Some(VarKind::Let | VarKind::Const));
 
                 let loop_start = self.chunk.code.len();
                 self.chunk.emit(Opcode::LoadVar(index.clone()));
@@ -583,7 +598,10 @@ impl Compiler {
                 self.chunk.emit(Opcode::LoadVar(keys));
                 self.chunk.emit(Opcode::LoadVar(index.clone()));
                 self.chunk.emit(Opcode::GetProperty);
-                self.store_binding_pattern(&binding, false)?;
+                if lexical_binding {
+                    self.chunk.emit(Opcode::EnterScope);
+                }
+                self.store_binding_pattern(&binding, lexical_binding)?;
 
                 self.loops.push(LoopContext {
                     continue_jumps: Vec::new(),
@@ -600,6 +618,9 @@ impl Compiler {
                     self.patch_jump(continue_jump, update_start);
                 }
                 self.patch_labeled_continues(loop_label.as_deref(), update_start)?;
+                if lexical_binding {
+                    self.chunk.emit(Opcode::ExitScope);
+                }
                 self.chunk.emit(Opcode::LoadVar(index.clone()));
                 let one = self.chunk.add_constant(JSValue::Number(1.0));
                 self.chunk.emit(Opcode::LoadConst(one));
@@ -607,11 +628,15 @@ impl Compiler {
                 self.chunk.emit(Opcode::StoreVar(index));
                 self.chunk.emit(Opcode::Jump(loop_start));
 
+                let break_cleanup = self.chunk.code.len();
+                if lexical_binding {
+                    self.chunk.emit(Opcode::ExitScope);
+                }
                 let exit_target = self.chunk.code.len();
                 self.patch_jump(exit_jump, exit_target);
                 self.loops.pop().expect("loop context must exist");
                 for break_jump in self.break_scopes.pop().expect("break scope must exist") {
-                    self.patch_jump(break_jump, exit_target);
+                    self.patch_jump(break_jump, break_cleanup);
                 }
                 if is_last {
                     let undefined = self.chunk.add_constant(JSValue::Undefined);
@@ -631,15 +656,16 @@ impl Compiler {
                 self.compile_expression(right)?;
                 self.chunk.emit(Opcode::GetIterator);
                 self.chunk.emit(Opcode::DefineVar(iterator.clone()));
-                if matches!(kind, Some(VarKind::Let | VarKind::Const)) {
-                    self.define_binding_pattern(&binding)?;
-                }
+                let lexical_binding = matches!(kind, Some(VarKind::Let | VarKind::Const));
 
                 let loop_start = self.chunk.code.len();
                 self.chunk.emit(Opcode::LoadVar(iterator));
                 let exit_jump = self.chunk.code.len();
                 self.chunk.emit(Opcode::IteratorNext(usize::MAX));
-                self.store_binding_pattern(&binding, false)?;
+                if lexical_binding {
+                    self.chunk.emit(Opcode::EnterScope);
+                }
+                self.store_binding_pattern(&binding, lexical_binding)?;
 
                 self.loops.push(LoopContext {
                     continue_jumps: Vec::new(),
@@ -656,13 +682,20 @@ impl Compiler {
                     self.patch_jump(continue_jump, update_start);
                 }
                 self.patch_labeled_continues(loop_label.as_deref(), update_start)?;
+                if lexical_binding {
+                    self.chunk.emit(Opcode::ExitScope);
+                }
                 self.chunk.emit(Opcode::Jump(loop_start));
 
+                let break_cleanup = self.chunk.code.len();
+                if lexical_binding {
+                    self.chunk.emit(Opcode::ExitScope);
+                }
                 let exit_target = self.chunk.code.len();
                 self.patch_jump(exit_jump, exit_target);
                 self.loops.pop().expect("loop context must exist");
                 for break_jump in self.break_scopes.pop().expect("break scope must exist") {
-                    self.patch_jump(break_jump, exit_target);
+                    self.patch_jump(break_jump, break_cleanup);
                 }
                 if is_last {
                     let undefined = self.chunk.add_constant(JSValue::Undefined);
@@ -1489,17 +1522,6 @@ impl Compiler {
         Ok(())
     }
 
-    fn define_binding_pattern(&mut self, pattern: &BindingPattern) -> JSResult<()> {
-        let mut names = Vec::new();
-        binding_pattern_names(pattern, &mut names);
-        for name in names {
-            let undefined = self.chunk.add_constant(JSValue::Undefined);
-            self.chunk.emit(Opcode::LoadConst(undefined));
-            self.chunk.emit(Opcode::DefineVar(name));
-        }
-        Ok(())
-    }
-
     fn store_binding_pattern(&mut self, pattern: &BindingPattern, define: bool) -> JSResult<()> {
         match pattern {
             BindingPattern::Identifier(name) => {
@@ -1731,6 +1753,24 @@ impl Compiler {
         }
         self.chunk.emit(Opcode::CallMethod(2));
         self.chunk.emit(Opcode::Pop);
+    }
+}
+
+fn loop_lexical_binding_names(statement: &Statement) -> Vec<String> {
+    match statement {
+        Statement::VariableDeclaration { kind, declarations }
+            if matches!(kind, VarKind::Let | VarKind::Const) =>
+        {
+            declarations.iter().map(|(name, _)| name.clone()).collect()
+        }
+        Statement::PatternDeclaration { kind, binding, .. }
+            if matches!(kind, VarKind::Let | VarKind::Const) =>
+        {
+            let mut names = Vec::new();
+            binding_pattern_names(binding, &mut names);
+            names
+        }
+        _ => Vec::new(),
     }
 }
 

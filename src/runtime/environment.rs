@@ -36,6 +36,10 @@ impl Environment {
         }
     }
 
+    pub fn outer(&self) -> Option<Rc<RefCell<Environment>>> {
+        self.outer.clone()
+    }
+
     pub fn define(&self, name: String, value: JSValue) {
         self.bindings.borrow_mut().insert(name, value);
     }
