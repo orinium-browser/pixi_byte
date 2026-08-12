@@ -8,7 +8,7 @@ use crate::compiler::{BytecodeChunk, Opcode};
 use crate::error::{JSError, JSResult};
 use crate::runtime::{CallFrame, Environment};
 use crate::value::JSValue;
-use crate::value::jsobject::JSObject;
+use crate::value::jsobject::{JSObject, Property};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use std::any::Any;
@@ -203,17 +203,41 @@ impl VM {
             return;
         };
         let mut properties = JSObject::with_prototype(Some(Rc::clone(&self.function_prototype)));
-        properties.set("length".to_string(), JSValue::Number(length as f64));
-        properties.set(
+        properties.define_property(
+            "length".to_string(),
+            Property {
+                value: JSValue::Number(length as f64),
+                enumerable: false,
+                writable: false,
+                configurable: true,
+                getter: None,
+                setter: None,
+            },
+        );
+        properties.define_property(
             "name".to_string(),
-            JSValue::String(name.unwrap_or("").to_string()),
+            Property {
+                value: JSValue::String(name.unwrap_or("").to_string()),
+                enumerable: false,
+                writable: false,
+                configurable: true,
+                getter: None,
+                setter: None,
+            },
         );
         if constructible {
             let mut prototype = JSObject::with_prototype(Some(Rc::clone(&self.object_prototype)));
             prototype.set("constructor".to_string(), function.clone());
-            properties.set(
+            properties.define_property(
                 "prototype".to_string(),
-                JSValue::Object(Rc::new(RefCell::new(prototype))),
+                Property {
+                    value: JSValue::Object(Rc::new(RefCell::new(prototype))),
+                    enumerable: false,
+                    writable: true,
+                    configurable: false,
+                    getter: None,
+                    setter: None,
+                },
             );
         }
         self.callable_objects

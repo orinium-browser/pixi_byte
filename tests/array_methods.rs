@@ -1,6 +1,53 @@
 use pixi_byte::{JSEngine, JSValue};
 
 #[test]
+fn array_for_each_is_generic_through_function_call() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            let total = 0;
+            const forEach = [].forEach;
+            forEach.call([1, 2, 3], function (value) { total += value; });
+            total;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Number(6.0));
+}
+
+#[test]
+fn array_for_each_call_keeps_receiver_before_callback_this_arg() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            let seen = 0;
+            const forEach = [].forEach;
+            forEach.call([7], function (value) { seen = value; }, "callback this");
+            seen;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Number(7.0));
+}
+
+#[test]
+fn array_for_each_is_generic_over_strings() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            let joined = "";
+            [].forEach.call("abc", function (value) { joined += value; });
+            joined;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("abc".to_string()));
+}
+
+#[test]
 fn array_from_supports_array_like_iterables_and_mapping() {
     let mut engine = JSEngine::new();
     let result = engine

@@ -148,10 +148,10 @@ impl Lexer {
                     // ブロックコメント
                     self.skip_block_comment()?;
                     return self.next_token();
-                } else if self.match_char('=') {
-                    TokenKind::SlashEq
                 } else if self.can_start_regular_expression() {
                     return self.scan_regular_expression();
+                } else if self.match_char('=') {
+                    TokenKind::SlashEq
                 } else {
                     TokenKind::Slash
                 }
@@ -275,6 +275,51 @@ impl Lexer {
         let start_column = self.column - 1;
 
         let start_from_dot = self.source[start] == '.';
+
+        // Non-decimal integer literals need to be consumed before the regular
+        // decimal scanner. Without this, `0x10` becomes the number `0`
+        // followed by the identifier `x10`.
+        if !start_from_dot && self.source[start] == '0' {
+            let radix = match self.peek() {
+                Some('x' | 'X') => Some(16),
+                Some('o' | 'O') => Some(8),
+                Some('b' | 'B') => Some(2),
+                _ => None,
+            };
+            if let Some(radix) = radix {
+                self.advance(); // radix marker
+                let digits_start = self.position;
+                while self.peek().is_some_and(|ch| ch.is_digit(radix)) {
+                    self.advance();
+                }
+                if self.position == digits_start {
+                    return Err(JSError::SyntaxError(
+                        "Expected digits after numeric radix prefix".to_string(),
+                        Span::new(start, self.position, start_line, start_column),
+                    ));
+                }
+
+                let digits: String = self.source[digits_start..self.position].iter().collect();
+                let value = num_bigint::BigInt::parse_bytes(digits.as_bytes(), radix)
+                    .expect("validated radix digits must parse");
+                let kind = if self.peek() == Some('n') {
+                    self.advance();
+                    TokenKind::BigIntLiteral(value.to_string())
+                } else {
+                    use num_traits::ToPrimitive;
+                    let number = value.to_f64().ok_or_else(|| {
+                        JSError::SyntaxError(
+                            "Numeric literal is too large".to_string(),
+                            Span::new(start, self.position, start_line, start_column),
+                        )
+                    })?;
+                    TokenKind::NumberLiteral(number.to_string())
+                };
+
+                let span = Span::new(start, self.position, start_line, start_column);
+                return Ok(Token::new(kind, span));
+            }
+        }
 
         while let Some(ch) = self.peek() {
             if ch.is_ascii_digit() {

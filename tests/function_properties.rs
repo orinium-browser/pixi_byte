@@ -1,6 +1,17 @@
 use pixi_byte::{JSEngine, JSValue};
 
 #[test]
+fn functions_inherit_object_prototype_methods() {
+    let mut engine = JSEngine::new();
+    assert_eq!(
+        engine
+            .eval("(function example() {}).propertyIsEnumerable('prototype')")
+            .unwrap(),
+        JSValue::Boolean(false)
+    );
+}
+
+#[test]
 fn functions_keep_own_properties_and_constructor_prototypes() {
     let mut engine = JSEngine::new();
     let result = engine

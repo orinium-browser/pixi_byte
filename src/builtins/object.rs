@@ -264,7 +264,7 @@ fn object_set_prototype_of(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResu
 }
 
 /// Object.prototype.hasOwnProperty のネイティブ実装
-fn object_has_own_property(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
+fn object_has_own_property(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
     if args.is_empty() {
         return Err(JSError::TypeError(
             "hasOwnProperty: missing receiver".to_string(),
@@ -281,9 +281,21 @@ fn object_has_own_property(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> J
 
     match receiver {
         JSValue::Object(obj_ref) => Ok(JSValue::Boolean(obj_ref.borrow().has_own_property(&key))),
-        _ => Err(JSError::TypeError(
-            "hasOwnProperty: receiver is not an object".to_string(),
+        value @ (JSValue::Function(..) | JSValue::ArrowFunction(..)) => Ok(JSValue::Boolean(
+            vm.user_function_object(&value)
+                .is_some_and(|object| object.borrow().has_own_property(&key)),
         )),
+        JSValue::String(value) => {
+            let index = key.parse::<usize>().ok();
+            Ok(JSValue::Boolean(
+                key == "length" || index.is_some_and(|index| index < value.encode_utf16().count()),
+            ))
+        }
+        JSValue::Number(_) | JSValue::Boolean(_) => Ok(JSValue::Boolean(false)),
+        value => Err(JSError::TypeError(format!(
+            "hasOwnProperty: receiver is not an object ({})",
+            value.type_of()
+        ))),
     }
 }
 
@@ -745,7 +757,7 @@ fn object_is(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 
 /// Object.prototype.propertyIsEnumerable(prop)
 fn object_property_is_enumerable(
-    _vm: &mut crate::vm::VM,
+    vm: &mut crate::vm::VM,
     mut args: Vec<JSValue>,
 ) -> JSResult<JSValue> {
     if args.is_empty() {
@@ -770,6 +782,24 @@ fn object_property_is_enumerable(
                 Ok(JSValue::Boolean(false))
             }
         }
+        value @ (JSValue::Function(..) | JSValue::ArrowFunction(..)) => {
+            let Some(obj_ref) = vm.user_function_object(&value) else {
+                return Ok(JSValue::Boolean(false));
+            };
+            let enumerable = obj_ref
+                .borrow()
+                .get_property_descriptor(&key)
+                .is_some_and(|descriptor| descriptor.enumerable);
+            Ok(JSValue::Boolean(enumerable))
+        }
+        JSValue::String(value) => {
+            let enumerable = key
+                .parse::<usize>()
+                .ok()
+                .is_some_and(|index| index < value.encode_utf16().count());
+            Ok(JSValue::Boolean(enumerable))
+        }
+        JSValue::Number(_) | JSValue::Boolean(_) => Ok(JSValue::Boolean(false)),
         _ => Err(JSError::TypeError(
             "propertyIsEnumerable: receiver is not an object".to_string(),
         )),

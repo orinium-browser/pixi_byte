@@ -1,6 +1,15 @@
 use pixi_byte::{JSEngine, JSValue};
 
 #[test]
+fn regexp_literal_can_start_with_equals() {
+    let mut engine = JSEngine::new();
+    assert_eq!(
+        engine.eval(r#"/=+$/.test("===")"#).unwrap(),
+        JSValue::Boolean(true)
+    );
+}
+
+#[test]
 fn regexp_literals_support_flags_and_test() {
     let mut engine = JSEngine::new();
     assert_eq!(

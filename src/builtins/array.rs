@@ -25,8 +25,36 @@ fn define_method(object: &mut JSObject, name: &str, function: crate::NativeFunct
 fn receiver(args: &[JSValue], method: &str) -> crate::error::JSResult<Rc<RefCell<JSObject>>> {
     match args.first() {
         Some(JSValue::Object(object)) => Ok(Rc::clone(object)),
-        _ => Err(crate::error::JSError::TypeError(format!(
-            "Array.prototype.{method}: invalid receiver"
+        Some(JSValue::String(value)) => {
+            // Array prototype methods are generic. ToObject(string) exposes
+            // UTF-16 code units through indexed properties and a length.
+            let units: Vec<_> = value.encode_utf16().collect();
+            let mut object = JSObject::new();
+            for (index, unit) in units.iter().enumerate() {
+                object.set(
+                    index.to_string(),
+                    JSValue::String(String::from_utf16_lossy(&[*unit])),
+                );
+            }
+            object.set("length".to_string(), JSValue::Number(units.len() as f64));
+            Ok(Rc::new(RefCell::new(object)))
+        }
+        Some(JSValue::Boolean(_) | JSValue::Number(_)) => {
+            // Boxed number/boolean values are valid generic receivers and are
+            // simply empty when they do not define array-like properties.
+            let mut object = JSObject::new();
+            object.set("length".to_string(), JSValue::Number(0.0));
+            Ok(Rc::new(RefCell::new(object)))
+        }
+        Some(JSValue::Undefined | JSValue::Null) => Err(crate::error::JSError::TypeError(
+            format!("Array.prototype.{method}: null or undefined receiver"),
+        )),
+        Some(value) => Err(crate::error::JSError::TypeError(format!(
+            "Array.prototype.{method}: invalid receiver ({})",
+            value.type_of()
+        ))),
+        None => Err(crate::error::JSError::TypeError(format!(
+            "Array.prototype.{method}: missing receiver"
         ))),
     }
 }

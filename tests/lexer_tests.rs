@@ -73,6 +73,25 @@ fn test_tokenize_operators() {
 }
 
 #[test]
+fn non_decimal_integer_literals_are_tokenized_as_single_numbers() {
+    let kinds: Vec<TokenKind> = Lexer::new("0x10 0o10 0b10 0x10n")
+        .iter()
+        .map(|token| token.unwrap().kind)
+        .filter(|kind| *kind != TokenKind::Eof)
+        .collect();
+
+    assert_eq!(
+        kinds,
+        vec![
+            TokenKind::NumberLiteral("16".to_string()),
+            TokenKind::NumberLiteral("8".to_string()),
+            TokenKind::NumberLiteral("2".to_string()),
+            TokenKind::BigIntLiteral("16".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn test_tokenize_keywords() {
     let lexer = Lexer::new("let const var function return");
     let tokens = lexer.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
