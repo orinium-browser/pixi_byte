@@ -44,6 +44,10 @@ impl Environment {
         self.bindings.borrow_mut().insert(name, value);
     }
 
+    pub fn define_if_absent(&self, name: String, value: JSValue) {
+        self.bindings.borrow_mut().entry(name).or_insert(value);
+    }
+
     pub fn set(&self, name: &str, value: JSValue) -> bool {
         if self.bindings.borrow().contains_key(name) {
             self.bindings.borrow_mut().insert(name.to_string(), value);

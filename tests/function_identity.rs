@@ -50,3 +50,79 @@ fn repeated_closure_creation_produces_distinct_identities() {
         .unwrap();
     assert_eq!(result, JSValue::Boolean(true));
 }
+
+#[test]
+fn assigning_an_array_index_grows_length() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const queue = [];
+            queue[0] = "entry";
+            queue[2] = "later";
+            queue.length;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Number(3.0));
+}
+
+#[test]
+fn object_keys_enumerates_function_properties() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const hooks = () => {};
+            hooks.j = id => id === 2076;
+            const keys = Object.keys(hooks);
+            keys.length === 1 && keys[0] === "j";
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}
+
+#[test]
+fn minified_webpack_deferred_entry_runs() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            let called = 0;
+            const runtime = {};
+            var queue = [];
+            runtime.O = (result, ids, callback, priority) => {
+                if (!ids) {
+                    var ceiling = 1 / 0;
+                    for (outer = 0; outer < queue.length; outer++) {
+                        for (var [ids, callback, priority] = queue[outer], ready = true, inner = 0;
+                             inner < ids.length;
+                             inner++)
+                            (!1 & priority || ceiling >= priority) &&
+                                Object.keys(runtime.O).every(key => runtime.O[key](ids[inner]))
+                                ? ids.splice(inner--, 1)
+                                : ready = false;
+                        if (ready) {
+                            queue.splice(outer--, 1);
+                            callback();
+                        }
+                    }
+                    return result;
+                }
+                priority = priority || 0;
+                for (var outer = queue.length;
+                     outer > 0 && queue[outer - 1][2] > priority;
+                     outer--)
+                    queue[outer] = queue[outer - 1];
+                queue[outer] = [ids, callback, priority];
+            };
+            runtime.O.j = id => id === 2076;
+            runtime.O(undefined, [2076], () => { called = 1; });
+            runtime.O();
+            called;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Number(1.0));
+}

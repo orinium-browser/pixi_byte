@@ -51,6 +51,24 @@ fn get_prototype_of_accepts_functions_and_boxable_primitives() {
 }
 
 #[test]
+fn ordinary_and_explicit_null_prototypes_are_distinct() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const ordinary = {};
+            const bare = Object.create(null);
+            Object.getPrototypeOf(ordinary) === Object.prototype &&
+                Object.getPrototypeOf(Object.getPrototypeOf(ordinary)) === null &&
+                Object.getPrototypeOf(bare) === null &&
+                bare.toString === undefined;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}
+
+#[test]
 fn get_own_property_names_includes_non_enumerable_properties() {
     let mut engine = JSEngine::new();
     let result = engine

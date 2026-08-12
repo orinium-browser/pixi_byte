@@ -6,6 +6,20 @@ use std::rc::Rc;
 
 // Native functions: function.call / function.apply
 
+fn dynamic_function_stub(
+    _vm: &mut crate::vm::VM,
+    _args: Vec<JSValue>,
+) -> crate::error::JSResult<JSValue> {
+    Ok(JSValue::Undefined)
+}
+
+fn function_constructor(
+    _vm: &mut crate::vm::VM,
+    _args: Vec<JSValue>,
+) -> crate::error::JSResult<JSValue> {
+    Ok(JSValue::NativeFunction(dynamic_function_stub))
+}
+
 fn function_call(
     vm: &mut crate::vm::VM,
     mut args: Vec<JSValue>,
@@ -24,7 +38,6 @@ fn function_call(
     };
 
     vm.call(func, this_arg, args)
-        .map_err(|error| crate::error::JSError::TypeError(format!("Function.call: {error}")))
 }
 
 fn function_apply(
@@ -74,7 +87,6 @@ fn function_apply(
     }
 
     vm.call(func, this_arg, call_args_vec)
-        .map_err(|error| crate::error::JSError::TypeError(format!("Function.apply: {error}")))
 }
 
 fn function_bind(
@@ -109,6 +121,13 @@ fn function_bind(
             let bf = BoundFunctionData::new(func.clone(), this_arg, bound_args);
             Ok(JSValue::BoundFunction(Box::new(bf)))
         }
+        JSValue::Object(object)
+            if !matches!(object.borrow().get("__call__"), JSValue::Undefined) =>
+        {
+            let func = JSValue::Object(object);
+            let bf = BoundFunctionData::new(func, this_arg, bound_args);
+            Ok(JSValue::BoundFunction(Box::new(bf)))
+        }
         _ => Err(crate::error::JSError::TypeError(
             "Function.prototype.bind: receiver is not a function".to_string(),
         )),
@@ -131,6 +150,15 @@ pub fn install(global: &Rc<RefCell<JSObject>>) -> Rc<RefCell<JSObject>> {
     proto.set("apply".to_string(), JSValue::NativeFunction(function_apply));
     proto.set("bind".to_string(), JSValue::NativeFunction(function_bind));
     let fn_proto = Rc::new(RefCell::new(proto));
+    fn_ctor.set(
+        "__call__".to_string(),
+        JSValue::NativeFunction(function_constructor),
+    );
+    fn_ctor.set(
+        "__construct__".to_string(),
+        JSValue::NativeFunction(function_constructor),
+    );
+    fn_ctor.set_prototype(Some(Rc::clone(&fn_proto)));
     fn_ctor.set("prototype".to_string(), JSValue::Object(fn_proto.clone()));
 
     global.borrow_mut().set(

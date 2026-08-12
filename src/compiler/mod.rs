@@ -13,10 +13,11 @@ static NEXT_BYTECODE_ID: AtomicU64 = AtomicU64::new(1);
 #[derive(Debug, Clone, PartialEq)]
 pub enum Opcode {
     // スタック操作
-    LoadConst(usize),  // 定数をスタックにロード
-    LoadVar(String),   // 変数をスタックにロード
-    StoreVar(String),  // スタックトップを変数に格納
-    DefineVar(String), // スタックトップを現在のスコープへ新しく束縛
+    LoadConst(usize),          // 定数をスタックにロード
+    LoadVar(String),           // 変数をスタックにロード
+    StoreVar(String),          // スタックトップを変数に格納
+    DefineVar(String),         // スタックトップを現在のスコープへ新しく束縛
+    DefineVarIfAbsent(String), // var hoisting without replacing parameters
     EnterScope,
     CloneScope(Vec<String>),
     ExitScope,
@@ -299,7 +300,7 @@ impl Compiler {
             if emitted.insert(name.clone()) {
                 let undefined = self.chunk.add_constant(JSValue::Undefined);
                 self.chunk.emit(Opcode::LoadConst(undefined));
-                self.chunk.emit(Opcode::DefineVar(name));
+                self.chunk.emit(Opcode::DefineVarIfAbsent(name));
             }
         }
     }
@@ -760,12 +761,17 @@ impl Compiler {
                             finally_target: None,
                         });
                     }
+                    // A catch parameter is lexical to the catch block. Keep it
+                    // in a child environment so it cannot overwrite a function
+                    // parameter or local with the same name.
+                    self.chunk.emit(Opcode::EnterScope);
                     if let Some(binding) = binding {
                         self.chunk.emit(Opcode::DefineVar(binding));
                     } else {
                         self.chunk.emit(Opcode::Pop);
                     }
                     self.compile_statements(body, false)?;
+                    self.chunk.emit(Opcode::ExitScope);
                     if finalizer.is_some() {
                         self.chunk.emit(Opcode::PopTry);
                     }

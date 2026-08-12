@@ -97,6 +97,26 @@ fn catch_binding_is_optional() {
 }
 
 #[test]
+fn catch_binding_does_not_overwrite_an_outer_binding() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            function preserve(value) {
+                try {
+                    throw "temporary";
+                } catch (value) {}
+                return value;
+            }
+            preserve("outer");
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::String("outer".to_string()));
+}
+
+#[test]
 fn exception_unwinds_loop_lexical_environment_before_catch() {
     let mut engine = JSEngine::new();
     let result = engine

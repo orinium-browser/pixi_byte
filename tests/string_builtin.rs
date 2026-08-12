@@ -18,6 +18,13 @@ fn string_primitives_expose_common_prototype_methods() {
 }
 
 #[test]
+fn concat_appends_each_argument_after_string_conversion() {
+    let mut engine = JSEngine::new();
+    let result = engine.eval(r#""Scratch".concat(" ", 3, true)"#).unwrap();
+    assert_eq!(result, JSValue::String("Scratch 3true".to_string()));
+}
+
+#[test]
 fn replace_supports_global_regexes_templates_and_callbacks() {
     let mut engine = JSEngine::new();
     let result = engine

@@ -1666,7 +1666,7 @@ impl Parser {
                     (key, None)
                 }
                 TokenKind::NumberLiteral(key) => {
-                    let key = key.clone();
+                    let key = normalize_numeric_property_key(key);
                     self.advance()?;
                     (key, None)
                 }
@@ -1716,8 +1716,13 @@ impl Parser {
 
     fn expect_object_property_key(&mut self) -> JSResult<String> {
         match &self.current().kind {
-            TokenKind::String(key) | TokenKind::NumberLiteral(key) => {
+            TokenKind::String(key) => {
                 let key = key.clone();
+                self.advance()?;
+                Ok(key)
+            }
+            TokenKind::NumberLiteral(key) => {
+                let key = normalize_numeric_property_key(key);
                 self.advance()?;
                 Ok(key)
             }
@@ -1736,6 +1741,13 @@ impl Parser {
     fn is_at_end(&self) -> bool {
         matches!(self.current().kind, TokenKind::Eof)
     }
+}
+
+fn normalize_numeric_property_key(source: &str) -> String {
+    source
+        .parse::<f64>()
+        .map(|number| number.to_string())
+        .unwrap_or_else(|_| source.to_string())
 }
 
 impl Parser {

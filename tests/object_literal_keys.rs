@@ -1,6 +1,15 @@
 use pixi_byte::{JSEngine, JSValue};
 
 #[test]
+fn numeric_object_keys_use_their_canonical_string_value() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(r#"const modules = {93e3: "locale", 1.0: "one"}; modules[93000] + ":" + modules[1];"#)
+        .unwrap();
+    assert_eq!(result, JSValue::String("locale:one".to_string()));
+}
+
+#[test]
 fn object_literals_accept_string_number_and_keyword_keys() {
     let mut engine = JSEngine::new();
     let result = engine

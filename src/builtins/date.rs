@@ -73,6 +73,76 @@ fn date_value_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::Number(date_value(&args, "valueOf")?))
 }
 
+fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
+    let days = days_since_epoch + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    (year as i32, month as u32, day as u32)
+}
+
+fn days_from_civil(year: i32, month: u32, day: i64) -> i64 {
+    let mut year = i64::from(year);
+    year -= i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month = i64::from(month);
+    let month_prime = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
+fn date_parts(args: &[JSValue], method: &str) -> JSResult<(i32, u32, u32)> {
+    let milliseconds = date_value(args, method)?;
+    if !milliseconds.is_finite() {
+        return Ok((0, 0, 0));
+    }
+    let days = (milliseconds / 86_400_000.0).floor() as i64;
+    Ok(civil_from_days(days))
+}
+
+fn date_get_date(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let (_, _, day) = date_parts(&args, "getDate")?;
+    Ok(JSValue::Number(day as f64))
+}
+
+fn date_get_month(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let (_, month, _) = date_parts(&args, "getMonth")?;
+    Ok(JSValue::Number(month.saturating_sub(1) as f64))
+}
+
+fn date_get_full_year(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let (year, _, _) = date_parts(&args, "getFullYear")?;
+    Ok(JSValue::Number(year as f64))
+}
+
+fn date_set_date(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "setDate")?;
+    let requested_day = args
+        .get(1)
+        .unwrap_or(&JSValue::Undefined)
+        .to_number()
+        .trunc() as i64;
+    let days = (milliseconds / 86_400_000.0).floor() as i64;
+    let time_within_day = milliseconds - days as f64 * 86_400_000.0;
+    let (year, month, _) = civil_from_days(days);
+    let updated =
+        days_from_civil(year, month, requested_day) as f64 * 86_400_000.0 + time_within_day;
+    if let Some(JSValue::Object(this)) = args.first() {
+        this.borrow_mut()
+            .set(DATE_VALUE.to_string(), JSValue::Number(updated));
+    }
+    Ok(JSValue::Number(updated))
+}
+
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut prototype = JSObject::new();
     prototype.set(
@@ -83,12 +153,25 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         "valueOf".to_string(),
         JSValue::NativeFunction(date_value_of),
     );
+    prototype.set(
+        "getDate".to_string(),
+        JSValue::NativeFunction(date_get_date),
+    );
+    prototype.set(
+        "getMonth".to_string(),
+        JSValue::NativeFunction(date_get_month),
+    );
+    prototype.set(
+        "getFullYear".to_string(),
+        JSValue::NativeFunction(date_get_full_year),
+    );
+    prototype.set(
+        "setDate".to_string(),
+        JSValue::NativeFunction(date_set_date),
+    );
 
     let mut date = JSObject::new();
-    date.set(
-        "__call__".to_string(),
-        JSValue::NativeFunction(date_call),
-    );
+    date.set("__call__".to_string(), JSValue::NativeFunction(date_call));
     date.set(
         "__construct__".to_string(),
         JSValue::NativeFunction(date_constructor),

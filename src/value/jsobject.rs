@@ -23,6 +23,10 @@ pub struct JSObject {
     properties: Rc<RefCell<FxHashMap<String, Property>>>,
     /// プロトタイプチェーン（__proto__）
     prototype: Option<Rc<RefCell<JSObject>>>,
+    /// `false` means an ordinary object whose implicit prototype is supplied
+    /// by the VM. `true` preserves an explicitly supplied prototype, including
+    /// the null prototype created by `Object.create(null)`.
+    prototype_is_explicit: bool,
     /// オブジェクトが拡張可能か（Object.preventExtensions/Seal/Freeze に影響）
     extensible: bool,
 }
@@ -76,6 +80,7 @@ impl JSObject {
         Self {
             properties: Rc::new(RefCell::new(FxHashMap::default())),
             prototype: None,
+            prototype_is_explicit: false,
             extensible: true,
         }
     }
@@ -85,6 +90,7 @@ impl JSObject {
         Self {
             properties: Rc::new(RefCell::new(FxHashMap::default())),
             prototype,
+            prototype_is_explicit: true,
             extensible: true,
         }
     }
@@ -174,6 +180,11 @@ impl JSObject {
     /// プロトタイプを設定します。注意: 循環チェックは行いません。
     pub fn set_prototype(&mut self, prototype: Option<Rc<RefCell<JSObject>>>) {
         self.prototype = prototype;
+        self.prototype_is_explicit = true;
+    }
+
+    pub fn has_explicit_prototype(&self) -> bool {
+        self.prototype_is_explicit
     }
 
     /// 列挙可能なプロパティキーを取得します。

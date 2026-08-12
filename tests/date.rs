@@ -1,6 +1,22 @@
 use pixi_byte::{JSEngine, JSValue};
 
 #[test]
+fn date_calendar_fields_and_set_date_use_epoch_milliseconds() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const date = new Date(0);
+            const before = date.getFullYear() + ":" + date.getMonth() + ":" + date.getDate();
+            date.setDate(2);
+            before + ":" + date.getDate() + ":" + date.getTime();
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("1970:0:1:2:86400000".to_string()));
+}
+
+#[test]
 fn date_now_returns_epoch_milliseconds() {
     let mut engine = JSEngine::new();
     let result = engine.eval("Date.now()").unwrap();
@@ -27,7 +43,10 @@ fn date_value_of_returns_the_constructed_time() {
 #[test]
 fn date_parse_is_present_and_rejects_unsupported_text_with_nan() {
     let mut engine = JSEngine::new();
-    assert_eq!(engine.eval("Date.parse('1234')").unwrap(), JSValue::Number(1234.0));
+    assert_eq!(
+        engine.eval("Date.parse('1234')").unwrap(),
+        JSValue::Number(1234.0)
+    );
     let JSValue::Number(value) = engine.eval("Date.parse('not a date')").unwrap() else {
         panic!("Date.parse must return a number");
     };

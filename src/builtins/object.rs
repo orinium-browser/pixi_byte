@@ -117,6 +117,10 @@ fn object_get_prototype_of(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResu
         JSValue::Object(obj_ref) => {
             if let Some(proto) = obj_ref.borrow().get_prototype() {
                 Ok(JSValue::Object(proto.clone()))
+            } else if !obj_ref.borrow().has_explicit_prototype()
+                && !Rc::ptr_eq(obj_ref, &vm.object_prototype)
+            {
+                Ok(JSValue::Object(Rc::clone(&vm.object_prototype)))
             } else {
                 Ok(JSValue::Null)
             }
@@ -136,9 +140,10 @@ fn object_get_prototype_of(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResu
         JSValue::Boolean(_) | JSValue::BigInt(_) => {
             Ok(JSValue::Object(vm.object_prototype.clone()))
         }
-        JSValue::Null | JSValue::Undefined => Err(JSError::TypeError(
-            "Object.getPrototypeOf: cannot convert null or undefined to object".to_string(),
-        )),
+        JSValue::Null | JSValue::Undefined => Err(JSError::TypeError(format!(
+            "Object.getPrototypeOf: cannot convert null or undefined to object (JS stack: {})",
+            vm.formatted_js_stack()
+        ))),
     }
 }
 
@@ -565,7 +570,7 @@ fn object_keys(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> 
             "Object.keys: missing object argument".to_string(),
         ));
     };
-    let JSValue::Object(object) = value else {
+    let Some(object) = enumerable_object(vm, &value) else {
         return Err(JSError::TypeError(
             "Object.keys: argument must be an object".to_string(),
         ));

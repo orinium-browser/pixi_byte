@@ -102,6 +102,13 @@ impl JSValue {
         }
     }
 
+    pub(crate) fn callable_storage_identity(&self) -> Option<u64> {
+        match self {
+            JSValue::BoundFunction(bound) => Some(bound.identity | (1_u64 << 63)),
+            _ => self.user_function_identity(),
+        }
+    }
+
     /// 値をコンソール向け文字列に変換します（ToString 相当）。
     ///
     /// デバッグやログ出力に使います。
@@ -188,7 +195,13 @@ impl JSValue {
             JSValue::Number(_) => "number",
             JSValue::BigInt(_) => "bigint",
             JSValue::String(_) => "string",
-            JSValue::Object(_) => "object",
+            JSValue::Object(object) => {
+                let callable = object
+                    .try_borrow()
+                    .map(|object| !matches!(object.get("__call__"), JSValue::Undefined))
+                    .unwrap_or(false);
+                if callable { "function" } else { "object" }
+            }
             JSValue::Function(..) => "function",
             JSValue::ArrowFunction(..) => "function",
             JSValue::NativeFunction(_) => "function",

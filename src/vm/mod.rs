@@ -199,7 +199,7 @@ impl VM {
         length: usize,
         name: Option<&str>,
     ) {
-        let Some(identity) = function.user_function_identity() else {
+        let Some(identity) = function.callable_storage_identity() else {
             return;
         };
         let mut properties = JSObject::with_prototype(Some(Rc::clone(&self.function_prototype)));
@@ -245,8 +245,20 @@ impl VM {
     }
 
     pub(crate) fn user_function_object(&self, value: &JSValue) -> Option<Rc<RefCell<JSObject>>> {
-        let identity = value.user_function_identity()?;
+        let identity = value.callable_storage_identity()?;
         self.callable_objects.get(&identity).cloned()
+    }
+
+    fn ensure_callable_object(&mut self, value: &JSValue) -> Option<Rc<RefCell<JSObject>>> {
+        let identity = value.callable_storage_identity()?;
+        if let Some(object) = self.callable_objects.get(&identity) {
+            return Some(Rc::clone(object));
+        }
+        let object = Rc::new(RefCell::new(JSObject::with_prototype(Some(Rc::clone(
+            &self.function_prototype,
+        )))));
+        self.callable_objects.insert(identity, Rc::clone(&object));
+        Some(object)
     }
 
     /// Runs queued jobs in FIFO order until the queue is empty.
@@ -403,6 +415,12 @@ impl VM {
                 let value = self.pop()?;
                 self.current_env().borrow().define(name.clone(), value);
             }
+            Opcode::DefineVarIfAbsent(name) => {
+                let value = self.pop()?;
+                self.current_env()
+                    .borrow()
+                    .define_if_absent(name.clone(), value);
+            }
             Opcode::EnterScope => {
                 let outer = self.current_env();
                 self.current_frame_mut().env =
@@ -514,9 +532,9 @@ impl VM {
                 let key = self.pop()?.to_string();
                 let object = match &object {
                     JSValue::Object(object) => Some(Rc::clone(object)),
-                    JSValue::Function(..) | JSValue::ArrowFunction(..) => {
-                        self.user_function_object(&object)
-                    }
+                    JSValue::Function(..)
+                    | JSValue::ArrowFunction(..)
+                    | JSValue::BoundFunction(..) => self.user_function_object(&object),
                     _ => None,
                 };
                 let Some(object) = object else {
@@ -738,7 +756,7 @@ impl VM {
                             self.stack.push(value);
                         }
                     }
-                    JSValue::NativeFunction(..) | JSValue::BoundFunction(..) => {
+                    JSValue::NativeFunction(..) => {
                         let key_str = key.to_string();
                         let value = self.function_prototype.borrow().get(&key_str);
                         self.stack.push(value);
@@ -1142,13 +1160,13 @@ impl VM {
                             }
                         }
                     }
-                    JSValue::Function(..) | JSValue::ArrowFunction(..) => self
+                    JSValue::Function(..)
+                    | JSValue::ArrowFunction(..)
+                    | JSValue::BoundFunction(..) => self
                         .user_function_object(&object)
                         .map(|properties| properties.borrow().get(&key))
                         .unwrap_or_else(|| self.function_prototype.borrow().get(&key)),
-                    JSValue::NativeFunction(..) | JSValue::BoundFunction(..) => {
-                        self.function_prototype.borrow().get(&key)
-                    }
+                    JSValue::NativeFunction(..) => self.function_prototype.borrow().get(&key),
                     JSValue::String(_) => self.string_prototype.borrow().get(&key),
                     JSValue::Number(_) => self.number_prototype.borrow().get(&key),
                     _ => {
@@ -1406,6 +1424,14 @@ impl VM {
         self.current_frame().env.clone()
     }
 
+    pub(crate) fn formatted_js_stack(&self) -> String {
+        self.frames
+            .iter()
+            .filter_map(|frame| frame.function_name.as_deref())
+            .collect::<Vec<_>>()
+            .join(" -> ")
+    }
+
     /// スタックから値をポップ
     fn pop(&mut self) -> JSResult<JSValue> {
         self.stack
@@ -1422,7 +1448,9 @@ impl VM {
         let key_string = key.to_string();
         let object_ref = match object {
             JSValue::Object(object_ref) => Some(Rc::clone(object_ref)),
-            JSValue::Function(..) | JSValue::ArrowFunction(..) => self.user_function_object(object),
+            JSValue::Function(..) | JSValue::ArrowFunction(..) | JSValue::BoundFunction(..) => {
+                self.ensure_callable_object(object)
+            }
             _ => None,
         };
         let Some(object_ref) = object_ref else {
@@ -1451,7 +1479,8 @@ impl VM {
             if property.getter.is_some() || !property.writable {
                 return Ok(());
             }
-            object_ref.borrow_mut().set(key_string, value);
+            object_ref.borrow_mut().set(key_string.clone(), value);
+            update_array_length_after_index_write(&object_ref, &key_string);
             return Ok(());
         }
 
@@ -1479,7 +1508,8 @@ impl VM {
             return Ok(());
         }
 
-        object_ref.borrow_mut().set(key_string, value);
+        object_ref.borrow_mut().set(key_string.clone(), value);
+        update_array_length_after_index_write(&object_ref, &key_string);
         Ok(())
     }
 
@@ -1524,13 +1554,13 @@ impl VM {
                     }
                 }
             }
-            JSValue::Function(..) | JSValue::ArrowFunction(..) => Ok(self
-                .user_function_object(object)
-                .map(|properties| properties.borrow().get(key))
-                .unwrap_or_else(|| self.function_prototype.borrow().get(key))),
-            JSValue::NativeFunction(..) | JSValue::BoundFunction(..) => {
-                Ok(self.function_prototype.borrow().get(key))
+            JSValue::Function(..) | JSValue::ArrowFunction(..) | JSValue::BoundFunction(..) => {
+                Ok(self
+                    .user_function_object(object)
+                    .map(|properties| properties.borrow().get(key))
+                    .unwrap_or_else(|| self.function_prototype.borrow().get(key)))
             }
+            JSValue::NativeFunction(..) => Ok(self.function_prototype.borrow().get(key)),
             JSValue::String(_) => Ok(self.string_prototype.borrow().get(key)),
             JSValue::Number(_) => Ok(self.number_prototype.borrow().get(key)),
             _ => Ok(JSValue::Undefined),
@@ -1541,6 +1571,10 @@ impl VM {
         let is_callable = !matches!(object.borrow().get("__call__"), JSValue::Undefined);
         if is_callable {
             self.function_prototype.borrow().get(key)
+        } else if object.borrow().has_explicit_prototype()
+            && object.borrow().get_prototype().is_none()
+        {
+            JSValue::Undefined
         } else {
             self.object_prototype.borrow().get(key)
         }
@@ -2016,6 +2050,26 @@ impl Default for VM {
     /// デフォルト実装
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn update_array_length_after_index_write(object: &Rc<RefCell<JSObject>>, key: &str) {
+    if !object.borrow().has_own_property("__pixi_array__") {
+        return;
+    }
+    let Ok(index) = key.parse::<u32>() else {
+        return;
+    };
+    if index == u32::MAX || key != index.to_string() {
+        return;
+    }
+    let required_length = index as u64 + 1;
+    let current_length = object.borrow().get("length").to_number();
+    if !current_length.is_finite() || current_length < required_length as f64 {
+        object.borrow_mut().set(
+            "length".to_string(),
+            JSValue::Number(required_length as f64),
+        );
     }
 }
 

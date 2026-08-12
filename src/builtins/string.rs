@@ -80,6 +80,14 @@ fn string_raw(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::String(output))
 }
 
+fn string_concat(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let mut output = receiver(&args, "concat")?;
+    for value in args.into_iter().skip(1) {
+        output.push_str(&vm.to_string_value(value)?);
+    }
+    Ok(JSValue::String(output))
+}
+
 fn string_replace(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = receiver(&args, "replace")?;
     let search = args.get(1).cloned().unwrap_or(JSValue::Undefined);
@@ -433,6 +441,7 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         "replace".to_string(),
         JSValue::NativeFunction(string_replace),
     );
+    prototype.set("concat".to_string(), JSValue::NativeFunction(string_concat));
     prototype.set("split".to_string(), JSValue::NativeFunction(string_split));
     prototype.set("trim".to_string(), JSValue::NativeFunction(string_trim));
     prototype.set("match".to_string(), JSValue::NativeFunction(string_match));

@@ -1,6 +1,38 @@
 use pixi_byte::{JSEngine, JSValue};
 
 #[test]
+fn function_constructor_is_callable_and_inherits_function_methods() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const has = Function.call.bind(Object.prototype.hasOwnProperty);
+            typeof Function === "function" &&
+                typeof Function("return 1") === "function" &&
+                has({answer: 42}, "answer");
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}
+
+#[test]
+fn bound_functions_can_store_own_properties() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            function checker(required) { return required; }
+            const optional = checker.bind(null, false);
+            optional.isRequired = checker.bind(null, true);
+            optional() === false && optional.isRequired() === true;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}
+
+#[test]
 fn functions_inherit_object_prototype_methods() {
     let mut engine = JSEngine::new();
     assert_eq!(
