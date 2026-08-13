@@ -48,7 +48,7 @@ pub enum JSValue {
     Object(Rc<RefCell<JSObject>>),
     /// Bytecode と引数名、キャプチャ環境を持つ JS 関数オブジェクト
     Function(
-        BytecodeChunk,
+        Rc<BytecodeChunk>,
         Vec<String>,
         Option<Rc<RefCell<Environment>>>,
         Option<String>,
@@ -56,7 +56,7 @@ pub enum JSValue {
     ),
     /// Arrow function with a captured lexical environment and lexical `this`.
     ArrowFunction(
-        BytecodeChunk,
+        Rc<BytecodeChunk>,
         Vec<String>,
         Option<Rc<RefCell<Environment>>>,
         Option<Box<JSValue>>,

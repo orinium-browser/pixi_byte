@@ -113,12 +113,260 @@ fn json_stringify(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         .unwrap_or(JSValue::Undefined))
 }
 
+struct JsonParser<'a> {
+    source: &'a [u8],
+    offset: usize,
+}
+
+impl JsonParser<'_> {
+    fn skip_whitespace(&mut self) {
+        while self
+            .source
+            .get(self.offset)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
+            self.offset += 1;
+        }
+    }
+
+    fn parse_value(&mut self, vm: &mut VM) -> JSResult<JSValue> {
+        self.skip_whitespace();
+        match self.source.get(self.offset).copied() {
+            Some(b'n') => self.keyword(b"null", JSValue::Null),
+            Some(b't') => self.keyword(b"true", JSValue::Boolean(true)),
+            Some(b'f') => self.keyword(b"false", JSValue::Boolean(false)),
+            Some(b'"') => self.parse_string().map(JSValue::String),
+            Some(b'[') => self.parse_array(vm),
+            Some(b'{') => self.parse_object(vm),
+            Some(b'-' | b'0'..=b'9') => self.parse_number(),
+            _ => self.syntax_error(),
+        }
+    }
+
+    fn keyword(&mut self, keyword: &[u8], value: JSValue) -> JSResult<JSValue> {
+        if self.source.get(self.offset..self.offset + keyword.len()) == Some(keyword) {
+            self.offset += keyword.len();
+            Ok(value)
+        } else {
+            self.syntax_error()
+        }
+    }
+
+    fn parse_string(&mut self) -> JSResult<String> {
+        self.offset += 1;
+        let mut output = String::new();
+        while let Some(byte) = self.source.get(self.offset).copied() {
+            self.offset += 1;
+            match byte {
+                b'"' => return Ok(output),
+                b'\\' => {
+                    let escape = self.source.get(self.offset).copied().ok_or_else(|| {
+                        JSError::SyntaxError(
+                            "Unterminated JSON string".to_string(),
+                            crate::lexer::token::Span::new(self.offset, self.offset, 0, 0),
+                        )
+                    })?;
+                    self.offset += 1;
+                    match escape {
+                        b'"' => output.push('"'),
+                        b'\\' => output.push('\\'),
+                        b'/' => output.push('/'),
+                        b'b' => output.push('\u{8}'),
+                        b'f' => output.push('\u{c}'),
+                        b'n' => output.push('\n'),
+                        b'r' => output.push('\r'),
+                        b't' => output.push('\t'),
+                        b'u' => {
+                            let unit = self.parse_hex_unit()?;
+                            let scalar = if (0xd800..=0xdbff).contains(&unit) {
+                                if self.source.get(self.offset..self.offset + 2) != Some(b"\\u") {
+                                    return self.syntax_error();
+                                }
+                                self.offset += 2;
+                                let low = self.parse_hex_unit()?;
+                                if !(0xdc00..=0xdfff).contains(&low) {
+                                    return self.syntax_error();
+                                }
+                                0x10000
+                                    + ((u32::from(unit) - 0xd800) << 10)
+                                    + (u32::from(low) - 0xdc00)
+                            } else if (0xdc00..=0xdfff).contains(&unit) {
+                                return self.syntax_error();
+                            } else {
+                                u32::from(unit)
+                            };
+                            output.push(char::from_u32(scalar).expect("valid JSON scalar"));
+                        }
+                        _ => return self.syntax_error(),
+                    }
+                }
+                0..=0x1f => return self.syntax_error(),
+                _ => {
+                    let start = self.offset - 1;
+                    let character = std::str::from_utf8(&self.source[start..])
+                        .ok()
+                        .and_then(|text| text.chars().next())
+                        .ok_or_else(|| {
+                            JSError::SyntaxError(
+                                "Invalid JSON UTF-8".to_string(),
+                                crate::lexer::token::Span::new(self.offset, self.offset, 0, 0),
+                            )
+                        })?;
+                    self.offset = start + character.len_utf8();
+                    output.push(character);
+                }
+            }
+        }
+        self.syntax_error()
+    }
+
+    fn parse_hex_unit(&mut self) -> JSResult<u16> {
+        let digits = self
+            .source
+            .get(self.offset..self.offset + 4)
+            .and_then(|digits| std::str::from_utf8(digits).ok())
+            .and_then(|digits| u16::from_str_radix(digits, 16).ok())
+            .ok_or_else(|| {
+                JSError::SyntaxError(
+                    "Invalid JSON unicode escape".to_string(),
+                    crate::lexer::token::Span::new(self.offset, self.offset, 0, 0),
+                )
+            })?;
+        self.offset += 4;
+        Ok(digits)
+    }
+
+    fn parse_number(&mut self) -> JSResult<JSValue> {
+        let start = self.offset;
+        if self.source.get(self.offset) == Some(&b'-') {
+            self.offset += 1;
+        }
+        match self.source.get(self.offset) {
+            Some(b'0') => self.offset += 1,
+            Some(b'1'..=b'9') => {
+                self.offset += 1;
+                while self.source.get(self.offset).is_some_and(u8::is_ascii_digit) {
+                    self.offset += 1;
+                }
+            }
+            _ => return self.syntax_error(),
+        }
+        if self.source.get(self.offset) == Some(&b'.') {
+            self.offset += 1;
+            let fraction_start = self.offset;
+            while self.source.get(self.offset).is_some_and(u8::is_ascii_digit) {
+                self.offset += 1;
+            }
+            if self.offset == fraction_start {
+                return self.syntax_error();
+            }
+        }
+        if self.source.get(self.offset).is_some_and(|byte| matches!(byte, b'e' | b'E')) {
+            self.offset += 1;
+            if self.source.get(self.offset).is_some_and(|byte| matches!(byte, b'+' | b'-')) {
+                self.offset += 1;
+            }
+            let exponent_start = self.offset;
+            while self.source.get(self.offset).is_some_and(u8::is_ascii_digit) {
+                self.offset += 1;
+            }
+            if self.offset == exponent_start {
+                return self.syntax_error();
+            }
+        }
+        let number = std::str::from_utf8(&self.source[start..self.offset])
+            .ok()
+            .and_then(|number| number.parse::<f64>().ok())
+            .filter(|number| number.is_finite())
+            .ok_or_else(|| {
+                JSError::SyntaxError(
+                    "Invalid JSON number".to_string(),
+                    crate::lexer::token::Span::new(self.offset, self.offset, 0, 0),
+                )
+            })?;
+        Ok(JSValue::Number(number))
+    }
+
+    fn parse_array(&mut self, vm: &mut VM) -> JSResult<JSValue> {
+        self.offset += 1;
+        let mut values = Vec::new();
+        loop {
+            self.skip_whitespace();
+            if self.source.get(self.offset) == Some(&b']') {
+                self.offset += 1;
+                return Ok(vm.array_from_values(values));
+            }
+            if !values.is_empty() {
+                if self.source.get(self.offset) != Some(&b',') {
+                    return self.syntax_error();
+                }
+                self.offset += 1;
+            }
+            values.push(self.parse_value(vm)?);
+        }
+    }
+
+    fn parse_object(&mut self, vm: &mut VM) -> JSResult<JSValue> {
+        self.offset += 1;
+        let mut object = JSObject::with_prototype(Some(Rc::clone(&vm.object_prototype)));
+        let mut first = true;
+        loop {
+            self.skip_whitespace();
+            if self.source.get(self.offset) == Some(&b'}') {
+                self.offset += 1;
+                return Ok(JSValue::Object(Rc::new(RefCell::new(object))));
+            }
+            if !first {
+                if self.source.get(self.offset) != Some(&b',') {
+                    return self.syntax_error();
+                }
+                self.offset += 1;
+                self.skip_whitespace();
+            }
+            if self.source.get(self.offset) != Some(&b'"') {
+                return self.syntax_error();
+            }
+            let key = self.parse_string()?;
+            self.skip_whitespace();
+            if self.source.get(self.offset) != Some(&b':') {
+                return self.syntax_error();
+            }
+            self.offset += 1;
+            let value = self.parse_value(vm)?;
+            object.set(key, value);
+            first = false;
+        }
+    }
+
+    fn syntax_error<T>(&self) -> JSResult<T> {
+        Err(JSError::SyntaxError(
+            format!("Unexpected JSON token at position {}", self.offset),
+            crate::lexer::token::Span::new(self.offset, self.offset, 0, 0),
+        ))
+    }
+}
+
+fn json_parse(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let source = args.get(1).unwrap_or(&JSValue::Undefined).to_string();
+    let mut parser = JsonParser {
+        source: source.as_bytes(),
+        offset: 0,
+    };
+    let value = parser.parse_value(vm)?;
+    parser.skip_whitespace();
+    if parser.offset != parser.source.len() {
+        return parser.syntax_error();
+    }
+    Ok(value)
+}
+
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut json = JSObject::new();
     json.set(
         "stringify".to_string(),
         JSValue::NativeFunction(json_stringify),
     );
+    json.set("parse".to_string(), JSValue::NativeFunction(json_parse));
     global.borrow_mut().set(
         "JSON".to_string(),
         JSValue::Object(Rc::new(RefCell::new(json))),

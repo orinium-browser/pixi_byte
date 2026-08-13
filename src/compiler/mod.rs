@@ -1396,8 +1396,13 @@ impl Compiler {
             Expression::ArrowFunction { params, body } => {
                 let program = Program { body };
                 let function_chunk = Compiler::new().compile_function(program)?;
-                let func_value =
-                    JSValue::ArrowFunction(function_chunk, params.clone(), None, None, 0);
+                let func_value = JSValue::ArrowFunction(
+                    Rc::new(function_chunk),
+                    params.clone(),
+                    None,
+                    None,
+                    0,
+                );
                 let idx = self.chunk.add_constant(func_value);
                 self.chunk.emit(Opcode::CreateFunction(idx));
             }
@@ -1619,7 +1624,7 @@ impl Compiler {
             compiler.generator_output = Some("__pixi_generator_values".to_string());
         }
         let function_chunk = compiler.compile_function(Program { body })?;
-        let value = JSValue::Function(function_chunk, params, None, name, 0);
+        let value = JSValue::Function(Rc::new(function_chunk), params, None, name, 0);
         let index = self.chunk.add_constant(value);
         self.chunk.emit(Opcode::CreateFunction(index));
         Ok(())
@@ -2035,3 +2040,4 @@ impl Default for Compiler {
         Self::new()
     }
 }
+use std::rc::Rc;

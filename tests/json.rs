@@ -21,3 +21,33 @@ fn json_stringify_serializes_arrays_and_objects() {
     assert!(result.contains(r#""value":1"#));
     assert!(result.contains(r#""items":[true,null,"x"]"#));
 }
+
+#[test]
+fn json_parse_builds_nested_values_and_decodes_escapes() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const value = JSON.parse('{"items":[1,true,null,{"name":"Scratch\\n日本"}]}');
+            value.items.length + ":" + value.items[0] + ":" +
+                value.items[1] + ":" + (value.items[2] === null) + ":" +
+                value.items[3].name;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        JSValue::String("4:1:true:true:Scratch\n日本".to_string())
+    );
+}
+
+#[test]
+fn json_parse_handles_unicode_pairs_and_strict_number_grammar() {
+    let mut engine = JSEngine::new();
+    assert_eq!(
+        engine.eval(r#"JSON.parse('"\\ud83d\\ude00"')"#).unwrap(),
+        JSValue::String("😀".to_string())
+    );
+    assert!(engine.eval("JSON.parse('01')").is_err());
+    assert!(engine.eval("JSON.parse('1.')").is_err());
+}

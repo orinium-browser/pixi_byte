@@ -1396,7 +1396,7 @@ impl VM {
         &mut self,
         env: Environment,
         this: JSValue,
-        func: BytecodeChunk,
+        func: Rc<BytecodeChunk>,
         function_name: Option<String>,
     ) -> JSResult<JSValue> {
         let old_stack = std::mem::take(&mut self.stack);
