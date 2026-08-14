@@ -204,6 +204,17 @@ impl VM {
         };
         let mut properties = JSObject::with_prototype(Some(Rc::clone(&self.function_prototype)));
         properties.define_property(
+            "__call__".to_string(),
+            Property {
+                value: function.clone(),
+                enumerable: false,
+                writable: false,
+                configurable: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        properties.define_property(
             "length".to_string(),
             Property {
                 value: JSValue::Number(length as f64),
@@ -254,9 +265,19 @@ impl VM {
         if let Some(object) = self.callable_objects.get(&identity) {
             return Some(Rc::clone(object));
         }
-        let object = Rc::new(RefCell::new(JSObject::with_prototype(Some(Rc::clone(
-            &self.function_prototype,
-        )))));
+        let mut properties = JSObject::with_prototype(Some(Rc::clone(&self.function_prototype)));
+        properties.define_property(
+            "__call__".to_string(),
+            Property {
+                value: value.clone(),
+                enumerable: false,
+                writable: false,
+                configurable: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        let object = Rc::new(RefCell::new(properties));
         self.callable_objects.insert(identity, Rc::clone(&object));
         Some(object)
     }
@@ -1223,23 +1244,43 @@ impl VM {
                 args.reverse();
 
                 let constructor = self.pop()?;
-                let callable = match &constructor {
-                    JSValue::ArrowFunction(..) => {
-                        return Err(JSError::TypeError(
-                            "arrow function is not a constructor".to_string(),
-                        ));
-                    }
+                let mut constructor_target = constructor.clone();
+                while let JSValue::BoundFunction(bound) = constructor_target {
+                    let mut combined = bound.bound_args.clone();
+                    combined.extend(args);
+                    args = combined;
+                    constructor_target = *bound.target;
+                }
+                let direct_prototype = match &constructor_target {
+                    JSValue::Function(..) => self
+                        .user_function_object(&constructor_target)
+                        .and_then(|properties| match properties.borrow().get("prototype") {
+                            JSValue::Object(prototype) => Some(prototype),
+                            _ => None,
+                        }),
+                    JSValue::Object(object) => match object.borrow().get("prototype") {
+                        JSValue::Object(prototype) => Some(prototype),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let mut callable = match &constructor_target {
                     JSValue::Object(object) => {
-                        let callable = object.borrow().get("__construct__");
+                        let mut callable = object.borrow().get("__construct__");
                         if matches!(callable, JSValue::Undefined) {
-                            let keys = object.borrow().keys();
-                            let name = constructor_name
-                                .as_deref()
-                                .map(|name| format!(" '{name}'"))
-                                .unwrap_or_default();
-                            return Err(JSError::TypeError(format!(
-                                "object{name} is not a constructor (own properties: {keys:?})"
-                            )));
+                            let call = object.borrow().get("__call__");
+                            if matches!(&call, JSValue::Function(..) | JSValue::BoundFunction(..)) {
+                                callable = call;
+                            } else {
+                                let keys = object.borrow().keys();
+                                let name = constructor_name
+                                    .as_deref()
+                                    .map(|name| format!(" '{name}'"))
+                                    .unwrap_or_default();
+                                return Err(JSError::TypeError(format!(
+                                    "object{name} is not a constructor (own properties: {keys:?})"
+                                )));
+                            }
                         }
                         callable
                     }
@@ -1257,22 +1298,29 @@ impl VM {
                             constructor.type_of()
                         )));
                     }
-                    _ => constructor.clone(),
+                    _ => constructor_target.clone(),
                 };
-                let prototype = match &constructor {
-                    JSValue::Function(..) => {
-                        self.user_function_object(&constructor)
-                            .and_then(|properties| match properties.borrow().get("prototype") {
-                                JSValue::Object(prototype) => Some(prototype),
-                                _ => None,
-                            })
-                    }
-                    JSValue::Object(object) => match object.borrow().get("prototype") {
-                        JSValue::Object(prototype) => Some(prototype),
-                        _ => None,
-                    },
-                    _ => Some(Rc::clone(&self.object_prototype)),
-                };
+                while let JSValue::BoundFunction(bound) = callable {
+                    let mut combined = bound.bound_args.clone();
+                    combined.extend(args);
+                    args = combined;
+                    callable = *bound.target;
+                }
+                if matches!(&callable, JSValue::ArrowFunction(..)) {
+                    return Err(JSError::TypeError(
+                        "arrow function is not a constructor".to_string(),
+                    ));
+                }
+                let callable_prototype =
+                    self.user_function_object(&callable).and_then(|properties| {
+                        match properties.borrow().get("prototype") {
+                            JSValue::Object(prototype) => Some(prototype),
+                            _ => None,
+                        }
+                    });
+                let prototype = callable_prototype
+                    .or(direct_prototype)
+                    .or_else(|| Some(Rc::clone(&self.object_prototype)));
                 let this =
                     JSValue::Object(Rc::new(RefCell::new(JSObject::with_prototype(prototype))));
                 let result = self.call(callable, this.clone(), args)?;
@@ -1327,6 +1375,10 @@ impl VM {
                 let value = self.pop()?;
                 let iterator = self.get_iterator(value)?;
                 self.stack.push(iterator);
+            }
+            Opcode::MakeGeneratorIterator => {
+                let values = self.pop()?;
+                self.stack.push(generator_iterator(values));
             }
             Opcode::IteratorNext(exit_target) => {
                 let iterator = self.pop()?;
@@ -1401,7 +1453,6 @@ impl VM {
     ) -> JSResult<JSValue> {
         let old_stack = std::mem::take(&mut self.stack);
         self.frames.push(CallFrame::new(env, this, function_name));
-
         let result = self.execute(&func);
 
         self.frames.pop();
@@ -1568,8 +1619,18 @@ impl VM {
     }
 
     fn object_fallback_property(&self, object: &Rc<RefCell<JSObject>>, key: &str) -> JSValue {
-        let is_callable = !matches!(object.borrow().get("__call__"), JSValue::Undefined);
+        let mut callable = object.borrow().get("__call__");
+        let is_callable = !matches!(callable, JSValue::Undefined);
         if is_callable {
+            while let JSValue::BoundFunction(bound) = callable {
+                callable = (*bound.target).clone();
+            }
+            if let Some(properties) = self.user_function_object(&callable) {
+                let value = properties.borrow().get(key);
+                if !matches!(value, JSValue::Undefined) {
+                    return value;
+                }
+            }
             self.function_prototype.borrow().get(key)
         } else if object.borrow().has_explicit_prototype()
             && object.borrow().get_prototype().is_none()
@@ -1619,7 +1680,6 @@ impl VM {
                 let mut all = vec![this];
 
                 all.extend(args);
-
                 f(self, all)
             }
 
@@ -1645,8 +1705,13 @@ impl VM {
                         .filter_map(|frame| frame.function_name.as_deref())
                         .collect::<Vec<_>>()
                         .join(" -> ");
+                    let prototype_keys = object
+                        .borrow()
+                        .get_prototype()
+                        .map(|prototype| prototype.borrow().keys())
+                        .unwrap_or_default();
                     return Err(JSError::TypeError(format!(
-                        "object is not callable; keys={:?}; JS stack: {stack}",
+                        "object is not callable; keys={:?}; prototype keys={prototype_keys:?}; JS stack: {stack}",
                         object.borrow().keys(),
                     )));
                 }
@@ -2013,6 +2078,43 @@ fn indexed_iterator(source: JSValue) -> JSValue {
         JSValue::NativeFunction(indexed_iterator_next),
     );
     JSValue::Object(Rc::new(RefCell::new(iterator)))
+}
+
+fn generator_iterator(source: JSValue) -> JSValue {
+    let indexed_source = source.clone();
+    let JSValue::Object(iterator) = indexed_iterator(indexed_source) else {
+        unreachable!("indexed iterator must be an object");
+    };
+    {
+        let mut iterator = iterator.borrow_mut();
+        if let JSValue::Object(source) = source {
+            for key in source.borrow().keys() {
+                if key != "__pixi_array__" {
+                    iterator.set(key.clone(), source.borrow().get(&key));
+                }
+            }
+            iterator.set("length".to_string(), source.borrow().get("length"));
+        }
+        iterator.set(
+            "@@iterator".to_string(),
+            JSValue::NativeFunction(generator_iterator_identity),
+        );
+        iterator.set(
+            "throw".to_string(),
+            JSValue::NativeFunction(generator_iterator_throw),
+        );
+    }
+    JSValue::Object(iterator)
+}
+
+fn generator_iterator_identity(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    Ok(args.first().cloned().unwrap_or(JSValue::Undefined))
+}
+
+fn generator_iterator_throw(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    Err(JSError::Thrown(
+        args.get(1).cloned().unwrap_or(JSValue::Undefined),
+    ))
 }
 
 fn indexed_iterator_next(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {

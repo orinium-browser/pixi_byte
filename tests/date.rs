@@ -41,6 +41,32 @@ fn date_value_of_returns_the_constructed_time() {
 }
 
 #[test]
+fn date_set_year_and_set_full_year_update_the_calendar_year() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const legacy = new Date(0);
+            legacy.setYear(99);
+            const modern = new Date(0);
+            modern.setFullYear(2024);
+            legacy.getFullYear() + ":" + modern.getFullYear();
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("1999:2024".to_string()));
+}
+
+#[test]
+fn date_to_utc_string_uses_http_date_shape() {
+    let mut engine = JSEngine::new();
+    assert_eq!(
+        engine.eval("new Date(0).toUTCString()").unwrap(),
+        JSValue::String("Thu, 01 Jan 1970 00:00:00 GMT".to_string())
+    );
+}
+
+#[test]
 fn date_parse_is_present_and_rejects_unsupported_text_with_nan() {
     let mut engine = JSEngine::new();
     assert_eq!(

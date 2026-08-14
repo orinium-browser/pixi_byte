@@ -86,6 +86,23 @@ fn get_own_property_names_includes_non_enumerable_properties() {
 }
 
 #[test]
+fn get_own_property_names_hides_engine_callable_slots() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            function Component() {}
+            const names = Object.getOwnPropertyNames(Component);
+            names.includes("name") && names.includes("length") &&
+                names.includes("prototype") && !names.includes("__call__") &&
+                !names.includes("__construct__");
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::Boolean(true));
+}
+
+#[test]
 fn property_descriptor_methods_accept_functions() {
     let mut engine = JSEngine::new();
     let result = engine

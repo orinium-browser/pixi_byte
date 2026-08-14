@@ -570,17 +570,35 @@ fn object_keys(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> 
             "Object.keys: missing object argument".to_string(),
         ));
     };
-    let Some(object) = enumerable_object(vm, &value) else {
-        return Err(JSError::TypeError(
-            "Object.keys: argument must be an object".to_string(),
-        ));
+    let keys = if let Some(object) = enumerable_object(vm, &value) {
+        object
+            .borrow()
+            .keys()
+            .into_iter()
+            .map(JSValue::String)
+            .collect()
+    } else {
+        match value {
+            value @ (JSValue::Null | JSValue::Undefined) => {
+                return Err(JSError::TypeError(format!(
+                    "Object.keys: cannot convert {} to object (JS stack: {})",
+                    value.type_of(),
+                    vm.formatted_js_stack()
+                )));
+            }
+            JSValue::String(value) => (0..value.encode_utf16().count())
+                .map(|index| JSValue::String(index.to_string()))
+                .collect(),
+            JSValue::NativeFunction(..)
+            | JSValue::BoundFunction(..)
+            | JSValue::Number(..)
+            | JSValue::BigInt(..)
+            | JSValue::Boolean(..) => Vec::new(),
+            JSValue::Object(..) | JSValue::Function(..) | JSValue::ArrowFunction(..) => {
+                unreachable!("object-like values are handled above")
+            }
+        }
     };
-    let keys = object
-        .borrow()
-        .keys()
-        .into_iter()
-        .map(JSValue::String)
-        .collect();
     Ok(vm.array_from_values(keys))
 }
 
@@ -605,6 +623,16 @@ fn object_get_own_property_names(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> 
         .borrow()
         .own_property_names()
         .into_iter()
+        .filter(|name| {
+            !matches!(
+                name.as_str(),
+                "__call__"
+                    | "__construct__"
+                    | "__host_get_property__"
+                    | "__host_set_property__"
+                    | "__host_has_instance__"
+            )
+        })
         .map(JSValue::String)
         .collect();
     Ok(vm.array_from_values(names))

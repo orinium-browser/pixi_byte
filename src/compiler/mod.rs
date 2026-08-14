@@ -85,6 +85,7 @@ pub enum Opcode {
     Enumerate,          // for-in用の列挙可能なプロパティ名配列を生成
     GetIterator,
     IteratorNext(usize),
+    MakeGeneratorIterator,
 
     // 関数操作
     CreateFunction(usize), // 定数プール内の関数オブジェクトを生成してプッシュ（func chunk idx）
@@ -284,6 +285,7 @@ impl Compiler {
         }
         if let Some(output) = self.generator_output {
             self.chunk.emit(Opcode::LoadVar(output));
+            self.chunk.emit(Opcode::MakeGeneratorIterator);
         } else {
             let undefined = self.chunk.add_constant(JSValue::Undefined);
             self.chunk.emit(Opcode::LoadConst(undefined));
@@ -1396,13 +1398,8 @@ impl Compiler {
             Expression::ArrowFunction { params, body } => {
                 let program = Program { body };
                 let function_chunk = Compiler::new().compile_function(program)?;
-                let func_value = JSValue::ArrowFunction(
-                    Rc::new(function_chunk),
-                    params.clone(),
-                    None,
-                    None,
-                    0,
-                );
+                let func_value =
+                    JSValue::ArrowFunction(Rc::new(function_chunk), params.clone(), None, None, 0);
                 let idx = self.chunk.add_constant(func_value);
                 self.chunk.emit(Opcode::CreateFunction(idx));
             }

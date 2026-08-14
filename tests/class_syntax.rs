@@ -43,6 +43,93 @@ fn class_extends_and_super_constructor_preserve_prototype_chain() {
 }
 
 #[test]
+fn bound_class_construction_uses_the_target_prototype_and_new_instance() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                class Box {
+                    constructor(value) { this.value = value; }
+                    read() { return this.value; }
+                }
+                const wrongReceiver = {};
+                const BoundBox = Box.bind(wrongReceiver, 7);
+                const box = new BoundBox();
+                (box instanceof Box) + ":" + box.read() + ":" + wrongReceiver.value;
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::String("true:7:undefined".to_string()));
+}
+
+#[test]
+fn callable_object_constructor_uses_the_inner_function_prototype() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                class Box {
+                    constructor(value) { this.value = value; }
+                    read() { return this.value; }
+                }
+                const WrappedBox = { __construct__: Box };
+                const box = new WrappedBox(9);
+                (box instanceof Box) + ":" + box.read();
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::String("true:9".to_string()));
+}
+
+#[test]
+fn callable_object_with_bound_constructor_preserves_class_construction() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                class Box {
+                    constructor(value) { this.value = value; }
+                    read() { return this.value; }
+                }
+                const wrongReceiver = {};
+                const WrappedBox = {
+                    __construct__: Box.bind(wrongReceiver, 11),
+                    prototype: Object.create(null)
+                };
+                const box = new WrappedBox();
+                (box instanceof Box) + ":" + box.read() + ":" + wrongReceiver.value;
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::String("true:11:undefined".to_string()));
+}
+
+#[test]
+fn callable_object_exposes_inner_class_properties_and_is_constructible() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                class Box {
+                    constructor(value) { this.value = value; }
+                    read() { return this.value; }
+                }
+                Box.prototype.isComponent = true;
+                const WrappedBox = { __call__: Box };
+                const box = new WrappedBox(15);
+                WrappedBox.name + ":" + WrappedBox.prototype.isComponent + ":" +
+                    (box instanceof Box) + ":" + box.read();
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::String("Box:true:true:15".to_string()));
+}
+
+#[test]
 fn anonymous_class_expression_can_extend_a_base_class() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -167,6 +254,35 @@ fn generator_function_collects_yielded_values() {
         .unwrap();
 
     assert_eq!(result, JSValue::Number(5.0));
+}
+
+#[test]
+fn generator_functions_return_iterator_result_objects() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                function* values() { yield 2; yield 3; }
+                const iterator = values();
+                const first = iterator.next();
+                const second = iterator.next();
+                const done = iterator.next();
+                first.value + second.value + ":" + first.done + ":" + done.done;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("5:false:true".to_string()));
+}
+
+#[test]
+fn generator_function_expressions_return_iterators() {
+    let mut engine = JSEngine::new();
+    assert_eq!(
+        engine
+            .eval("function run() { const values = function* () { yield 4; }; const iterator = values(); const key = 'next'; return iterator[key]().value; } run();")
+            .unwrap(),
+        JSValue::Number(4.0)
+    );
 }
 
 #[test]

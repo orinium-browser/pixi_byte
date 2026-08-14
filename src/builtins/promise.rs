@@ -4,9 +4,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::error::{JSError, JSResult};
-use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
 use crate::value::jsvalue::BoundFunctionData;
+use crate::value::{JSValue, Property};
 use crate::vm::VM;
 
 const STATE: &str = "__promise_state";
@@ -23,8 +23,15 @@ fn is_callable(value: &JSValue) -> bool {
     )
 }
 
-fn new_promise() -> Rc<RefCell<JSObject>> {
-    let mut promise = JSObject::new();
+fn new_promise(vm: &VM) -> Rc<RefCell<JSObject>> {
+    let prototype = match vm.global_object.borrow().get("Promise") {
+        JSValue::Object(constructor) => match constructor.borrow().get("prototype") {
+            JSValue::Object(prototype) => Some(prototype),
+            _ => None,
+        },
+        _ => None,
+    };
+    let mut promise = JSObject::with_prototype(prototype);
     promise.set(STATE.to_string(), JSValue::String("pending".to_string()));
     promise.set(RESULT.to_string(), JSValue::Undefined);
     promise.set(REACTION_COUNT.to_string(), JSValue::Number(0.0));
@@ -52,7 +59,7 @@ fn promise_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         ));
     }
 
-    let promise = new_promise();
+    let promise = new_promise(vm);
     let resolve = bound_settler(promise_resolve, &promise);
     let reject = bound_settler(promise_reject, &promise);
     if let Err(err) = vm.call(executor, JSValue::Undefined, vec![resolve, reject]) {
@@ -83,14 +90,14 @@ fn promise_resolve_static(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> 
         return Ok(value);
     }
 
-    let promise = new_promise();
+    let promise = new_promise(vm);
     resolve_promise(vm, &promise, value);
     Ok(JSValue::Object(promise))
 }
 
 fn promise_reject_static(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let reason = args.get(1).cloned().unwrap_or(JSValue::Undefined);
-    let promise = new_promise();
+    let promise = new_promise(vm);
     settle_promise(vm, &promise, true, reason);
     Ok(JSValue::Object(promise))
 }
@@ -102,7 +109,7 @@ fn promise_all(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         ));
     };
     let length = values.borrow().get("length").to_number() as usize;
-    let result = new_promise();
+    let result = new_promise(vm);
     if length == 0 {
         let values = vm.array_from_values(Vec::new());
         resolve_promise(vm, &result, values);
@@ -162,7 +169,7 @@ fn promise_then(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let promise = promise_receiver(args.first())?;
     let on_fulfilled = args.get(1).cloned().unwrap_or(JSValue::Undefined);
     let on_rejected = args.get(2).cloned().unwrap_or(JSValue::Undefined);
-    let child = new_promise();
+    let child = new_promise(vm);
 
     let (state, result) = {
         let promise = promise.borrow();
@@ -278,7 +285,6 @@ fn settle_promise(vm: &mut VM, promise: &Rc<RefCell<JSObject>>, rejected: bool, 
     if promise.borrow().get(STATE).to_string() != "pending" {
         return;
     }
-
     let reaction_count = promise.borrow().get(REACTION_COUNT).to_number() as usize;
     {
         let mut promise = promise.borrow_mut();
@@ -344,6 +350,14 @@ fn promise_reaction_job(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 
 /// Installs the Promise constructor.
 pub fn install(global: &Rc<RefCell<JSObject>>) {
+    let mut prototype = JSObject::new();
+    prototype.set("then".to_string(), JSValue::NativeFunction(promise_then));
+    prototype.set("catch".to_string(), JSValue::NativeFunction(promise_catch));
+    prototype.set(
+        "@@toStringTag".to_string(),
+        JSValue::String("Promise".to_string()),
+    );
+    let prototype = Rc::new(RefCell::new(prototype));
     let mut constructor = JSObject::new();
     constructor.set(
         "__construct__".to_string(),
@@ -358,9 +372,22 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         JSValue::NativeFunction(promise_reject_static),
     );
     constructor.set("all".to_string(), JSValue::NativeFunction(promise_all));
-    global.borrow_mut().set(
+    constructor.set(
+        "prototype".to_string(),
+        JSValue::Object(Rc::clone(&prototype)),
+    );
+    let constructor = Rc::new(RefCell::new(constructor));
+    prototype.borrow_mut().set(
+        "constructor".to_string(),
+        JSValue::Object(Rc::clone(&constructor)),
+    );
+    constructor.borrow_mut().set(
+        "@@species".to_string(),
+        JSValue::Object(Rc::clone(&constructor)),
+    );
+    global.borrow_mut().define_property(
         "Promise".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(constructor))),
+        Property::read_only(JSValue::Object(constructor)),
     );
     global.borrow_mut().set(
         "__pixi_await".to_string(),

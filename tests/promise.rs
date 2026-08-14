@@ -31,6 +31,66 @@ fn promise_then_runs_asynchronously_and_chains_values() {
 }
 
 #[test]
+fn babel_generator_async_helper_advances_generator_promises() {
+    let mut engine = JSEngine::new();
+    engine
+        .eval(
+            r#"
+            let result = "pending";
+            function step(generator, resolve, reject, next, fail, key, value) {
+                let info;
+                try { info = generator[key](value); } catch (error) { reject(error); return; }
+                if (info.done) resolve(info.value);
+                else Promise.resolve(info.value).then(next, fail);
+            }
+            function run() {
+                const body = function* () {
+                    yield Promise.resolve(1);
+                    yield Promise.resolve(2);
+                };
+                return new Promise(function (resolve, reject) {
+                    const generator = body();
+                    function next(value) { step(generator, resolve, reject, next, fail, "next", value); }
+                    function fail(error) { step(generator, resolve, reject, next, fail, "throw", error); }
+                    next(undefined);
+                });
+            }
+            run().then(function () { result = "done"; }).catch(function (error) {
+                result = "error:" + error;
+            });
+            "#,
+        )
+        .unwrap();
+    engine.run_jobs().unwrap();
+    assert_eq!(
+        engine.eval("result").unwrap(),
+        JSValue::String("done".to_string())
+    );
+}
+
+#[test]
+fn generator_switch_eagerly_evaluates_babel_chunk_yields() {
+    let mut engine = JSEngine::new();
+    engine
+        .eval(
+            r#"
+            let calls = 0;
+            function load() { calls = calls + 1; return Promise.resolve(); }
+            const body = function* (locale) {
+                switch (locale.toLowerCase().split("-")[0]) {
+                    case "ja": yield load(); break;
+                    case "en": default:
+                        yield load(); yield load(); yield load(); yield load();
+                }
+            };
+            body("en");
+            "#,
+        )
+        .unwrap();
+    assert_eq!(engine.eval("calls").unwrap(), JSValue::Number(4.0));
+}
+
+#[test]
 fn promise_catch_handles_rejection() {
     let mut engine = JSEngine::new();
     engine
@@ -176,4 +236,41 @@ fn await_stringifies_synchronous_lazy_result_css() {
         )
         .unwrap();
     assert_eq!(result, JSValue::String("body{color:red}".to_string()));
+}
+
+#[test]
+fn eager_generator_evaluates_every_webpack_style_chunk_request() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            let requested = [];
+            function load(id) {
+                requested.push(id);
+                return new Promise(function (resolve) {});
+            }
+            function* locale(locale) {
+                if (true) switch (
+                    (yield load(5263).then(function () {})),
+                    requested.push(999),
+                    locale.toLowerCase().split("-")[0]
+                ) {
+                    case "en":
+                        yield load(7674).then(function () {});
+                        yield load(5199).then(function () {});
+                        yield load(2299).then(function () {});
+                        yield load(2123).then(function () {});
+                        break;
+                }
+            }
+            const iterator = locale("en-US");
+            requested.join(",") + ":" + (typeof iterator.next);
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(
+        result,
+        JSValue::String("5263,999,7674,5199,2299,2123:function".to_string())
+    );
 }

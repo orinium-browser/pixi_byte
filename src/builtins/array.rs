@@ -46,9 +46,9 @@ fn receiver(args: &[JSValue], method: &str) -> crate::error::JSResult<Rc<RefCell
             object.set("length".to_string(), JSValue::Number(0.0));
             Ok(Rc::new(RefCell::new(object)))
         }
-        Some(JSValue::Undefined | JSValue::Null) => Err(crate::error::JSError::TypeError(
-            format!("Array.prototype.{method}: null or undefined receiver"),
-        )),
+        Some(JSValue::Undefined | JSValue::Null) => Err(crate::error::JSError::TypeError(format!(
+            "Array.prototype.{method}: null or undefined receiver"
+        ))),
         Some(value) => Err(crate::error::JSError::TypeError(format!(
             "Array.prototype.{method}: invalid receiver ({})",
             value.type_of()
@@ -601,37 +601,74 @@ fn array_sort(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRes
     let mut values = (0..length(&array))
         .map(|index| array.borrow().get(&index.to_string()))
         .collect::<Vec<_>>();
-    for index in 1..values.len() {
-        let mut cursor = index;
-        while cursor > 0 {
-            let ordering = if let Some(comparator) = &comparator {
-                vm.call(
-                    comparator.clone(),
-                    JSValue::Undefined,
-                    vec![values[cursor - 1].clone(), values[cursor].clone()],
-                )?
-                .to_number()
-            } else {
-                match values[cursor - 1]
-                    .to_string()
-                    .cmp(&values[cursor].to_string())
-                {
-                    std::cmp::Ordering::Less => -1.0,
-                    std::cmp::Ordering::Equal => 0.0,
-                    std::cmp::Ordering::Greater => 1.0,
+    let mut merged = vec![JSValue::Undefined; values.len()];
+    let mut width = 1;
+    while width < values.len() {
+        for start in (0..values.len()).step_by(width.saturating_mul(2)) {
+            let middle = start.saturating_add(width).min(values.len());
+            let end = start
+                .saturating_add(width.saturating_mul(2))
+                .min(values.len());
+            let (mut left, mut right) = (start, middle);
+            for output in &mut merged[start..end] {
+                let take_left = if left >= middle {
+                    false
+                } else if right >= end {
+                    true
+                } else {
+                    array_sort_compare(vm, comparator.as_ref(), &values[left], &values[right])?
+                        <= 0.0
+                };
+                if take_left {
+                    *output = values[left].clone();
+                    left += 1;
+                } else {
+                    *output = values[right].clone();
+                    right += 1;
                 }
-            };
-            if ordering <= 0.0 || ordering.is_nan() {
-                break;
             }
-            values.swap(cursor - 1, cursor);
-            cursor -= 1;
         }
+        std::mem::swap(&mut values, &mut merged);
+        width = width.saturating_mul(2);
     }
     for (index, value) in values.into_iter().enumerate() {
         array.borrow_mut().set(index.to_string(), value);
     }
     Ok(JSValue::Object(array))
+}
+
+fn array_sort_compare(
+    vm: &mut crate::vm::VM,
+    comparator: Option<&JSValue>,
+    left: &JSValue,
+    right: &JSValue,
+) -> crate::error::JSResult<f64> {
+    match (left, right) {
+        (JSValue::Undefined, JSValue::Undefined) => return Ok(0.0),
+        (JSValue::Undefined, _) => return Ok(1.0),
+        (_, JSValue::Undefined) => return Ok(-1.0),
+        _ => {}
+    }
+    if let Some(comparator) = comparator {
+        let ordering = vm
+            .call(
+                comparator.clone(),
+                JSValue::Undefined,
+                vec![left.clone(), right.clone()],
+            )?
+            .to_number();
+        return Ok(if ordering.is_nan() { 0.0 } else { ordering });
+    }
+    Ok(
+        match vm
+            .to_string_value(left.clone())?
+            .cmp(&vm.to_string_value(right.clone())?)
+        {
+            std::cmp::Ordering::Less => -1.0,
+            std::cmp::Ordering::Equal => 0.0,
+            std::cmp::Ordering::Greater => 1.0,
+        },
+    )
 }
 
 fn array_find(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {

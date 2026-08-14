@@ -143,6 +143,64 @@ fn date_set_date(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::Number(updated))
 }
 
+fn set_date_year(args: &[JSValue], method: &str, legacy: bool) -> JSResult<JSValue> {
+    let milliseconds = date_value(args, method)?;
+    let mut requested_year = args
+        .get(1)
+        .unwrap_or(&JSValue::Undefined)
+        .to_number()
+        .trunc() as i32;
+    if legacy && (0..=99).contains(&requested_year) {
+        requested_year += 1900;
+    }
+    let days = (milliseconds / 86_400_000.0).floor() as i64;
+    let time_within_day = milliseconds - days as f64 * 86_400_000.0;
+    let (_, month, day) = civil_from_days(days);
+    let updated = days_from_civil(requested_year, month, i64::from(day)) as f64 * 86_400_000.0
+        + time_within_day;
+    if let Some(JSValue::Object(this)) = args.first() {
+        this.borrow_mut()
+            .set(DATE_VALUE.to_string(), JSValue::Number(updated));
+    }
+    Ok(JSValue::Number(updated))
+}
+
+fn date_set_full_year(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    set_date_year(&args, "setFullYear", false)
+}
+
+fn date_set_year(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    set_date_year(&args, "setYear", true)
+}
+
+fn date_to_utc_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "toUTCString")?;
+    if !milliseconds.is_finite() {
+        return Ok(JSValue::String("Invalid Date".to_string()));
+    }
+    let days = (milliseconds / 86_400_000.0).floor() as i64;
+    let within_day = milliseconds.rem_euclid(86_400_000.0) as u64;
+    let (year, month, day) = civil_from_days(days);
+    let weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let weekday = (days + 4).rem_euclid(7) as usize;
+    let hour = within_day / 3_600_000;
+    let minute = within_day / 60_000 % 60;
+    let second = within_day / 1_000 % 60;
+    Ok(JSValue::String(format!(
+        "{}, {:02} {} {:04} {:02}:{:02}:{:02} GMT",
+        weekdays[weekday],
+        day,
+        months[month.saturating_sub(1) as usize],
+        year,
+        hour,
+        minute,
+        second
+    )))
+}
+
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut prototype = JSObject::new();
     prototype.set(
@@ -168,6 +226,18 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     prototype.set(
         "setDate".to_string(),
         JSValue::NativeFunction(date_set_date),
+    );
+    prototype.set(
+        "setFullYear".to_string(),
+        JSValue::NativeFunction(date_set_full_year),
+    );
+    prototype.set(
+        "setYear".to_string(),
+        JSValue::NativeFunction(date_set_year),
+    );
+    prototype.set(
+        "toUTCString".to_string(),
+        JSValue::NativeFunction(date_to_utc_string),
     );
 
     let mut date = JSObject::new();

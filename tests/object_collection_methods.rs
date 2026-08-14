@@ -20,6 +20,22 @@ fn object_keys_returns_enumerable_own_keys() {
 }
 
 #[test]
+fn object_keys_boxes_primitives_and_accepts_callable_values() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            Object.keys("abc").join("") + ":" +
+                Object.keys(1).length + ":" +
+                Object.keys(function () {}).length + ":" +
+                Object.keys(Array.isArray).length;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("012:0:0:0".to_string()));
+}
+
+#[test]
 fn object_assign_copies_sources_from_left_to_right() {
     let mut engine = JSEngine::new();
     let result = engine

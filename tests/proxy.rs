@@ -34,3 +34,43 @@ fn proxy_internal_properties_do_not_leak_through_enumeration() {
         .unwrap();
     assert_eq!(result, JSValue::Boolean(true));
 }
+
+#[test]
+fn callable_proxy_forwards_calls_and_apply_traps() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                const target = (left, right) => left + right;
+                const direct = new Proxy(target, {});
+                const trapped = new Proxy(target, {
+                    apply(fn, receiver, args) { return fn(args[0] * 2, args[1]); }
+                });
+                direct(2, 3) + ":" + trapped(2, 3);
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::String("5:7".to_string()));
+}
+
+#[test]
+fn callable_proxy_forwards_function_properties_and_class_construction() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                class Box {
+                    constructor(value) { this.value = value; }
+                    read() { return this.value; }
+                }
+                Box.prototype.isComponent = true;
+                const WrappedBox = new Proxy(Box, {});
+                const box = new WrappedBox(13);
+                typeof WrappedBox + ":" + WrappedBox.prototype.isComponent + ":" +
+                    (box instanceof Box) + ":" + box.read();
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::String("function:true:true:13".to_string()));
+}

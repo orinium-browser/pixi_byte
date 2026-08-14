@@ -261,9 +261,17 @@ impl JsonParser<'_> {
                 return self.syntax_error();
             }
         }
-        if self.source.get(self.offset).is_some_and(|byte| matches!(byte, b'e' | b'E')) {
+        if self
+            .source
+            .get(self.offset)
+            .is_some_and(|byte| matches!(byte, b'e' | b'E'))
+        {
             self.offset += 1;
-            if self.source.get(self.offset).is_some_and(|byte| matches!(byte, b'+' | b'-')) {
+            if self
+                .source
+                .get(self.offset)
+                .is_some_and(|byte| matches!(byte, b'+' | b'-'))
+            {
                 self.offset += 1;
             }
             let exponent_start = self.offset;
