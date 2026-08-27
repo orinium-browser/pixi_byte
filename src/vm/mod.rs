@@ -1684,8 +1684,14 @@ impl VM {
             }
 
             JSValue::Function(chunk, params, env, name, _) => {
-                let env =
-                    self.create_function_env(callee_clone, env, params, args, name.clone(), true);
+                let env = self.create_function_env(
+                    callee_clone,
+                    env,
+                    params,
+                    args,
+                    name.clone(),
+                    chunk.uses_arguments,
+                );
 
                 self.with_call_frame(env, this, chunk, name)
             }

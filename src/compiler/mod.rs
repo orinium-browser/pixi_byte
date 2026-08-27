@@ -142,6 +142,13 @@ pub struct BytecodeChunk {
     pub code: Vec<Opcode>,
     /// 定数プール
     pub constants: Vec<JSValue>,
+    /// `add_constant` の重複検出を高速化するための、定数ハッシュの集合。
+    pub constants_seen: std::collections::HashSet<u64>,
+    /// 関数本体が `arguments` を参照するかどうか。
+    ///
+    /// `false` なら呼び出し時に未使用の `arguments` 配列を生成しない。
+    /// 安全側のためにデフォルトは `true`（不明な場合は `arguments` を生成する）。
+    pub uses_arguments: bool,
 }
 
 impl BytecodeChunk {
@@ -151,6 +158,8 @@ impl BytecodeChunk {
             identity: NEXT_BYTECODE_ID.fetch_add(1, Ordering::Relaxed),
             code: Vec::new(),
             constants: Vec::new(),
+            constants_seen: std::collections::HashSet::new(),
+            uses_arguments: true,
         }
     }
 
@@ -161,6 +170,9 @@ impl BytecodeChunk {
     pub fn merge(&mut self, other: BytecodeChunk) {
         let constant_offset = self.constants.len();
 
+        for constant in &other.constants {
+            self.constants_seen.insert(jsvalue_hash(constant));
+        }
         self.constants.extend(other.constants);
 
         for opcode in other.code {
@@ -170,10 +182,12 @@ impl BytecodeChunk {
 
     /// 定数プールに値を追加し、そのインデックスを返す
     pub fn add_constant(&mut self, value: JSValue) -> usize {
-        // 既存の定数を探す
-        for (i, constant) in self.constants.iter().enumerate() {
-            if constant == &value {
-                return i;
+        // 既存の定数を探す（ハッシュ集合で高速に除外判定する）
+        if !self.constants_seen.insert(jsvalue_hash(&value)) {
+            for (i, constant) in self.constants.iter().enumerate() {
+                if constant.strict_equals(&value) {
+                    return i;
+                }
             }
         }
 
@@ -267,6 +281,7 @@ impl Compiler {
     }
 
     fn compile_function(mut self, program: Program) -> JSResult<BytecodeChunk> {
+        self.chunk.uses_arguments = statements_reference_arguments(&program.body);
         if let Some(output) = self.generator_output.clone() {
             self.chunk.emit(Opcode::NewArray(0));
             self.chunk.emit(Opcode::DefineVar(output));
@@ -2038,3 +2053,162 @@ impl Default for Compiler {
     }
 }
 use std::rc::Rc;
+
+/// `JSValue` の決定論的ハッシュ（プロセス内の重複検出用）。
+fn jsvalue_hash(value: &JSValue) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    std::mem::discriminant(value).hash(&mut hasher);
+    match value {
+        JSValue::Undefined | JSValue::Null => {}
+        JSValue::Boolean(b) => b.hash(&mut hasher),
+        JSValue::Number(n) => n.to_bits().hash(&mut hasher),
+        JSValue::BigInt(n) => n.hash(&mut hasher),
+        JSValue::String(s) => s.hash(&mut hasher),
+        JSValue::Object(o) => (Rc::as_ptr(o) as usize as u64).hash(&mut hasher),
+        JSValue::Function(chunk, _, _, _, id) | JSValue::ArrowFunction(chunk, _, _, _, id) => {
+            (*id ^ chunk.identity.rotate_left(17)).hash(&mut hasher);
+        }
+        JSValue::NativeFunction(f) => (*f as usize as u64).hash(&mut hasher),
+        JSValue::BoundFunction(b) => b.identity.hash(&mut hasher),
+    }
+    hasher.finish()
+}
+
+/// 関数本体（ネスト含む）に `arguments` 識別子への参照が含まれるかを判定します。
+fn statements_reference_arguments(statements: &[Statement]) -> bool {
+    statements.iter().any(statement_references_arguments)
+}
+
+fn statement_references_arguments(statement: &Statement) -> bool {
+    match statement {
+        Statement::Empty => false,
+        Statement::Block(body) => statements_reference_arguments(body),
+        Statement::Labeled { body, .. } => statement_references_arguments(body),
+        Statement::Expression(expr) => {
+            expression_references_arguments_slice(std::slice::from_ref(expr))
+        }
+        Statement::VariableDeclaration { declarations, .. } => declarations
+            .iter()
+            .any(|(_, init)| init.as_ref().is_some_and(expression_references_arguments)),
+        Statement::Return(expr) => expr.as_ref().is_some_and(expression_references_arguments),
+        Statement::FunctionDeclaration { body, .. } => statements_reference_arguments(body),
+        Statement::If {
+            test,
+            consequent,
+            alternate,
+        } => {
+            expression_references_arguments(test)
+                || statements_reference_arguments(consequent)
+                || alternate
+                    .as_ref()
+                    .is_some_and(|stmts| statements_reference_arguments(stmts))
+        }
+        Statement::While { test, body } => {
+            expression_references_arguments(test) || statements_reference_arguments(body)
+        }
+        Statement::DoWhile { body, test } => {
+            statements_reference_arguments(body) || expression_references_arguments(test)
+        }
+        Statement::For {
+            init,
+            test,
+            update,
+            body,
+        } => {
+            init.as_ref()
+                .is_some_and(|init| statement_references_arguments(init))
+                || test.as_ref().is_some_and(expression_references_arguments)
+                || update.iter().any(expression_references_arguments)
+                || statements_reference_arguments(body)
+        }
+        Statement::ForIn { right, body, .. } | Statement::ForOf { right, body, .. } => {
+            expression_references_arguments(right) || statements_reference_arguments(body)
+        }
+        Statement::PatternDeclaration { init, .. } => expression_references_arguments(init),
+        Statement::Throw(expr) => expression_references_arguments(expr),
+        Statement::Try {
+            block,
+            handler,
+            finalizer,
+        } => {
+            statements_reference_arguments(block)
+                || handler
+                    .as_ref()
+                    .is_some_and(|(_, stmts)| statements_reference_arguments(stmts))
+                || finalizer
+                    .as_ref()
+                    .is_some_and(|stmts| statements_reference_arguments(stmts))
+        }
+        Statement::Switch {
+            discriminant,
+            cases,
+        } => {
+            expression_references_arguments(discriminant)
+                || cases.iter().any(|(test, stmts)| {
+                    test.as_ref().is_some_and(expression_references_arguments)
+                        || statements_reference_arguments(stmts)
+                })
+        }
+        Statement::Break(_) | Statement::Continue(_) => false,
+    }
+}
+
+fn expression_references_arguments_slice(exprs: &[Expression]) -> bool {
+    exprs.iter().any(expression_references_arguments)
+}
+
+fn expression_references_arguments(expression: &Expression) -> bool {
+    match expression {
+        Expression::Identifier(name) => name == "arguments",
+        Expression::Literal(_) | Expression::This | Expression::Super => false,
+        Expression::Binary { left, right, .. } | Expression::Assignment { left, right, .. } => {
+            expression_references_arguments(left) || expression_references_arguments(right)
+        }
+        Expression::Unary { arg, .. }
+        | Expression::Update { arg, .. }
+        | Expression::Spread(arg)
+        | Expression::Yield { value: arg, .. } => expression_references_arguments(arg),
+        Expression::Conditional {
+            test,
+            consequent,
+            alternate,
+        } => {
+            expression_references_arguments(test)
+                || expression_references_arguments(consequent)
+                || expression_references_arguments(alternate)
+        }
+        Expression::Sequence(exprs) => expression_references_arguments_slice(exprs),
+        Expression::ArrayLiteral(elements) => expression_references_arguments_slice(elements),
+        Expression::TemplateObject { .. } => false,
+        Expression::ObjectLiteral(properties) => properties.iter().any(|property| match property {
+            ObjectProperty::Data { value, .. } | ObjectProperty::ComputedData { value, .. } => {
+                expression_references_arguments(value)
+            }
+            ObjectProperty::Getter { body, .. } | ObjectProperty::Setter { body, .. } => {
+                statements_reference_arguments(body)
+            }
+            ObjectProperty::Spread(value) => expression_references_arguments(value),
+        }),
+        Expression::RegExpLiteral { .. } => false,
+        Expression::MemberAccess {
+            object, property, ..
+        }
+        | Expression::OptionalMemberAccess {
+            object, property, ..
+        } => expression_references_arguments(object) || expression_references_arguments(property),
+        Expression::Call { callee, args, .. }
+        | Expression::OptionalCall { callee, args, .. }
+        | Expression::New { callee, args, .. } => {
+            expression_references_arguments(callee) || expression_references_arguments_slice(args)
+        }
+        Expression::Function {
+            name: _,
+            params: _,
+            body,
+            is_generator: _,
+        }
+        | Expression::ArrowFunction { params: _, body } => statements_reference_arguments(body),
+        Expression::Class { .. } => false,
+    }
+}

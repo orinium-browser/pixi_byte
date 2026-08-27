@@ -49,9 +49,12 @@ impl Environment {
     }
 
     pub fn set(&self, name: &str, value: JSValue) -> bool {
-        if self.bindings.borrow().contains_key(name) {
-            self.bindings.borrow_mut().insert(name.to_string(), value);
-            return true;
+        {
+            let mut bindings = self.bindings.borrow_mut();
+            if bindings.contains_key(name) {
+                bindings.insert(name.to_string(), value);
+                return true;
+            }
         }
         if let Some(ref outer) = self.outer {
             return outer.borrow().set(name, value);
