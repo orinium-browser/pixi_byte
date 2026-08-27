@@ -46,6 +46,28 @@ impl JSEngine {
 
     /// JavaScriptコードを評価
     pub fn eval_with_options(&mut self, source: &str, options: &EvalOptions) -> JSResult<JSValue> {
+        let bytecode = self.compile_with_options(source, options)?;
+        self.execute(&bytecode)
+    }
+
+    /// JavaScriptコードを評価
+    pub fn eval(&mut self, source: &str) -> JSResult<JSValue> {
+        self.eval_with_options(source, &EvalOptions::default())
+    }
+
+    /// JavaScriptソースを lex → parse → compile してバイトコードを生成します。
+    ///
+    /// 生成した [`BytecodeChunk`] は [`execute`](Self::execute) で繰り返し実行できます。
+    pub fn compile(&mut self, source: &str) -> JSResult<compiler::BytecodeChunk> {
+        self.compile_with_options(source, &EvalOptions::default())
+    }
+
+    /// `dump_ast` / `dump_bytecode` オプション付きでバイトコードを生成します。
+    pub fn compile_with_options(
+        &self,
+        source: &str,
+        options: &EvalOptions,
+    ) -> JSResult<compiler::BytecodeChunk> {
         let ast = parser::Parser::new(Lexer::new(source))?.parse()?;
 
         if options.dump_ast {
@@ -63,12 +85,12 @@ impl JSEngine {
             }
         }
 
-        self.vm.execute(&bytecode)
+        Ok(bytecode)
     }
 
-    /// JavaScriptコードを評価
-    pub fn eval(&mut self, source: &str) -> JSResult<JSValue> {
-        self.eval_with_options(source, &EvalOptions::default())
+    /// コンパイル済みバイトコードを現在の VM 状態で実行します。
+    pub fn execute(&mut self, bytecode: &compiler::BytecodeChunk) -> JSResult<JSValue> {
+        self.vm.execute(bytecode)
     }
 
     pub fn global_mut(
