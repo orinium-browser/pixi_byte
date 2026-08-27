@@ -30,7 +30,7 @@ pub type NativeFunctionType =
 /// - プリミティブ（Undefined, Null, Boolean, Number, String）
 /// - オブジェクト/関数（Object, Function, NativeFunction）
 ///
-/// 将来的には `Symbol`, `BigInt` などを追加します。
+/// 将来的には `Symbol` を追加します。
 pub enum JSValue {
     /// undefined
     Undefined,
@@ -66,7 +66,7 @@ pub enum JSValue {
     NativeFunction(NativeFunctionType),
     /// Bound function created by Function.prototype.bind
     BoundFunction(Box<BoundFunctionData>),
-    // TODO: Symbol, BigInt 等は後のフェーズで実装
+    // TODO: Symbol は後のフェーズで実装
 }
 
 /// Internal representation for bound functions
