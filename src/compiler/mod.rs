@@ -5,6 +5,7 @@ use crate::parser::{
     Program, Statement, UnaryOp, VarKind,
 };
 use crate::value::JSValue;
+use crate::value::jsvalue::{ArrowFunctionData, FunctionData, JsValueKind};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -363,7 +364,7 @@ impl Compiler {
             self.chunk.emit(Opcode::LoadVar(name));
             self.chunk.emit(Opcode::MakeGeneratorIterator);
         } else {
-            let undefined = self.chunk.add_constant(JSValue::Undefined);
+            let undefined = self.chunk.add_constant(JSValue::undefined());
             self.chunk.emit(Opcode::LoadConst(undefined));
         }
         self.chunk.emit(Opcode::Return);
@@ -376,7 +377,7 @@ impl Compiler {
         let mut emitted = HashSet::new();
         for name in names {
             if emitted.insert(name.clone()) {
-                let undefined = self.chunk.add_constant(JSValue::Undefined);
+                let undefined = self.chunk.add_constant(JSValue::undefined());
                 self.chunk.emit(Opcode::LoadConst(undefined));
                 let name = self.intern_name(&name)?;
                 self.chunk.emit(Opcode::DefineVarIfAbsent(name));
@@ -390,7 +391,7 @@ impl Compiler {
         match statement {
             Statement::Empty => {
                 if is_last {
-                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    let undefined = self.chunk.add_constant(JSValue::undefined());
                     self.chunk.emit(Opcode::LoadConst(undefined));
                 }
             }
@@ -440,7 +441,7 @@ impl Compiler {
                     if let Some(expr) = init {
                         self.compile_expression(expr)?;
                     } else {
-                        let idx = self.chunk.add_constant(JSValue::Undefined);
+                        let idx = self.chunk.add_constant(JSValue::undefined());
                         self.chunk.emit(Opcode::LoadConst(idx));
                     }
 
@@ -454,7 +455,7 @@ impl Compiler {
 
                 // 変数宣言の文は常にundefinedを返す
                 if is_last {
-                    let idx = self.chunk.add_constant(JSValue::Undefined);
+                    let idx = self.chunk.add_constant(JSValue::undefined());
                     self.chunk.emit(Opcode::LoadConst(idx));
                 }
             }
@@ -466,7 +467,7 @@ impl Compiler {
                 self.compile_expression(init)?;
                 self.store_binding_pattern(&binding, kind != VarKind::Var)?;
                 if is_last {
-                    let idx = self.chunk.add_constant(JSValue::Undefined);
+                    let idx = self.chunk.add_constant(JSValue::undefined());
                     self.chunk.emit(Opcode::LoadConst(idx));
                 }
             }
@@ -484,7 +485,7 @@ impl Compiler {
                 if let Some(expr) = expr {
                     self.compile_expression(expr)?;
                 } else {
-                    let idx = self.chunk.add_constant(JSValue::Undefined);
+                    let idx = self.chunk.add_constant(JSValue::undefined());
                     self.chunk.emit(Opcode::LoadConst(idx));
                 }
                 self.chunk.emit(Opcode::Return);
@@ -551,7 +552,7 @@ impl Compiler {
                 }
                 self.patch_labeled_breaks(loop_label.as_deref(), exit_target)?;
                 if is_last {
-                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    let undefined = self.chunk.add_constant(JSValue::undefined());
                     self.chunk.emit(Opcode::LoadConst(undefined));
                 }
             }
@@ -586,7 +587,7 @@ impl Compiler {
                 }
                 self.patch_labeled_breaks(loop_label.as_deref(), exit_target)?;
                 if is_last {
-                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    let undefined = self.chunk.add_constant(JSValue::undefined());
                     self.chunk.emit(Opcode::LoadConst(undefined));
                 }
             }
@@ -613,7 +614,7 @@ impl Compiler {
                 if let Some(test) = test {
                     self.compile_expression(test)?;
                 } else {
-                    let truthy = self.chunk.add_constant(JSValue::Boolean(true));
+                    let truthy = self.chunk.add_constant(JSValue::from_bool(true));
                     self.chunk.emit(Opcode::LoadConst(truthy));
                 }
                 let exit_jump = self.chunk.code.len();
@@ -660,7 +661,7 @@ impl Compiler {
                 }
                 self.patch_labeled_breaks(loop_label.as_deref(), exit_cleanup)?;
                 if is_last {
-                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    let undefined = self.chunk.add_constant(JSValue::undefined());
                     self.chunk.emit(Opcode::LoadConst(undefined));
                 }
             }
@@ -679,7 +680,7 @@ impl Compiler {
                 self.chunk.emit(Opcode::Enumerate);
                 let name = self.intern_name(&keys)?;
                 self.chunk.emit(Opcode::DefineVar(name));
-                let zero = self.chunk.add_constant(JSValue::Number(0.0));
+                let zero = self.chunk.add_constant(JSValue::from_number(0.0));
                 self.chunk.emit(Opcode::LoadConst(zero));
                 let name = self.intern_name(&index)?;
                 self.chunk.emit(Opcode::DefineVar(name));
@@ -693,7 +694,7 @@ impl Compiler {
                 self.chunk.emit(Opcode::LoadVar(name));
                 let length = self
                     .chunk
-                    .add_constant(JSValue::String("length".to_string()));
+                    .add_constant(JSValue::from_string("length".to_string()));
                 self.chunk.emit(Opcode::LoadConst(length));
                 self.chunk.emit(Opcode::GetProperty);
                 self.chunk.emit(Opcode::Lt);
@@ -736,7 +737,7 @@ impl Compiler {
                 }
                 let name = self.intern_name(&index)?;
                 self.chunk.emit(Opcode::LoadVar(name));
-                let one = self.chunk.add_constant(JSValue::Number(1.0));
+                let one = self.chunk.add_constant(JSValue::from_number(1.0));
                 self.chunk.emit(Opcode::LoadConst(one));
                 self.chunk.emit(Opcode::Add);
                 let name = self.intern_name(&index)?;
@@ -755,7 +756,7 @@ impl Compiler {
                 }
                 self.patch_labeled_breaks(loop_label.as_deref(), break_cleanup)?;
                 if is_last {
-                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    let undefined = self.chunk.add_constant(JSValue::undefined());
                     self.chunk.emit(Opcode::LoadConst(undefined));
                 }
             }
@@ -824,7 +825,7 @@ impl Compiler {
                 }
                 self.patch_labeled_breaks(loop_label.as_deref(), break_cleanup)?;
                 if is_last {
-                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    let undefined = self.chunk.add_constant(JSValue::undefined());
                     self.chunk.emit(Opcode::LoadConst(undefined));
                 }
             }
@@ -893,7 +894,7 @@ impl Compiler {
                         self.patch_try(catch_try, None, Some(finally_start));
                     }
                     if is_last {
-                        let undefined = self.chunk.add_constant(JSValue::Undefined);
+                        let undefined = self.chunk.add_constant(JSValue::undefined());
                         self.chunk.emit(Opcode::LoadConst(undefined));
                     }
                 } else {
@@ -904,7 +905,7 @@ impl Compiler {
                     }
                     self.patch_try(try_start, catch_start, None);
                     if is_last {
-                        let undefined = self.chunk.add_constant(JSValue::Undefined);
+                        let undefined = self.chunk.add_constant(JSValue::undefined());
                         self.chunk.emit(Opcode::LoadConst(undefined));
                     }
                 }
@@ -957,7 +958,7 @@ impl Compiler {
                     self.patch_jump(break_jump, end);
                 }
                 if is_last {
-                    let undefined = self.chunk.add_constant(JSValue::Undefined);
+                    let undefined = self.chunk.add_constant(JSValue::undefined());
                     self.chunk.emit(Opcode::LoadConst(undefined));
                 }
             }
@@ -1151,14 +1152,14 @@ impl Compiler {
         match expression {
             Expression::Literal(lit) => {
                 let value = match lit {
-                    Literal::Undefined => JSValue::Undefined,
-                    Literal::Null => JSValue::Null,
-                    Literal::Boolean(b) => JSValue::Boolean(b),
-                    Literal::Number(n) => JSValue::Number(n),
-                    Literal::BigInt(n) => JSValue::BigInt(n.parse().map_err(|_| {
+                    Literal::Undefined => JSValue::undefined(),
+                    Literal::Null => JSValue::null(),
+                    Literal::Boolean(b) => JSValue::from_bool(b),
+                    Literal::Number(n) => JSValue::from_number(n),
+                    Literal::BigInt(n) => JSValue::from_bigint(n.parse().map_err(|_| {
                         JSError::InternalError(format!("Invalid BigInt literal: {n}"))
                     })?),
-                    Literal::String(s) => JSValue::String(s),
+                    Literal::String(s) => JSValue::from_string(s),
                 };
                 let idx = self.chunk.add_constant(value);
                 self.chunk.emit(Opcode::LoadConst(idx));
@@ -1226,13 +1227,13 @@ impl Compiler {
                             self.chunk.emit(Opcode::DeleteProperty);
                         }
                         Expression::Identifier(_) => {
-                            let value = self.chunk.add_constant(JSValue::Boolean(false));
+                            let value = self.chunk.add_constant(JSValue::from_bool(false));
                             self.chunk.emit(Opcode::LoadConst(value));
                         }
                         expression => {
                             self.compile_expression(expression)?;
                             self.chunk.emit(Opcode::Pop);
-                            let value = self.chunk.add_constant(JSValue::Boolean(true));
+                            let value = self.chunk.add_constant(JSValue::from_bool(true));
                             self.chunk.emit(Opcode::LoadConst(value));
                         }
                     }
@@ -1392,17 +1393,19 @@ impl Compiler {
             Expression::TemplateObject { cooked, raw } => {
                 self.chunk.emit(Opcode::NewArray(0));
                 for value in cooked {
-                    let value = self.chunk.add_constant(JSValue::String(value));
+                    let value = self.chunk.add_constant(JSValue::from_string(value));
                     self.chunk.emit(Opcode::LoadConst(value));
                     self.chunk.emit(Opcode::ArrayAppend);
                 }
                 self.chunk.emit(Opcode::NewArray(0));
                 for value in raw {
-                    let value = self.chunk.add_constant(JSValue::String(value));
+                    let value = self.chunk.add_constant(JSValue::from_string(value));
                     self.chunk.emit(Opcode::LoadConst(value));
                     self.chunk.emit(Opcode::ArrayAppend);
                 }
-                let key = self.chunk.add_constant(JSValue::String("raw".to_string()));
+                let key = self
+                    .chunk
+                    .add_constant(JSValue::from_string("raw".to_string()));
                 self.chunk.emit(Opcode::LoadConst(key));
                 self.chunk.emit(Opcode::ObjectSetProperty);
             }
@@ -1456,7 +1459,7 @@ impl Compiler {
                         }
                     };
                     self.compile_expression(value)?;
-                    let key_idx = self.chunk.add_constant(JSValue::String(key));
+                    let key_idx = self.chunk.add_constant(JSValue::from_string(key));
                     self.chunk.emit(Opcode::LoadConst(key_idx));
                     self.chunk.emit(opcode);
                 }
@@ -1509,8 +1512,13 @@ impl Compiler {
                 let program = Program { body };
                 let function_chunk = Compiler::with_intern(Rc::clone(&self.intern), None)
                     .compile_function(program)?;
-                let func_value =
-                    JSValue::ArrowFunction(Rc::new(function_chunk), param_ids, None, None, 0);
+                let func_value = JSValue::from_arrow_function(ArrowFunctionData {
+                    chunk: Rc::new(function_chunk),
+                    params: param_ids,
+                    env: None,
+                    lexical_this: None,
+                    identity: 0,
+                });
                 let idx = self.chunk.add_constant(func_value);
                 self.chunk.emit(Opcode::CreateFunction(idx));
             }
@@ -1523,7 +1531,9 @@ impl Compiler {
                     })?;
                     let name = self.intern_name(&binding)?;
                     self.chunk.emit(Opcode::LoadVar(name));
-                    let call = self.chunk.add_constant(JSValue::String("call".to_string()));
+                    let call = self
+                        .chunk
+                        .add_constant(JSValue::from_string("call".to_string()));
                     self.chunk.emit(Opcode::LoadConst(call));
                     self.chunk.emit(Opcode::LoadThis);
                     for arg in &args {
@@ -1547,7 +1557,7 @@ impl Compiler {
                     self.chunk.emit(Opcode::LoadVar(name));
                     let prototype = self
                         .chunk
-                        .add_constant(JSValue::String("prototype".to_string()));
+                        .add_constant(JSValue::from_string("prototype".to_string()));
                     self.chunk.emit(Opcode::LoadConst(prototype));
                     self.chunk.emit(Opcode::GetProperty);
                     self.compile_expression(*property.clone())?;
@@ -1555,7 +1565,7 @@ impl Compiler {
                     if args.iter().any(|arg| matches!(arg, Expression::Spread(_))) {
                         let apply = self
                             .chunk
-                            .add_constant(JSValue::String("apply".to_string()));
+                            .add_constant(JSValue::from_string("apply".to_string()));
                         self.chunk.emit(Opcode::LoadConst(apply));
                         self.chunk.emit(Opcode::LoadThis);
                         self.chunk.emit(Opcode::NewArray(0));
@@ -1573,7 +1583,9 @@ impl Compiler {
                         }
                         self.chunk.emit(Opcode::CallMethod(2));
                     } else {
-                        let call = self.chunk.add_constant(JSValue::String("call".to_string()));
+                        let call = self
+                            .chunk
+                            .add_constant(JSValue::from_string("call".to_string()));
                         self.chunk.emit(Opcode::LoadConst(call));
                         self.chunk.emit(Opcode::LoadThis);
                         for arg in &args {
@@ -1710,7 +1722,7 @@ impl Compiler {
                     Opcode::ArrayAppend
                 });
                 self.chunk.emit(Opcode::Pop);
-                let undefined = self.chunk.add_constant(JSValue::Undefined);
+                let undefined = self.chunk.add_constant(JSValue::undefined());
                 self.chunk.emit(Opcode::LoadConst(undefined));
             }
             Expression::Spread(_) => {
@@ -1747,7 +1759,13 @@ impl Compiler {
             compiler.generator_output = Some("__pixi_generator_values".to_string());
         }
         let function_chunk = compiler.compile_function(Program { body })?;
-        let value = JSValue::Function(Rc::new(function_chunk), param_ids, None, name_id, 0);
+        let value = JSValue::from_function(FunctionData {
+            chunk: Rc::new(function_chunk),
+            params: param_ids,
+            env: None,
+            name: name_id,
+            identity: 0,
+        });
         let index = self.chunk.add_constant(value);
         self.chunk.emit(Opcode::CreateFunction(index));
         Ok(())
@@ -1795,7 +1813,7 @@ impl Compiler {
                         }
                         item => {
                             self.chunk.emit(Opcode::LoadVar(source_name));
-                            let index = self.chunk.add_constant(JSValue::Number(index as f64));
+                            let index = self.chunk.add_constant(JSValue::from_number(index as f64));
                             self.chunk.emit(Opcode::LoadConst(index));
                             self.chunk.emit(Opcode::GetProperty);
                             self.store_binding_pattern(item, define)?;
@@ -1818,7 +1836,7 @@ impl Compiler {
                     }
                     excluded.push(self.intern_name(key)?);
                     self.chunk.emit(Opcode::LoadVar(source_name));
-                    let key = self.chunk.add_constant(JSValue::String(key.clone()));
+                    let key = self.chunk.add_constant(JSValue::from_string(key.clone()));
                     self.chunk.emit(Opcode::LoadConst(key));
                     self.chunk.emit(Opcode::GetProperty);
                     self.store_binding_pattern(item, define)?;
@@ -1831,7 +1849,7 @@ impl Compiler {
                 let source_name = self.intern_name(&source)?;
                 self.chunk.emit(Opcode::DefineVar(source_name));
                 self.chunk.emit(Opcode::LoadVar(source_name));
-                let undefined = self.chunk.add_constant(JSValue::Undefined);
+                let undefined = self.chunk.add_constant(JSValue::undefined());
                 self.chunk.emit(Opcode::LoadConst(undefined));
                 self.chunk.emit(Opcode::StrictEq);
                 let keep_value = self.chunk.code.len();
@@ -1852,19 +1870,21 @@ impl Compiler {
         self.chunk.emit(Opcode::LoadVar(name));
         let prototype = self
             .chunk
-            .add_constant(JSValue::String("prototype".to_string()));
+            .add_constant(JSValue::from_string("prototype".to_string()));
         self.chunk.emit(Opcode::LoadConst(prototype));
         self.chunk.emit(Opcode::GetProperty);
         let slice = self
             .chunk
-            .add_constant(JSValue::String("slice".to_string()));
+            .add_constant(JSValue::from_string("slice".to_string()));
         self.chunk.emit(Opcode::LoadConst(slice));
         self.chunk.emit(Opcode::GetProperty);
-        let call = self.chunk.add_constant(JSValue::String("call".to_string()));
+        let call = self
+            .chunk
+            .add_constant(JSValue::from_string("call".to_string()));
         self.chunk.emit(Opcode::LoadConst(call));
         let name = self.intern_name(source)?;
         self.chunk.emit(Opcode::LoadVar(name));
-        let start = self.chunk.add_constant(JSValue::Number(start as f64));
+        let start = self.chunk.add_constant(JSValue::from_number(start as f64));
         self.chunk.emit(Opcode::LoadConst(start));
         self.chunk.emit(Opcode::CallMethod(2));
         Ok(())
@@ -1924,7 +1944,7 @@ impl Compiler {
                 self.chunk.emit(Opcode::LoadVar(class_binding_name));
                 let prototype = self
                     .chunk
-                    .add_constant(JSValue::String("prototype".to_string()));
+                    .add_constant(JSValue::from_string("prototype".to_string()));
                 self.chunk.emit(Opcode::LoadConst(prototype));
                 self.chunk.emit(Opcode::GetProperty);
             }
@@ -1947,7 +1967,7 @@ impl Compiler {
             } else {
                 let key = self
                     .chunk
-                    .add_constant(JSValue::String(method.name.clone()));
+                    .add_constant(JSValue::from_string(method.name.clone()));
                 self.chunk.emit(Opcode::LoadConst(key));
             }
             if let Some(opcode) = accessor_opcode {
@@ -1981,19 +2001,19 @@ impl Compiler {
         self.chunk.emit(Opcode::LoadVar(name));
         let method = self
             .chunk
-            .add_constant(JSValue::String("setPrototypeOf".to_string()));
+            .add_constant(JSValue::from_string("setPrototypeOf".to_string()));
         self.chunk.emit(Opcode::LoadConst(method));
         if prototype {
             self.chunk.emit(Opcode::LoadVar(class_binding_name));
             let property = self
                 .chunk
-                .add_constant(JSValue::String("prototype".to_string()));
+                .add_constant(JSValue::from_string("prototype".to_string()));
             self.chunk.emit(Opcode::LoadConst(property));
             self.chunk.emit(Opcode::GetProperty);
             self.chunk.emit(Opcode::LoadVar(super_binding_name));
             let property = self
                 .chunk
-                .add_constant(JSValue::String("prototype".to_string()));
+                .add_constant(JSValue::from_string("prototype".to_string()));
             self.chunk.emit(Opcode::LoadConst(property));
             self.chunk.emit(Opcode::GetProperty);
         } else {
@@ -2187,19 +2207,41 @@ impl Default for Compiler {
 fn jsvalue_hash(value: &JSValue) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = rustc_hash::FxHasher::default();
-    std::mem::discriminant(value).hash(&mut hasher);
-    match value {
-        JSValue::Undefined | JSValue::Null => {}
-        JSValue::Boolean(b) => b.hash(&mut hasher),
-        JSValue::Number(n) => n.to_bits().hash(&mut hasher),
-        JSValue::BigInt(n) => n.hash(&mut hasher),
-        JSValue::String(s) => s.hash(&mut hasher),
-        JSValue::Object(o) => (Rc::as_ptr(o) as usize as u64).hash(&mut hasher),
-        JSValue::Function(chunk, _, _, _, id) | JSValue::ArrowFunction(chunk, _, _, _, id) => {
-            (*id ^ chunk.identity.rotate_left(17)).hash(&mut hasher);
+    let kind = value.clone().kind();
+    std::mem::discriminant(&kind).hash(&mut hasher);
+    match kind {
+        JsValueKind::Undefined | JsValueKind::Null => {}
+        JsValueKind::Boolean => value.clone().as_boolean().unwrap().hash(&mut hasher),
+        JsValueKind::Number => value
+            .clone()
+            .as_number()
+            .unwrap()
+            .to_bits()
+            .hash(&mut hasher),
+        JsValueKind::BigInt => value.as_bigint().unwrap().hash(&mut hasher),
+        JsValueKind::String => value.as_string().unwrap().hash(&mut hasher),
+        JsValueKind::Object => {
+            let object = value.as_object().unwrap();
+            (Rc::as_ptr(&object) as usize as u64).hash(&mut hasher);
         }
-        JSValue::NativeFunction(f) => (*f as usize as u64).hash(&mut hasher),
-        JSValue::BoundFunction(b) => b.identity.hash(&mut hasher),
+        JsValueKind::Function => {
+            let f = value.as_function().unwrap();
+            (f.identity ^ f.chunk.identity.rotate_left(17)).hash(&mut hasher);
+        }
+        JsValueKind::ArrowFunction => {
+            let f = value.as_arrow_function().unwrap();
+            (f.identity ^ f.chunk.identity.rotate_left(17)).hash(&mut hasher);
+        }
+        JsValueKind::NativeFunction => {
+            (value.as_native_function().unwrap() as usize as u64).hash(&mut hasher);
+        }
+        JsValueKind::BoundFunction => {
+            value
+                .as_bound_function()
+                .unwrap()
+                .identity
+                .hash(&mut hasher);
+        }
     }
     hasher.finish()
 }

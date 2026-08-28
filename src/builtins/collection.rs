@@ -15,8 +15,12 @@ const ITERATOR_KIND: &str = "__collection_iterator_kind";
 
 fn receiver(args: &[JSValue], method: &str) -> JSResult<Rc<RefCell<JSObject>>> {
     match args.first() {
-        Some(JSValue::Object(object)) if object.borrow().has_own_property(COUNT) => {
-            Ok(Rc::clone(object))
+        Some(value) if value.clone().is_object() => {
+            let object = value.as_object().unwrap();
+            if object.borrow().has_own_property(COUNT) {
+                return Ok(object);
+            }
+            Err(JSError::TypeError(format!("{method}: invalid receiver")))
         }
         _ => Err(JSError::TypeError(format!("{method}: invalid receiver"))),
     }
@@ -30,39 +34,38 @@ fn collection_size(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let collection = receiver(&args, "collection.size")?;
     let size = (0..count(&collection))
         .filter(|index| {
-            matches!(
-                collection
-                    .borrow()
-                    .get(&format!("__collection_present_{index}")),
-                JSValue::Boolean(true)
-            )
+            collection
+                .borrow()
+                .get(&format!("__collection_present_{index}"))
+                .as_boolean()
+                == Some(true)
         })
         .count();
-    Ok(JSValue::Number(size as f64))
+    Ok(JSValue::from_number(size as f64))
 }
 
 fn size_property() -> Property {
     Property {
-        value: JSValue::Undefined,
+        value: JSValue::undefined(),
         enumerable: false,
         writable: false,
         configurable: true,
-        getter: Some(JSValue::NativeFunction(collection_size)),
+        getter: Some(JSValue::from_native_function(collection_size)),
         setter: None,
     }
 }
 
 fn find(object: &Rc<RefCell<JSObject>>, key: &JSValue) -> Option<usize> {
     (0..count(object)).find(|index| {
-        matches!(
-            object
-                .borrow()
-                .get(&format!("__collection_present_{index}")),
-            JSValue::Boolean(true)
-        ) && object
+        object
             .borrow()
-            .get(&format!("__collection_key_{index}"))
-            .strict_equals(key)
+            .get(&format!("__collection_present_{index}"))
+            .as_boolean()
+            == Some(true)
+            && object
+                .borrow()
+                .get(&format!("__collection_key_{index}"))
+                .strict_equals(key)
     })
 }
 
@@ -79,27 +82,30 @@ fn insert(object: &Rc<RefCell<JSObject>>, key: JSValue, value: JSValue) {
     object.set(format!("__collection_value_{index}"), value);
     object.set(
         format!("__collection_present_{index}"),
-        JSValue::Boolean(true),
+        JSValue::from_bool(true),
     );
-    object.set(COUNT.to_string(), JSValue::Number((index + 1) as f64));
+    object.set(COUNT.to_string(), JSValue::from_number((index + 1) as f64));
 }
 
 fn create_collection(vm: &VM, constructor_name: &str) -> Rc<RefCell<JSObject>> {
-    let prototype = match vm.global_object.borrow().get(constructor_name) {
-        JSValue::Object(constructor) => match constructor.borrow().get("prototype") {
-            JSValue::Object(prototype) => Some(prototype),
-            _ => None,
-        },
-        _ => None,
-    };
+    let prototype = vm
+        .global_object
+        .borrow()
+        .get(constructor_name)
+        .as_object()
+        .and_then(|constructor| {
+            let proto = constructor.borrow().get("prototype");
+            proto.as_object()
+        });
     let mut object = JSObject::with_prototype(prototype);
-    object.set(COUNT.to_string(), JSValue::Number(0.0));
+    object.set(COUNT.to_string(), JSValue::from_number(0.0));
     Rc::new(RefCell::new(object))
 }
 
 fn iterable_values(vm: &mut VM, value: &JSValue) -> JSResult<Vec<JSValue>> {
-    let JSValue::Object(object) = value else {
-        return Ok(Vec::new());
+    let object = match value.as_object() {
+        Some(o) => o,
+        None => return Ok(Vec::new()),
     };
     let length = object.borrow().get("length").to_number();
     if length.is_finite() && length >= 0.0 {
@@ -112,36 +118,26 @@ fn iterable_values(vm: &mut VM, value: &JSValue) -> JSResult<Vec<JSValue>> {
         return Ok(Vec::new());
     }
     let iterator = vm.call(iterator_method, value.clone(), Vec::new())?;
-    let JSValue::Object(iterator_object) = &iterator else {
-        return Err(JSError::TypeError(
-            "collection iterator must return an object".to_string(),
-        ));
-    };
+    let iterator_object = iterator.as_object().ok_or_else(|| {
+        JSError::TypeError("collection iterator must return an object".to_string())
+    })?;
     let next = iterator_object.borrow().get("next");
     let mut values = Vec::new();
     loop {
         let result = vm.call(next.clone(), iterator.clone(), Vec::new())?;
-        let JSValue::Object(result) = result else {
-            return Err(JSError::TypeError(
-                "collection iterator result must be an object".to_string(),
-            ));
-        };
-        if result.borrow().get("done").to_boolean() {
+        let result_object = result.as_object().ok_or_else(|| {
+            JSError::TypeError("collection iterator result must be an object".to_string())
+        })?;
+        if result_object.borrow().get("done").to_boolean() {
             break;
         }
-        values.push(result.borrow().get("value"));
+        values.push(result_object.borrow().get("value"));
     }
     Ok(values)
 }
 
 fn is_callable(value: &JSValue) -> bool {
-    matches!(
-        value,
-        JSValue::Function(..)
-            | JSValue::ArrowFunction(..)
-            | JSValue::NativeFunction(..)
-            | JSValue::BoundFunction(..)
-    )
+    value.is_callable()
 }
 
 fn set_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -151,51 +147,53 @@ fn set_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
             insert(&set, value.clone(), value);
         }
     }
-    Ok(JSValue::Object(set))
+    Ok(JSValue::from_object(set))
 }
 
 fn set_add(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let set = receiver(&args, "Set.add")?;
-    let value = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let value = args.get(1).cloned().unwrap_or(JSValue::undefined());
     insert(&set, value.clone(), value);
-    Ok(JSValue::Object(set))
+    Ok(JSValue::from_object(set))
 }
 
 fn collection_has(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let collection = receiver(&args, "collection.has")?;
-    let key = args.get(1).cloned().unwrap_or(JSValue::Undefined);
-    Ok(JSValue::Boolean(find(&collection, &key).is_some()))
+    let key = args.get(1).cloned().unwrap_or(JSValue::undefined());
+    Ok(JSValue::from_bool(find(&collection, &key).is_some()))
 }
 
 fn collection_delete(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let collection = receiver(&args, "collection.delete")?;
-    let key = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let key = args.get(1).cloned().unwrap_or(JSValue::undefined());
     let Some(index) = find(&collection, &key) else {
-        return Ok(JSValue::Boolean(false));
+        return Ok(JSValue::from_bool(false));
     };
     collection.borrow_mut().set(
         format!("__collection_present_{index}"),
-        JSValue::Boolean(false),
+        JSValue::from_bool(false),
     );
-    Ok(JSValue::Boolean(true))
+    Ok(JSValue::from_bool(true))
 }
 
 fn set_for_each(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let set = receiver(&args, "Set.forEach")?;
-    let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
-    if matches!(&callback, JSValue::Undefined | JSValue::Null) {
+    let callback = args.get(1).cloned().unwrap_or(JSValue::undefined());
+    if callback.clone().is_undefined() || callback.clone().is_null() {
         return Err(crate::error::JSError::TypeError(
             "Set.prototype.forEach: callback is not callable".to_string(),
         ));
     }
-    let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
-    let set_value = JSValue::Object(Rc::clone(&set));
+    let this_arg = args.get(2).cloned().unwrap_or(JSValue::undefined());
+    let set_value = JSValue::from_object(Rc::clone(&set));
     let mut index = 0;
     while index < count(&set) {
-        if matches!(
-            set.borrow().get(&format!("__collection_present_{index}")),
-            JSValue::Boolean(true)
-        ) {
+        if set
+            .borrow()
+            .get(&format!("__collection_present_{index}"))
+            .as_boolean()
+            == Some(true)
+        {
             let value = set.borrow().get(&format!("__collection_key_{index}"));
             vm.call(
                 callback.clone(),
@@ -205,25 +203,27 @@ fn set_for_each(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         }
         index += 1;
     }
-    Ok(JSValue::Undefined)
+    Ok(JSValue::undefined())
 }
 
 fn map_for_each(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let map = receiver(&args, "Map.forEach")?;
-    let callback = args.get(1).cloned().unwrap_or(JSValue::Undefined);
-    if matches!(&callback, JSValue::Undefined | JSValue::Null) {
+    let callback = args.get(1).cloned().unwrap_or(JSValue::undefined());
+    if callback.clone().is_undefined() || callback.clone().is_null() {
         return Err(crate::error::JSError::TypeError(
             "Map.prototype.forEach: callback is not callable".to_string(),
         ));
     }
-    let this_arg = args.get(2).cloned().unwrap_or(JSValue::Undefined);
-    let map_value = JSValue::Object(Rc::clone(&map));
+    let this_arg = args.get(2).cloned().unwrap_or(JSValue::undefined());
+    let map_value = JSValue::from_object(Rc::clone(&map));
     let mut index = 0;
     while index < count(&map) {
-        if matches!(
-            map.borrow().get(&format!("__collection_present_{index}")),
-            JSValue::Boolean(true)
-        ) {
+        if map
+            .borrow()
+            .get(&format!("__collection_present_{index}"))
+            .as_boolean()
+            == Some(true)
+        {
             let key = map.borrow().get(&format!("__collection_key_{index}"));
             let value = map.borrow().get(&format!("__collection_value_{index}"));
             vm.call(
@@ -234,48 +234,52 @@ fn map_for_each(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         }
         index += 1;
     }
-    Ok(JSValue::Undefined)
+    Ok(JSValue::undefined())
 }
 
 fn make_iterator(collection: Rc<RefCell<JSObject>>, kind: &str) -> JSValue {
     let mut iterator = JSObject::new();
-    iterator.set(ITERATOR_COLLECTION.to_string(), JSValue::Object(collection));
-    iterator.set(ITERATOR_INDEX.to_string(), JSValue::Number(0.0));
-    iterator.set(ITERATOR_KIND.to_string(), JSValue::String(kind.to_string()));
+    iterator.set(
+        ITERATOR_COLLECTION.to_string(),
+        JSValue::from_object(collection),
+    );
+    iterator.set(ITERATOR_INDEX.to_string(), JSValue::from_number(0.0));
+    iterator.set(
+        ITERATOR_KIND.to_string(),
+        JSValue::from_string(kind.to_string()),
+    );
     iterator.set(
         "next".to_string(),
-        JSValue::NativeFunction(collection_iterator_next),
+        JSValue::from_native_function(collection_iterator_next),
     );
     iterator.set(
         "@@iterator".to_string(),
-        JSValue::NativeFunction(iterator_identity),
+        JSValue::from_native_function(iterator_identity),
     );
-    JSValue::Object(Rc::new(RefCell::new(iterator)))
+    JSValue::from_object(Rc::new(RefCell::new(iterator)))
 }
 
 fn iterator_identity(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(args.first().cloned().unwrap_or(JSValue::Undefined))
+    Ok(args.first().cloned().unwrap_or(JSValue::undefined()))
 }
 
 fn iterator_result(value: JSValue, done: bool) -> JSValue {
     let mut result = JSObject::new();
     result.set("value".to_string(), value);
-    result.set("done".to_string(), JSValue::Boolean(done));
-    JSValue::Object(Rc::new(RefCell::new(result)))
+    result.set("done".to_string(), JSValue::from_bool(done));
+    JSValue::from_object(Rc::new(RefCell::new(result)))
 }
 
 fn collection_iterator_next(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let Some(JSValue::Object(iterator)) = args.first() else {
-        return Err(JSError::TypeError(
-            "collection iterator next: invalid receiver".to_string(),
-        ));
-    };
-    let value = iterator_step(vm, iterator)?.ok_or_else(|| {
+    let iterator = args.first().and_then(|v| v.as_object()).ok_or_else(|| {
+        JSError::TypeError("collection iterator next: invalid receiver".to_string())
+    })?;
+    let value = iterator_step(vm, &iterator)?.ok_or_else(|| {
         JSError::TypeError("collection iterator next: invalid receiver".to_string())
     })?;
     Ok(match value {
         Some(value) => iterator_result(value, false),
-        None => iterator_result(JSValue::Undefined, true),
+        None => iterator_result(JSValue::undefined(), true),
     })
 }
 
@@ -283,22 +287,23 @@ pub(crate) fn iterator_step(
     vm: &VM,
     iterator: &Rc<RefCell<JSObject>>,
 ) -> JSResult<Option<Option<JSValue>>> {
-    let JSValue::Object(collection) = iterator.borrow().get(ITERATOR_COLLECTION) else {
-        return Ok(None);
+    let collection = match iterator.borrow().get(ITERATOR_COLLECTION).as_object() {
+        Some(o) => o,
+        None => return Ok(None),
     };
     let kind = iterator.borrow().get(ITERATOR_KIND).to_string();
     let mut index = iterator.borrow().get(ITERATOR_INDEX).to_number() as usize;
     while index < count(&collection) {
         iterator.borrow_mut().set(
             ITERATOR_INDEX.to_string(),
-            JSValue::Number((index + 1) as f64),
+            JSValue::from_number((index + 1) as f64),
         );
-        if matches!(
-            collection
-                .borrow()
-                .get(&format!("__collection_present_{index}")),
-            JSValue::Boolean(true)
-        ) {
+        if collection
+            .borrow()
+            .get(&format!("__collection_present_{index}"))
+            .as_boolean()
+            == Some(true)
+        {
             let key = collection
                 .borrow()
                 .get(&format!("__collection_key_{index}"));
@@ -310,7 +315,7 @@ pub(crate) fn iterator_step(
                 "map-value" | "set-value" => value,
                 "map-entry" => vm.array_from_values(vec![key, value]),
                 "set-entry" => vm.array_from_values(vec![key.clone(), key]),
-                _ => JSValue::Undefined,
+                _ => JSValue::undefined(),
             };
             return Ok(Some(Some(value)));
         }
@@ -343,76 +348,77 @@ fn map_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let map = create_collection(vm, "Map");
     if let Some(iterable) = args.get(1) {
         for entry in iterable_values(vm, iterable)? {
-            let JSValue::Object(entry) = entry else {
-                return Err(JSError::TypeError(
-                    "Map constructor entry must be array-like".to_string(),
-                ));
-            };
-            insert(&map, entry.borrow().get("0"), entry.borrow().get("1"));
+            let entry_object = entry.as_object().ok_or_else(|| {
+                JSError::TypeError("Map constructor entry must be array-like".to_string())
+            })?;
+            insert(
+                &map,
+                entry_object.borrow().get("0"),
+                entry_object.borrow().get("1"),
+            );
         }
     }
-    Ok(JSValue::Object(map))
+    Ok(JSValue::from_object(map))
 }
 
 fn weak_map_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let map = create_collection(vm, "WeakMap");
     if let Some(iterable) = args.get(1) {
         for entry in iterable_values(vm, iterable)? {
-            let JSValue::Object(entry) = entry else {
-                return Err(JSError::TypeError(
-                    "WeakMap constructor entry must be array-like".to_string(),
-                ));
-            };
-            let key = entry.borrow().get("0");
+            let entry_object = entry.as_object().ok_or_else(|| {
+                JSError::TypeError("WeakMap constructor entry must be array-like".to_string())
+            })?;
+            let key = entry_object.borrow().get("0");
             if !is_weak_key(&key) {
                 return Err(JSError::TypeError(
                     "Invalid value used as weak map key".to_string(),
                 ));
             }
-            insert(&map, key, entry.borrow().get("1"));
+            insert(&map, key, entry_object.borrow().get("1"));
         }
     }
-    Ok(JSValue::Object(map))
+    Ok(JSValue::from_object(map))
 }
 
 fn is_weak_key(value: &JSValue) -> bool {
+    use crate::value::jsvalue::JsValueKind;
     matches!(
-        value,
-        JSValue::Object(..)
-            | JSValue::Function(..)
-            | JSValue::ArrowFunction(..)
-            | JSValue::NativeFunction(..)
-            | JSValue::BoundFunction(..)
+        value.clone().kind(),
+        JsValueKind::Object
+            | JsValueKind::Function
+            | JsValueKind::ArrowFunction
+            | JsValueKind::NativeFunction
+            | JsValueKind::BoundFunction
     )
 }
 
 fn weak_map_set(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let map = receiver(&args, "WeakMap.set")?;
-    let key = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let key = args.get(1).cloned().unwrap_or(JSValue::undefined());
     if !is_weak_key(&key) {
         return Err(JSError::TypeError(
             "Invalid value used as weak map key".to_string(),
         ));
     }
-    let value = args.get(2).cloned().unwrap_or(JSValue::Undefined);
+    let value = args.get(2).cloned().unwrap_or(JSValue::undefined());
     insert(&map, key, value);
-    Ok(JSValue::Object(map))
+    Ok(JSValue::from_object(map))
 }
 
 fn map_set(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let map = receiver(&args, "Map.set")?;
-    let key = args.get(1).cloned().unwrap_or(JSValue::Undefined);
-    let value = args.get(2).cloned().unwrap_or(JSValue::Undefined);
+    let key = args.get(1).cloned().unwrap_or(JSValue::undefined());
+    let value = args.get(2).cloned().unwrap_or(JSValue::undefined());
     insert(&map, key, value);
-    Ok(JSValue::Object(map))
+    Ok(JSValue::from_object(map))
 }
 
 fn map_get(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let map = receiver(&args, "Map.get")?;
-    let key = args.get(1).cloned().unwrap_or(JSValue::Undefined);
+    let key = args.get(1).cloned().unwrap_or(JSValue::undefined());
     Ok(find(&map, &key)
         .map(|index| map.borrow().get(&format!("__collection_value_{index}")))
-        .unwrap_or(JSValue::Undefined))
+        .unwrap_or(JSValue::undefined()))
 }
 
 fn constructor(
@@ -422,11 +428,11 @@ fn constructor(
     let mut constructor = JSObject::new();
     constructor.set(
         "__construct__".to_string(),
-        JSValue::NativeFunction(construct),
+        JSValue::from_native_function(construct),
     );
     constructor.set(
         "prototype".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(prototype))),
+        JSValue::from_object(Rc::new(RefCell::new(prototype))),
     );
     constructor
 }
@@ -435,63 +441,96 @@ fn constructor(
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut set_prototype = JSObject::new();
     set_prototype.define_property("size".to_string(), size_property());
-    set_prototype.set("add".to_string(), JSValue::NativeFunction(set_add));
-    set_prototype.set("has".to_string(), JSValue::NativeFunction(collection_has));
-    set_prototype.set("forEach".to_string(), JSValue::NativeFunction(set_for_each));
-    set_prototype.set("values".to_string(), JSValue::NativeFunction(set_values));
-    set_prototype.set("keys".to_string(), JSValue::NativeFunction(set_values));
-    set_prototype.set("entries".to_string(), JSValue::NativeFunction(set_entries));
+    set_prototype.set("add".to_string(), JSValue::from_native_function(set_add));
+    set_prototype.set(
+        "has".to_string(),
+        JSValue::from_native_function(collection_has),
+    );
+    set_prototype.set(
+        "forEach".to_string(),
+        JSValue::from_native_function(set_for_each),
+    );
+    set_prototype.set(
+        "values".to_string(),
+        JSValue::from_native_function(set_values),
+    );
+    set_prototype.set(
+        "keys".to_string(),
+        JSValue::from_native_function(set_values),
+    );
+    set_prototype.set(
+        "entries".to_string(),
+        JSValue::from_native_function(set_entries),
+    );
     set_prototype.set(
         "@@iterator".to_string(),
-        JSValue::NativeFunction(set_values),
+        JSValue::from_native_function(set_values),
     );
     set_prototype.set(
         "delete".to_string(),
-        JSValue::NativeFunction(collection_delete),
+        JSValue::from_native_function(collection_delete),
     );
     let mut map_prototype = JSObject::new();
     map_prototype.define_property("size".to_string(), size_property());
-    map_prototype.set("set".to_string(), JSValue::NativeFunction(map_set));
-    map_prototype.set("get".to_string(), JSValue::NativeFunction(map_get));
-    map_prototype.set("has".to_string(), JSValue::NativeFunction(collection_has));
-    map_prototype.set("forEach".to_string(), JSValue::NativeFunction(map_for_each));
-    map_prototype.set("keys".to_string(), JSValue::NativeFunction(map_keys));
-    map_prototype.set("values".to_string(), JSValue::NativeFunction(map_values));
-    map_prototype.set("entries".to_string(), JSValue::NativeFunction(map_entries));
+    map_prototype.set("set".to_string(), JSValue::from_native_function(map_set));
+    map_prototype.set("get".to_string(), JSValue::from_native_function(map_get));
+    map_prototype.set(
+        "has".to_string(),
+        JSValue::from_native_function(collection_has),
+    );
+    map_prototype.set(
+        "forEach".to_string(),
+        JSValue::from_native_function(map_for_each),
+    );
+    map_prototype.set("keys".to_string(), JSValue::from_native_function(map_keys));
+    map_prototype.set(
+        "values".to_string(),
+        JSValue::from_native_function(map_values),
+    );
+    map_prototype.set(
+        "entries".to_string(),
+        JSValue::from_native_function(map_entries),
+    );
     map_prototype.set(
         "@@iterator".to_string(),
-        JSValue::NativeFunction(map_entries),
+        JSValue::from_native_function(map_entries),
     );
     map_prototype.set(
         "delete".to_string(),
-        JSValue::NativeFunction(collection_delete),
+        JSValue::from_native_function(collection_delete),
     );
     let mut weak_map_prototype = JSObject::new();
-    weak_map_prototype.set("set".to_string(), JSValue::NativeFunction(weak_map_set));
-    weak_map_prototype.set("get".to_string(), JSValue::NativeFunction(map_get));
-    weak_map_prototype.set("has".to_string(), JSValue::NativeFunction(collection_has));
+    weak_map_prototype.set(
+        "set".to_string(),
+        JSValue::from_native_function(weak_map_set),
+    );
+    weak_map_prototype.set("get".to_string(), JSValue::from_native_function(map_get));
+    weak_map_prototype.set(
+        "has".to_string(),
+        JSValue::from_native_function(collection_has),
+    );
     weak_map_prototype.set(
         "delete".to_string(),
-        JSValue::NativeFunction(collection_delete),
+        JSValue::from_native_function(collection_delete),
     );
 
     global.borrow_mut().set(
         "Set".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(constructor(
+        JSValue::from_object(Rc::new(RefCell::new(constructor(
             set_prototype,
             set_constructor,
         )))),
     );
     global.borrow_mut().set(
         "Map".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(constructor(
+        JSValue::from_object(Rc::new(RefCell::new(constructor(
             map_prototype,
             map_constructor,
         )))),
     );
     global.borrow_mut().set(
         "WeakMap".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(constructor(
+        JSValue::from_object(Rc::new(RefCell::new(constructor(
             weak_map_prototype,
             weak_map_constructor,
         )))),

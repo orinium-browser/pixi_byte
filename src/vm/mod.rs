@@ -8,8 +8,8 @@ use crate::compiler::{BytecodeChunk, Opcode};
 use crate::error::{JSError, JSResult};
 use crate::intern::{FunctionParam, NameId};
 use crate::runtime::{CallFrame, Environment};
-use crate::value::JSValue;
 use crate::value::jsobject::{JSObject, Property};
+use crate::value::jsvalue::{ArrowFunctionData, FunctionData, JSValue, JsValueKind};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use std::any::Any;
@@ -120,38 +120,41 @@ impl VM {
         // builtins を初期化してグローバルに組み込みを登録
         let function_prototype = crate::builtins::Builtins::new().init(&global_rc);
         let object_constructor = global_rc.borrow().get("Object");
-        let object_prototype = match object_constructor {
-            JSValue::Object(constructor) => match constructor.borrow().get("prototype") {
-                JSValue::Object(prototype) => prototype,
-                _ => Rc::new(RefCell::new(JSObject::new())),
-            },
-            _ => Rc::new(RefCell::new(JSObject::new())),
+        let object_prototype = if let Some(constructor) = object_constructor.as_object() {
+            constructor
+                .borrow()
+                .get("prototype")
+                .as_object()
+                .unwrap_or_else(|| Rc::new(RefCell::new(JSObject::new())))
+        } else {
+            Rc::new(RefCell::new(JSObject::new()))
         };
         let string_constructor = global_rc.borrow().get("String");
-        let string_prototype = match string_constructor {
-            JSValue::Object(constructor) => {
-                let prototype = constructor.borrow().get("prototype");
-                match prototype {
-                    JSValue::Object(prototype) => prototype,
-                    _ => Rc::new(RefCell::new(JSObject::new())),
-                }
-            }
-            _ => Rc::new(RefCell::new(JSObject::new())),
+        let string_prototype = if let Some(constructor) = string_constructor.as_object() {
+            constructor
+                .borrow()
+                .get("prototype")
+                .as_object()
+                .unwrap_or_else(|| Rc::new(RefCell::new(JSObject::new())))
+        } else {
+            Rc::new(RefCell::new(JSObject::new()))
         };
         let number_constructor = global_rc.borrow().get("Number");
-        let number_prototype = match number_constructor {
-            JSValue::Object(constructor) => {
-                let prototype = constructor.borrow().get("prototype");
-                match prototype {
-                    JSValue::Object(prototype) => prototype,
-                    _ => Rc::new(RefCell::new(JSObject::new())),
-                }
-            }
-            _ => Rc::new(RefCell::new(JSObject::new())),
+        let number_prototype = if let Some(constructor) = number_constructor.as_object() {
+            constructor
+                .borrow()
+                .get("prototype")
+                .as_object()
+                .unwrap_or_else(|| Rc::new(RefCell::new(JSObject::new())))
+        } else {
+            Rc::new(RefCell::new(JSObject::new()))
         };
 
-        let global_frame =
-            CallFrame::new(Environment::new(), JSValue::Object(global_rc.clone()), None);
+        let global_frame = CallFrame::new(
+            Environment::new(),
+            JSValue::from_object(global_rc.clone()),
+            None,
+        );
 
         Self {
             stack: Vec::new(),
@@ -179,11 +182,11 @@ impl VM {
     /// Creates an Array object connected to the realm's `Array.prototype`.
     pub fn array_from_values(&self, values: Vec<JSValue>) -> JSValue {
         let array = crate::value::JSArray::from_vec(values).to_object();
-        let JSValue::Object(array_object) = &array else {
+        let Some(array_object) = array.as_object() else {
             unreachable!("JSArray must produce an object");
         };
-        if let JSValue::Object(constructor) = self.global_object.borrow().get("Array")
-            && let JSValue::Object(prototype) = constructor.borrow().get("prototype")
+        if let Some(constructor) = self.global_object.borrow().get("Array").as_object()
+            && let Some(prototype) = constructor.borrow().get("prototype").as_object()
         {
             array_object.borrow_mut().set_prototype(Some(prototype));
         }
@@ -215,7 +218,7 @@ impl VM {
         properties.define_property(
             "length".to_string(),
             Property {
-                value: JSValue::Number(length as f64),
+                value: JSValue::from_number(length as f64),
                 enumerable: false,
                 writable: false,
                 configurable: true,
@@ -226,7 +229,7 @@ impl VM {
         properties.define_property(
             "name".to_string(),
             Property {
-                value: JSValue::String(name.unwrap_or("").to_string()),
+                value: JSValue::from_string(name.unwrap_or("").to_string()),
                 enumerable: false,
                 writable: false,
                 configurable: true,
@@ -240,7 +243,7 @@ impl VM {
             properties.define_property(
                 "prototype".to_string(),
                 Property {
-                    value: JSValue::Object(Rc::new(RefCell::new(prototype))),
+                    value: JSValue::from_object(Rc::new(RefCell::new(prototype))),
                     enumerable: false,
                     writable: true,
                     configurable: false,
@@ -356,7 +359,7 @@ impl VM {
             }
         }
 
-        Ok(self.stack.pop().unwrap_or(JSValue::Undefined))
+        Ok(self.stack.pop().unwrap_or(JSValue::undefined()))
     }
 
     fn redirect_exception(
@@ -373,7 +376,7 @@ impl VM {
         if let Some(catch_target) = handler.catch_target {
             let value = match &error {
                 JSError::Thrown(value) => value.clone(),
-                _ => JSValue::String(error.to_string()),
+                _ => JSValue::from_string(error.to_string()),
             };
             self.stack.push(value);
             *pc = catch_target;
@@ -430,12 +433,16 @@ impl VM {
                         if is_global {
                             let intern = chunk.intern.borrow();
                             let name_str = intern.name(*name);
-                            self.global_object.borrow_mut().set(name_str.to_string(), value);
+                            self.global_object
+                                .borrow_mut()
+                                .set(name_str.to_string(), value);
                         } else {
                             let intern = chunk.intern.borrow();
                             let name_str = intern.name(*name);
                             if self.global_object.borrow().has_property(name_str) {
-                                self.global_object.borrow_mut().set(name_str.to_string(), value);
+                                self.global_object
+                                    .borrow_mut()
+                                    .set(name_str.to_string(), value);
                             } else {
                                 self.current_env().borrow().define(name.clone(), value);
                             }
@@ -451,7 +458,9 @@ impl VM {
                 if is_global {
                     let intern = chunk.intern.borrow();
                     let name_str = intern.name(*name);
-                    self.global_object.borrow_mut().set(name_str.to_string(), value);
+                    self.global_object
+                        .borrow_mut()
+                        .set(name_str.to_string(), value);
                 } else {
                     self.current_env().borrow().define(name.clone(), value);
                 }
@@ -462,8 +471,10 @@ impl VM {
                 if is_global {
                     let intern = chunk.intern.borrow();
                     let name_str = intern.name(*name);
-                    if matches!(self.global_object.borrow().get(name_str), JSValue::Undefined) {
-                        self.global_object.borrow_mut().set(name_str.to_string(), value);
+                    if self.global_object.borrow().get(name_str).is_undefined() {
+                        self.global_object
+                            .borrow_mut()
+                            .set(name_str.to_string(), value);
                     }
                 } else {
                     self.current_env()
@@ -486,7 +497,7 @@ impl VM {
                     let value = current
                         .borrow()
                         .get_lexical(*name)
-                        .unwrap_or(JSValue::Undefined);
+                        .unwrap_or(JSValue::undefined());
                     next.define(name.clone(), value);
                 }
                 self.current_frame_mut().env = Rc::new(RefCell::new(next));
@@ -536,34 +547,43 @@ impl VM {
             Opcode::Neg => {
                 let value = self.pop()?;
                 let value = self.to_primitive(value, PrimitiveHint::Number)?;
-                self.stack.push(match value {
-                    JSValue::BigInt(value) => JSValue::BigInt(-value),
-                    value => JSValue::Number(-value.to_number()),
+                self.stack.push(match value.kind() {
+                    JsValueKind::BigInt => {
+                        let v = value.as_bigint().unwrap();
+                        JSValue::from_bigint(-v.clone())
+                    }
+                    _ => JSValue::from_number(-value.to_number()),
                 });
             }
             Opcode::Not => {
                 let value = self.pop()?;
-                self.stack.push(JSValue::Boolean(!value.to_boolean()));
+                self.stack.push(JSValue::from_bool(!value.to_boolean()));
             }
             Opcode::BitNot => {
                 let value = self.pop()?;
                 let value = self.to_primitive(value, PrimitiveHint::Number)?;
-                self.stack.push(match value {
-                    JSValue::BigInt(value) => JSValue::BigInt(!value),
-                    value => JSValue::Number((!to_int32(value.to_number())) as f64),
+                self.stack.push(match value.kind() {
+                    JsValueKind::BigInt => {
+                        let v = value.as_bigint().unwrap();
+                        JSValue::from_bigint(!v.clone())
+                    }
+                    _ => JSValue::from_number((!to_int32(value.to_number())) as f64),
                 });
             }
             Opcode::Increment | Opcode::Decrement => {
                 let value = self.pop()?;
                 let value = self.to_primitive(value, PrimitiveHint::Number)?;
                 let increment = matches!(opcode, Opcode::Increment);
-                self.stack.push(match value {
-                    JSValue::BigInt(value) => JSValue::BigInt(if increment {
-                        value + BigInt::from(1)
-                    } else {
-                        value - BigInt::from(1)
-                    }),
-                    value => JSValue::Number(if increment {
+                self.stack.push(match value.kind() {
+                    JsValueKind::BigInt => {
+                        let v = value.as_bigint().unwrap();
+                        JSValue::from_bigint(if increment {
+                            v + BigInt::from(1)
+                        } else {
+                            v - BigInt::from(1)
+                        })
+                    }
+                    _ => JSValue::from_number(if increment {
                         value.to_number() + 1.0
                     } else {
                         value.to_number() - 1.0
@@ -583,11 +603,11 @@ impl VM {
             Opcode::In => {
                 let object = self.pop()?;
                 let key = self.pop()?.to_string();
-                let object = match &object {
-                    JSValue::Object(object) => Some(Rc::clone(object)),
-                    JSValue::Function(..)
-                    | JSValue::ArrowFunction(..)
-                    | JSValue::BoundFunction(..) => self.user_function_object(&object),
+                let object = match &object.kind() {
+                    JsValueKind::Object => Some(Rc::clone(&object.as_object().unwrap())),
+                    JsValueKind::Function
+                    | JsValueKind::ArrowFunction
+                    | JsValueKind::BoundFunction => self.user_function_object(&object),
                     _ => None,
                 };
                 let Some(object) = object else {
@@ -596,14 +616,17 @@ impl VM {
                     ));
                 };
                 let contains = object.borrow().has_property(&key);
-                self.stack.push(JSValue::Boolean(contains));
+                self.stack.push(JSValue::from_bool(contains));
             }
             Opcode::Instanceof => {
                 let constructor = self.pop()?;
                 let value = self.pop()?;
-                let constructor_object = match &constructor {
-                    JSValue::Object(object) => Some(Rc::clone(object)),
-                    JSValue::Function(..) => self.user_function_object(&constructor),
+                let constructor_object = match constructor.kind() {
+                    JsValueKind::Object => {
+                        let object = constructor.as_object().unwrap();
+                        Some(object)
+                    }
+                    JsValueKind::Function => self.user_function_object(&constructor),
                     _ => None,
                 };
                 let Some(constructor_object) = constructor_object else {
@@ -615,32 +638,26 @@ impl VM {
                 let host_has_instance = constructor_object
                     .borrow()
                     .get(crate::value::jsobject::HOST_HAS_INSTANCE);
-                if matches!(
-                    &host_has_instance,
-                    JSValue::Function(..)
-                        | JSValue::ArrowFunction(..)
-                        | JSValue::NativeFunction(..)
-                        | JSValue::BoundFunction(..)
-                ) {
+                if host_has_instance.is_callable() && !host_has_instance.is_object() {
                     let result = self.call(host_has_instance, constructor.clone(), vec![value])?;
-                    self.stack.push(JSValue::Boolean(result.to_boolean()));
+                    self.stack.push(JSValue::from_bool(result.to_boolean()));
                     return Ok(ControlFlow::Continue);
                 }
 
                 let regexp_constructor = self.global_object.borrow().get("RegExp");
-                if let JSValue::Object(regexp_constructor) = regexp_constructor
+                if let Some(regexp_constructor) = regexp_constructor.as_object()
                     && Rc::ptr_eq(&constructor_object, &regexp_constructor)
                 {
                     let is_regexp = matches!(
                         &value,
-                        JSValue::Object(object) if crate::builtins::regexp::is_regexp(object)
+                        JsValueKind::Object(object) if crate::builtins::regexp::is_regexp(object)
                     );
-                    self.stack.push(JSValue::Boolean(is_regexp));
+                    self.stack.push(JSValue::from_bool(is_regexp));
                     return Ok(ControlFlow::Continue);
                 }
 
-                let JSValue::Object(target_prototype) =
-                    constructor_object.borrow().get("prototype")
+                let Some(target_prototype) =
+                    constructor_object.borrow().get("prototype").as_object()
                 else {
                     let keys = constructor_object.borrow().keys();
                     let stack = self
@@ -653,8 +670,8 @@ impl VM {
                         "constructor has a non-object prototype (own properties: {keys:?}, JS stack: {stack})"
                     )));
                 };
-                let JSValue::Object(object) = value else {
-                    self.stack.push(JSValue::Boolean(false));
+                let Some(object) = value.as_object() else {
+                    self.stack.push(JSValue::from_bool(false));
                     return Ok(ControlFlow::Continue);
                 };
                 let mut prototype = object.borrow().get_prototype();
@@ -666,7 +683,7 @@ impl VM {
                     }
                     prototype = current.borrow().get_prototype();
                 }
-                self.stack.push(JSValue::Boolean(matches));
+                self.stack.push(JSValue::from_bool(matches));
             }
 
             // 論理演算
@@ -702,7 +719,7 @@ impl VM {
                 let a = self.pop()?;
                 let a = self.to_primitive(a, PrimitiveHint::Number)?;
                 let b = self.to_primitive(b, PrimitiveHint::Number)?;
-                if matches!(a, JSValue::BigInt(_)) || matches!(b, JSValue::BigInt(_)) {
+                if a.is_bigint() || b.is_bigint() {
                     return Err(JSError::TypeError(
                         "BigInts have no unsigned right shift".into(),
                     ));
@@ -710,7 +727,7 @@ impl VM {
                 let a_u32 = to_uint32(a.to_number());
                 let b_u32 = to_uint32(b.to_number());
                 self.stack
-                    .push(JSValue::Number((a_u32 >> (b_u32 & 0x1f)) as f64));
+                    .push(JSValue::from_number((a_u32 >> (b_u32 & 0x1f)) as f64));
             }
 
             // 配列・オブジェクト操作
@@ -722,7 +739,8 @@ impl VM {
                 use std::cell::RefCell;
                 use std::rc::Rc;
                 let obj = JSObject::with_prototype(Some(Rc::clone(&self.object_prototype)));
-                self.stack.push(JSValue::Object(Rc::new(RefCell::new(obj))));
+                self.stack
+                    .push(JSValue::from_object(Rc::new(RefCell::new(obj))));
             }
             Opcode::NewRegExp(pattern, flags) => {
                 self.stack
@@ -732,8 +750,9 @@ impl VM {
                 let key = self.pop()?;
                 let obj = self.pop()?;
 
-                match &obj {
-                    JSValue::Object(obj_ref) => {
+                match &obj.kind() {
+                    JsValueKind::Object => {
+                        let obj_ref = obj.as_object().unwrap();
                         let key_str = key.to_string();
 
                         let maybe_prop = { obj_ref.borrow().get_property_descriptor(&key_str) };
@@ -751,7 +770,7 @@ impl VM {
                             return Ok(ControlFlow::Continue);
                         }
 
-                        if let Some(prop) = inherited_property_descriptor(obj_ref, &key_str) {
+                        if let Some(prop) = inherited_property_descriptor(&obj_ref, &key_str) {
                             if let Some(getter) = prop.getter {
                                 let result = self.call(getter, obj.clone(), vec![])?;
                                 self.stack.push(result);
@@ -767,13 +786,7 @@ impl VM {
                                 .get(crate::value::jsobject::HOST_GET_PROPERTY)
                         };
 
-                        if matches!(
-                            &host_getter,
-                            JSValue::Function(..)
-                                | JSValue::ArrowFunction(..)
-                                | JSValue::NativeFunction(..)
-                                | JSValue::BoundFunction(..)
-                        ) {
+                        if host_getter.is_callable() && !host_getter.is_object() {
                             let result = self.call(host_getter, obj.clone(), vec![key.clone()])?;
                             self.stack.push(result);
 
@@ -786,13 +799,13 @@ impl VM {
                                 object.get(&key_str)
                             } else {
                                 drop(object);
-                                self.object_fallback_property(obj_ref, &key_str)
+                                self.object_fallback_property(&obj_ref, &key_str)
                             }
                         };
 
                         self.stack.push(value);
                     }
-                    JSValue::Function(..) | JSValue::ArrowFunction(..) => {
+                    JsValueKind::Function | JsValueKind::ArrowFunction => {
                         let key_str = key.to_string();
                         let object = self.user_function_object(&obj);
                         if let Some(object) = object {
@@ -809,35 +822,36 @@ impl VM {
                             self.stack.push(value);
                         }
                     }
-                    JSValue::NativeFunction(..) => {
+                    JsValueKind::NativeFunction => {
                         let key_str = key.to_string();
                         let value = self.function_prototype.borrow().get(&key_str);
                         self.stack.push(value);
                     }
-                    JSValue::String(string) => {
+                    JsValueKind::String => {
+                        let string = obj.as_string().unwrap();
                         let key = key.to_string();
                         if key == "length" {
                             self.stack
-                                .push(JSValue::Number(string.encode_utf16().count() as f64));
+                                .push(JSValue::from_number(string.encode_utf16().count() as f64));
                         } else if let Ok(index) = key.parse::<usize>() {
                             let value = string
                                 .chars()
                                 .nth(index)
-                                .map(|character| JSValue::String(character.to_string()))
-                                .unwrap_or(JSValue::Undefined);
+                                .map(|character| JSValue::from_string(character.to_string()))
+                                .unwrap_or(JSValue::undefined());
                             self.stack.push(value);
                         } else {
                             let value = self.string_prototype.borrow().get(&key);
                             self.stack.push(value);
                         }
                     }
-                    JSValue::Number(_) => {
+                    JsValueKind::Number => {
                         let key = key.to_string();
                         let value = self.number_prototype.borrow().get(&key);
                         self.stack.push(value);
                     }
                     _ => {
-                        self.stack.push(JSValue::Undefined);
+                        self.stack.push(JSValue::undefined());
                     }
                 }
             }
@@ -859,9 +873,9 @@ impl VM {
             Opcode::DeleteProperty => {
                 let key = self.pop()?.to_string();
                 let object = self.pop()?;
-                let object = match &object {
-                    JSValue::Object(object) => Some(Rc::clone(object)),
-                    JSValue::Function(..) | JSValue::ArrowFunction(..) => {
+                let object = match &object.kind() {
+                    JsValueKind::Object => Some(object.as_object().unwrap()),
+                    JsValueKind::Function | JsValueKind::ArrowFunction => {
                         self.user_function_object(&object)
                     }
                     _ => None,
@@ -872,7 +886,7 @@ impl VM {
                     ));
                 };
                 let deleted = object.borrow_mut().delete(&key);
-                self.stack.push(JSValue::Boolean(deleted));
+                self.stack.push(JSValue::from_bool(deleted));
             }
             Opcode::ArrayPush => {
                 // スタック: [array, value, index]
@@ -880,16 +894,20 @@ impl VM {
                 let value = self.pop()?;
 
                 // 配列はスタックの一番下にあるが、ポップしない
-                if let Some(JSValue::Object(obj_ref)) = self.stack.last() {
+                if let Some(v) = self.stack.last()
+                    && JsValueKind::Object == v.kind()
+                {
+                    let obj_ref = value.as_object().unwrap();
                     let idx_num = index.to_number() as usize;
                     let key_str = idx_num.to_string();
                     obj_ref.borrow_mut().set(key_str, value);
                     // Update length if index >= current length
                     let current_len = obj_ref.borrow().get("length").to_number() as usize;
                     if idx_num >= current_len {
-                        obj_ref
-                            .borrow_mut()
-                            .set("length".to_string(), JSValue::Number((idx_num + 1) as f64));
+                        obj_ref.borrow_mut().set(
+                            "length".to_string(),
+                            JSValue::from_number((idx_num + 1) as f64),
+                        );
                     }
                 } else {
                     return Err(JSError::TypeError("ArrayPush: not an object".to_string()));
@@ -898,29 +916,33 @@ impl VM {
             Opcode::ArrayAppend => {
                 let value = self.pop()?;
                 let array = self.pop()?;
-                let JSValue::Object(array_ref) = &array else {
+                let JsValueKind::Object = &array.kind() else {
                     return Err(JSError::TypeError("ArrayAppend: not an array".to_string()));
                 };
+                let array_ref = array.as_object().unwrap();
                 let index = array_ref.borrow().get("length").to_number() as usize;
                 array_ref.borrow_mut().set(index.to_string(), value);
-                array_ref
-                    .borrow_mut()
-                    .set("length".to_string(), JSValue::Number((index + 1) as f64));
+                array_ref.borrow_mut().set(
+                    "length".to_string(),
+                    JSValue::from_number((index + 1) as f64),
+                );
                 self.stack.push(array);
             }
             Opcode::ArrayExtend => {
                 let iterable = self.pop()?;
                 let array = self.pop()?;
                 let values = self.collect_iterable_values(iterable)?;
-                let JSValue::Object(array_ref) = &array else {
+                let JsValueKind::Object = &array.kind() else {
                     return Err(JSError::TypeError("ArrayExtend: not an array".to_string()));
                 };
+                let array_ref = array.as_object().unwrap();
                 for value in values {
                     let index = array_ref.borrow().get("length").to_number() as usize;
                     array_ref.borrow_mut().set(index.to_string(), value);
-                    array_ref
-                        .borrow_mut()
-                        .set("length".to_string(), JSValue::Number((index + 1) as f64));
+                    array_ref.borrow_mut().set(
+                        "length".to_string(),
+                        JSValue::from_number((index + 1) as f64),
+                    );
                 }
                 self.stack.push(array);
             }
@@ -930,7 +952,10 @@ impl VM {
                 let value = self.pop()?;
 
                 // オブジェクトはスタックの一番下にあるが、ポップしない
-                if let Some(JSValue::Object(obj_ref)) = self.stack.last() {
+                if let Some(v) = self.stack.last()
+                    && JsValueKind::Object == v.kind()
+                {
+                    let obj_ref = v.as_object().unwrap();
                     let key_str = key.to_string();
                     obj_ref.borrow_mut().set(key_str, value);
                 } else {
@@ -942,7 +967,11 @@ impl VM {
             Opcode::ObjectSpread => {
                 let source = self.pop()?;
                 let target = self.stack.last().cloned();
-                if let (Some(JSValue::Object(target)), JSValue::Object(source)) = (target, source) {
+                if let (Some(target), source) = (target, source)
+                    && (JsValueKind::Object, JsValueKind::Object) == (target.kind(), source.kind())
+                {
+                    let target = target.as_object().unwrap();
+                    let source = source.as_object().unwrap();
                     let keys = source.borrow().enumerable_keys();
                     for key in keys {
                         let value = source.borrow().get(&key);
@@ -954,7 +983,7 @@ impl VM {
                 let source = self.pop()?;
                 let mut result =
                     crate::value::JSObject::with_prototype(Some(Rc::clone(&self.object_prototype)));
-                if let JSValue::Object(source) = source {
+                if let Some(source) = source.as_object() {
                     let intern = chunk.intern.borrow();
                     for key in source.borrow().enumerable_keys() {
                         let is_excluded = excluded.iter().any(|&id| intern.name(id) == key);
@@ -965,7 +994,7 @@ impl VM {
                     }
                 }
                 self.stack
-                    .push(JSValue::Object(Rc::new(RefCell::new(result))));
+                    .push(JSValue::from_object(Rc::new(RefCell::new(result))));
             }
             Opcode::ObjectDefineGetter | Opcode::ObjectDefineSetter => {
                 let key = self.pop()?.to_string();
@@ -973,9 +1002,9 @@ impl VM {
                 let target = self.stack.last().cloned().ok_or_else(|| {
                     JSError::TypeError("Object accessor target is missing".to_string())
                 })?;
-                let object = match target {
-                    JSValue::Object(object) => Some(object),
-                    JSValue::Function(..) | JSValue::ArrowFunction(..) => {
+                let object = match target.kind() {
+                    JsValueKind::Object => Some(target.as_object().unwrap()),
+                    JsValueKind::Function | JsValueKind::ArrowFunction => {
                         self.user_function_object(&target)
                     }
                     _ => None,
@@ -988,9 +1017,9 @@ impl VM {
                 let is_getter = matches!(opcode, Opcode::ObjectDefineGetter);
                 let existing = object.borrow().get_property_descriptor(&key);
                 object.borrow_mut().define_property(
-                    key,
+                    key.to_string(),
                     crate::value::jsobject::Property {
-                        value: JSValue::Undefined,
+                        value: JSValue::undefined(),
                         enumerable: true,
                         writable: false,
                         configurable: true,
@@ -1012,31 +1041,33 @@ impl VM {
             Opcode::CreateFunction(idx) => {
                 // 定数プールの関数オブジェクト（BytecodeChunk）をそのままプッシュ
                 let func_const = chunk.constants[*idx].clone();
-                match func_const {
-                    JSValue::Function(func_chunk, params, _maybe_env, name_opt, _) => {
+                match func_const.kind() {
+                    JsValueKind::Function => {
+                        let func_data = func_const.as_function().unwrap();
                         let captured = Some(self.current_env());
-                        let length = params.len();
-                        let func = JSValue::Function(
-                            func_chunk,
-                            params,
-                            captured,
-                            name_opt,
-                            crate::value::jsvalue::next_function_identity(),
-                        );
+                        let length = func_data.params.len();
+                        let func = JSValue::from_function(FunctionData {
+                            chunk: Rc::clone(&func_data.chunk),
+                            params: func_data.params.clone(),
+                            env: captured,
+                            name: func_data.name,
+                            identity: crate::value::jsvalue::next_function_identity(),
+                        });
                         let intern = chunk.intern.borrow();
-                        let name_str = name_opt.map(|id| intern.name(id));
+                        let name_str = func_data.name.map(|id| intern.name(id));
                         self.register_user_function(&func, true, length, name_str);
                         self.stack.push(func);
                     }
-                    JSValue::ArrowFunction(func_chunk, params, _maybe_env, _maybe_this, _) => {
-                        let length = params.len();
-                        let func = JSValue::ArrowFunction(
-                            func_chunk,
-                            params,
-                            Some(self.current_env()),
-                            Some(Box::new(self.current_frame().this.clone())),
-                            crate::value::jsvalue::next_function_identity(),
-                        );
+                    JsValueKind::ArrowFunction => {
+                        let arrow_data = func_const.as_arrow_function().unwrap();
+                        let length = arrow_data.params.len();
+                        let func = JSValue::from_arrow_function(ArrowFunctionData {
+                            chunk: Rc::clone(&arrow_data.chunk),
+                            params: arrow_data.params.clone(),
+                            env: Some(self.current_env()),
+                            lexical_this: Some(Box::new(self.current_frame().this.clone())),
+                            identity: crate::value::jsvalue::next_function_identity(),
+                        });
                         self.register_user_function(&func, false, length, None);
                         self.stack.push(func);
                     }
@@ -1058,7 +1089,7 @@ impl VM {
                 args.reverse();
 
                 let func = self.pop()?;
-                let this = JSValue::Object(self.global_object.clone());
+                let this = JSValue::from_object(self.global_object.clone());
 
                 let result = self.call(func, this, args)?;
 
@@ -1071,19 +1102,19 @@ impl VM {
                 }
                 args.reverse();
                 let func = self.pop()?;
-                if matches!(&func, JSValue::Undefined | JSValue::Null) {
+                if func.is_undefined() || func.is_null() {
                     return Err(JSError::TypeError(format!(
                         "function '{name}' is not callable (found {})",
                         func.type_of()
                     )));
                 }
-                let this = JSValue::Object(self.global_object.clone());
+                let this = JSValue::from_object(self.global_object.clone());
                 let result = self.call(func, this, args)?;
                 self.stack.push(result);
             }
             Opcode::CallFunctionArray => {
                 let arguments = self.pop()?;
-                let JSValue::Object(arguments) = arguments else {
+                let Some(arguments) = arguments.as_object() else {
                     return Err(JSError::TypeError(
                         "CallFunctionArray: arguments are not an array".to_string(),
                     ));
@@ -1093,13 +1124,13 @@ impl VM {
                     .map(|index| arguments.borrow().get(&index.to_string()))
                     .collect();
                 let func = self.pop()?;
-                if matches!(&func, JSValue::Undefined | JSValue::Null) {
+                if func.is_undefined() || func.is_null() {
                     return Err(JSError::TypeError(format!(
                         "spread call target is not callable (found {})",
                         func.type_of()
                     )));
                 }
-                let this = JSValue::Object(self.global_object.clone());
+                let this = JSValue::from_object(self.global_object.clone());
                 let result = self.call(func, this, args)?;
                 self.stack.push(result);
             }
@@ -1110,10 +1141,10 @@ impl VM {
                 }
                 args.reverse();
                 let func = self.pop()?;
-                if matches!(&func, JSValue::Null | JSValue::Undefined) {
-                    self.stack.push(JSValue::Undefined);
+                if func.is_null() || func.is_undefined() {
+                    self.stack.push(JSValue::undefined());
                 } else {
-                    let this = JSValue::Object(self.global_object.clone());
+                    let this = JSValue::from_object(self.global_object.clone());
                     let result = self.call(func, this, args)?;
                     self.stack.push(result);
                 }
@@ -1126,13 +1157,13 @@ impl VM {
                 args.reverse();
                 let property = self.pop()?;
                 let object = self.pop()?;
-                if matches!(&object, JSValue::Null | JSValue::Undefined) {
-                    self.stack.push(JSValue::Undefined);
+                if object.is_null() || object.is_undefined() {
+                    self.stack.push(JSValue::undefined());
                 } else {
                     let key = property.to_string();
                     let method = self.resolve_method_property(&object, &key)?;
-                    if matches!(&method, JSValue::Null | JSValue::Undefined) {
-                        self.stack.push(JSValue::Undefined);
+                    if method.is_null() || method.is_undefined() {
+                        self.stack.push(JSValue::undefined());
                     } else {
                         let result = self.call(method, object, args)?;
                         self.stack.push(result);
@@ -1141,7 +1172,7 @@ impl VM {
             }
             Opcode::CallMethodArray => {
                 let arguments = self.pop()?;
-                let JSValue::Object(arguments) = arguments else {
+                let Some(arguments) = arguments.as_object() else {
                     return Err(JSError::TypeError(
                         "CallMethodArray: arguments are not an array".to_string(),
                     ));
@@ -1154,7 +1185,7 @@ impl VM {
                 let object = self.pop()?;
                 let key = property.to_string();
                 let method = self.resolve_method_property(&object, &key)?;
-                if matches!(&method, JSValue::Undefined | JSValue::Null) {
+                if method.is_undefined() || method.is_null() {
                     return Err(JSError::TypeError(format!(
                         "spread call property '{key}' is not callable (found {})",
                         method.type_of()
@@ -1180,8 +1211,9 @@ impl VM {
 
                 let key = property.to_string();
 
-                let method = match &object {
-                    JSValue::Object(obj_ref) => {
+                let method = match object.kind() {
+                    JsValueKind::Object => {
+                        let obj_ref = object.as_object().unwrap();
                         let own_property = obj_ref.borrow().get_property_descriptor(&key);
                         if let Some(property) = own_property {
                             if let Some(getter) = property.getter {
@@ -1189,7 +1221,7 @@ impl VM {
                             } else {
                                 property.value
                             }
-                        } else if let Some(property) = inherited_property_descriptor(obj_ref, &key)
+                        } else if let Some(property) = inherited_property_descriptor(&obj_ref, &key)
                         {
                             if let Some(getter) = property.getter {
                                 self.call(getter, object.clone(), Vec::new())?
@@ -1200,32 +1232,26 @@ impl VM {
                             let host_getter = obj_ref
                                 .borrow()
                                 .get(crate::value::jsobject::HOST_GET_PROPERTY);
-                            if matches!(
-                                &host_getter,
-                                JSValue::Function(..)
-                                    | JSValue::ArrowFunction(..)
-                                    | JSValue::NativeFunction(..)
-                                    | JSValue::BoundFunction(..)
-                            ) {
+                            if host_getter.is_callable() && !host_getter.is_object() {
                                 self.call(
                                     host_getter,
                                     object.clone(),
-                                    vec![JSValue::String(key.clone())],
+                                    vec![JSValue::from_string(key.clone())],
                                 )?
                             } else {
-                                self.object_fallback_property(obj_ref, &key)
+                                self.object_fallback_property(&obj_ref, &key)
                             }
                         }
                     }
-                    JSValue::Function(..)
-                    | JSValue::ArrowFunction(..)
-                    | JSValue::BoundFunction(..) => self
+                    JsValueKind::Function
+                    | JsValueKind::ArrowFunction
+                    | JsValueKind::BoundFunction => self
                         .user_function_object(&object)
                         .map(|properties| properties.borrow().get(&key))
                         .unwrap_or_else(|| self.function_prototype.borrow().get(&key)),
-                    JSValue::NativeFunction(..) => self.function_prototype.borrow().get(&key),
-                    JSValue::String(_) => self.string_prototype.borrow().get(&key),
-                    JSValue::Number(_) => self.number_prototype.borrow().get(&key),
+                    JsValueKind::NativeFunction => self.function_prototype.borrow().get(&key),
+                    JsValueKind::String => self.string_prototype.borrow().get(&key),
+                    JsValueKind::Number => self.number_prototype.borrow().get(&key),
                     _ => {
                         let stack = self
                             .frames
@@ -1248,14 +1274,7 @@ impl VM {
                     }
                 };
 
-                if !matches!(
-                    &method,
-                    JSValue::Function(..)
-                        | JSValue::ArrowFunction(..)
-                        | JSValue::NativeFunction(..)
-                        | JSValue::BoundFunction(..)
-                        | JSValue::Object(..)
-                ) {
+                if !(method.is_callable() || method.is_object()) {
                     let stack = self
                         .frames
                         .iter()
@@ -1281,31 +1300,31 @@ impl VM {
 
                 let constructor = self.pop()?;
                 let mut constructor_target = constructor.clone();
-                while let JSValue::BoundFunction(bound) = constructor_target {
+                while let Some(bound) = constructor_target.as_bound_function() {
                     let mut combined = bound.bound_args.clone();
                     combined.extend(args);
                     args = combined;
-                    constructor_target = *bound.target;
+                    constructor_target = (*bound.target).clone();
                 }
-                let direct_prototype = match &constructor_target {
-                    JSValue::Function(..) => self
+                let direct_prototype = match constructor_target.kind() {
+                    JsValueKind::Function => self
                         .user_function_object(&constructor_target)
-                        .and_then(|properties| match properties.borrow().get("prototype") {
-                            JSValue::Object(prototype) => Some(prototype),
-                            _ => None,
-                        }),
-                    JSValue::Object(object) => match object.borrow().get("prototype") {
-                        JSValue::Object(prototype) => Some(prototype),
-                        _ => None,
-                    },
+                        .and_then(|properties| properties.borrow().get("prototype").as_object()),
+                    JsValueKind::Object => constructor_target
+                        .as_object()
+                        .and_then(|object| object.borrow().get("prototype").as_object()),
                     _ => None,
                 };
-                let mut callable = match &constructor_target {
-                    JSValue::Object(object) => {
+                let mut callable = match constructor_target.kind() {
+                    JsValueKind::Object => {
+                        let object = constructor_target.as_object().unwrap();
                         let mut callable = object.borrow().get("__construct__");
-                        if matches!(callable, JSValue::Undefined) {
+                        if callable.is_undefined() {
                             let call = object.borrow().get("__call__");
-                            if matches!(&call, JSValue::Function(..) | JSValue::BoundFunction(..)) {
+                            if matches!(
+                                call.kind(),
+                                JsValueKind::Function | JsValueKind::BoundFunction
+                            ) {
                                 callable = call;
                             } else {
                                 let keys = object.borrow().keys();
@@ -1320,11 +1339,11 @@ impl VM {
                         }
                         callable
                     }
-                    JSValue::Undefined
-                    | JSValue::Null
-                    | JSValue::Boolean(_)
-                    | JSValue::Number(_)
-                    | JSValue::String(_) => {
+                    JsValueKind::Undefined
+                    | JsValueKind::Null
+                    | JsValueKind::Boolean
+                    | JsValueKind::Number
+                    | JsValueKind::String => {
                         let name = constructor_name
                             .as_deref()
                             .map(|name| format!(" '{name}'"))
@@ -1336,36 +1355,33 @@ impl VM {
                     }
                     _ => constructor_target.clone(),
                 };
-                while let JSValue::BoundFunction(bound) = callable {
+                while let Some(bound) = callable.as_bound_function() {
                     let mut combined = bound.bound_args.clone();
                     combined.extend(args);
                     args = combined;
-                    callable = *bound.target;
+                    callable = (*bound.target).clone();
                 }
-                if matches!(&callable, JSValue::ArrowFunction(..)) {
+                if callable.is_arrow_function() {
                     return Err(JSError::TypeError(
                         "arrow function is not a constructor".to_string(),
                     ));
                 }
-                let callable_prototype =
-                    self.user_function_object(&callable).and_then(|properties| {
-                        match properties.borrow().get("prototype") {
-                            JSValue::Object(prototype) => Some(prototype),
-                            _ => None,
-                        }
-                    });
+                let callable_prototype = self
+                    .user_function_object(&callable)
+                    .and_then(|properties| properties.borrow().get("prototype").as_object());
                 let prototype = callable_prototype
                     .or(direct_prototype)
                     .or_else(|| Some(Rc::clone(&self.object_prototype)));
-                let this =
-                    JSValue::Object(Rc::new(RefCell::new(JSObject::with_prototype(prototype))));
+                let this = JSValue::from_object(Rc::new(RefCell::new(JSObject::with_prototype(
+                    prototype,
+                ))));
                 let result = self.call(callable, this.clone(), args)?;
-                self.stack.push(match result {
-                    JSValue::Object(_)
-                    | JSValue::Function(..)
-                    | JSValue::ArrowFunction(..)
-                    | JSValue::NativeFunction(..)
-                    | JSValue::BoundFunction(..) => result,
+                self.stack.push(match result.kind() {
+                    JsValueKind::Object
+                    | JsValueKind::Function
+                    | JsValueKind::ArrowFunction
+                    | JsValueKind::NativeFunction
+                    | JsValueKind::BoundFunction => result,
                     _ => this,
                 });
             }
@@ -1374,11 +1390,11 @@ impl VM {
             Opcode::Typeof => {
                 let value = self.pop()?;
                 self.stack
-                    .push(JSValue::String(value.type_of().to_string()));
+                    .push(JSValue::from_string(value.type_of().to_string()));
             }
             Opcode::Void => {
                 self.pop()?;
-                self.stack.push(JSValue::Undefined);
+                self.stack.push(JSValue::undefined());
             }
 
             // 制御フロー
@@ -1395,14 +1411,16 @@ impl VM {
             }
             Opcode::Enumerate => {
                 let value = self.pop()?;
-                let keys = match value {
-                    JSValue::Object(object) => object
+                let keys = match value.kind() {
+                    JsValueKind::Object => value
+                        .as_object()
+                        .unwrap()
                         .borrow()
                         .enumerable_keys()
                         .into_iter()
-                        .map(JSValue::String)
+                        .map(JSValue::from_string)
                         .collect(),
-                    JSValue::Null | JSValue::Undefined => Vec::new(),
+                    JsValueKind::Null | JsValueKind::Undefined => Vec::new(),
                     _ => Vec::new(),
                 };
                 self.stack.push(self.array_from_values(keys));
@@ -1418,11 +1436,11 @@ impl VM {
             }
             Opcode::IteratorNext(exit_target) => {
                 let iterator = self.pop()?;
-                let JSValue::Object(iterator_object) = &iterator else {
+                let Some(iterator_object) = iterator.as_object() else {
                     return Err(JSError::TypeError("iterator is not an object".into()));
                 };
-                if let Some(value) = indexed_iterator_step(iterator_object)?.or(
-                    crate::builtins::collection::iterator_step(self, iterator_object)?,
+                if let Some(value) = indexed_iterator_step(&iterator_object)?.or(
+                    crate::builtins::collection::iterator_step(self, &iterator_object)?,
                 ) {
                     let Some(value) = value else {
                         return Ok(ControlFlow::Jump(*exit_target));
@@ -1432,7 +1450,7 @@ impl VM {
                 }
                 let next = iterator_object.borrow().get("next");
                 let result = self.call(next, iterator.clone(), Vec::new())?;
-                let JSValue::Object(result) = result else {
+                let Some(result) = result.as_object() else {
                     return Err(JSError::TypeError(
                         "iterator result is not an object".into(),
                     ));
@@ -1452,7 +1470,7 @@ impl VM {
             }
             Opcode::JumpIfNotNullish(offset) => {
                 let condition = self.pop()?;
-                if !matches!(condition, JSValue::Null | JSValue::Undefined) {
+                if !(condition.is_null() || condition.is_undefined()) {
                     return Ok(ControlFlow::Jump(*offset));
                 } else {
                     return Ok(ControlFlow::Continue);
@@ -1533,9 +1551,9 @@ impl VM {
         value: JSValue,
     ) -> JSResult<()> {
         let key_string = key.to_string();
-        let object_ref = match object {
-            JSValue::Object(object_ref) => Some(Rc::clone(object_ref)),
-            JSValue::Function(..) | JSValue::ArrowFunction(..) | JSValue::BoundFunction(..) => {
+        let object_ref = match object.kind() {
+            JsValueKind::Object => Some(object.as_object().unwrap()),
+            JsValueKind::Function | JsValueKind::ArrowFunction | JsValueKind::BoundFunction => {
                 self.ensure_callable_object(object)
             }
             _ => None,
@@ -1584,13 +1602,7 @@ impl VM {
         let host_setter = object_ref
             .borrow()
             .get(crate::value::jsobject::HOST_SET_PROPERTY);
-        if matches!(
-            &host_setter,
-            JSValue::Function(..)
-                | JSValue::ArrowFunction(..)
-                | JSValue::NativeFunction(..)
-                | JSValue::BoundFunction(..)
-        ) {
+        if host_setter.is_callable() && !host_setter.is_object() {
             self.call(host_setter, object.clone(), vec![key, value])?;
             return Ok(());
         }
@@ -1605,8 +1617,9 @@ impl VM {
         object: &JSValue,
         key: &str,
     ) -> JSResult<JSValue> {
-        match object {
-            JSValue::Object(obj_ref) => {
+        match object.kind() {
+            JsValueKind::Object => {
+                let obj_ref = object.as_object().unwrap();
                 let own_property = obj_ref.borrow().get_property_descriptor(key);
                 if let Some(property) = own_property {
                     if let Some(getter) = property.getter {
@@ -1614,7 +1627,7 @@ impl VM {
                     } else {
                         Ok(property.value)
                     }
-                } else if let Some(property) = inherited_property_descriptor(obj_ref, key) {
+                } else if let Some(property) = inherited_property_descriptor(&obj_ref, key) {
                     if let Some(getter) = property.getter {
                         self.call(getter, object.clone(), Vec::new())
                     } else {
@@ -1624,46 +1637,40 @@ impl VM {
                     let host_getter = obj_ref
                         .borrow()
                         .get(crate::value::jsobject::HOST_GET_PROPERTY);
-                    if matches!(
-                        &host_getter,
-                        JSValue::Function(..)
-                            | JSValue::ArrowFunction(..)
-                            | JSValue::NativeFunction(..)
-                            | JSValue::BoundFunction(..)
-                    ) {
+                    if host_getter.is_callable() && !host_getter.is_object() {
                         self.call(
                             host_getter,
                             object.clone(),
-                            vec![JSValue::String(key.to_string())],
+                            vec![JSValue::from_string(key.to_string())],
                         )
                     } else {
-                        Ok(self.object_fallback_property(obj_ref, key))
+                        Ok(self.object_fallback_property(&obj_ref, key))
                     }
                 }
             }
-            JSValue::Function(..) | JSValue::ArrowFunction(..) | JSValue::BoundFunction(..) => {
+            JsValueKind::Function | JsValueKind::ArrowFunction | JsValueKind::BoundFunction => {
                 Ok(self
                     .user_function_object(object)
                     .map(|properties| properties.borrow().get(key))
                     .unwrap_or_else(|| self.function_prototype.borrow().get(key)))
             }
-            JSValue::NativeFunction(..) => Ok(self.function_prototype.borrow().get(key)),
-            JSValue::String(_) => Ok(self.string_prototype.borrow().get(key)),
-            JSValue::Number(_) => Ok(self.number_prototype.borrow().get(key)),
-            _ => Ok(JSValue::Undefined),
+            JsValueKind::NativeFunction => Ok(self.function_prototype.borrow().get(key)),
+            JsValueKind::String => Ok(self.string_prototype.borrow().get(key)),
+            JsValueKind::Number => Ok(self.number_prototype.borrow().get(key)),
+            _ => Ok(JSValue::undefined()),
         }
     }
 
     fn object_fallback_property(&self, object: &Rc<RefCell<JSObject>>, key: &str) -> JSValue {
         let mut callable = object.borrow().get("__call__");
-        let is_callable = !matches!(callable, JSValue::Undefined);
+        let is_callable = !callable.is_undefined();
         if is_callable {
-            while let JSValue::BoundFunction(bound) = callable {
+            while let Some(bound) = callable.as_bound_function() {
                 callable = (*bound.target).clone();
             }
             if let Some(properties) = self.user_function_object(&callable) {
                 let value = properties.borrow().get(key);
-                if !matches!(value, JSValue::Undefined) {
+                if !value.is_undefined() {
                     return value;
                 }
             }
@@ -1671,7 +1678,7 @@ impl VM {
         } else if object.borrow().has_explicit_prototype()
             && object.borrow().get_prototype().is_none()
         {
-            JSValue::Undefined
+            JSValue::undefined()
         } else {
             self.object_prototype.borrow().get(key)
         }
@@ -1703,47 +1710,71 @@ impl VM {
         }
         let callee_clone = callee.clone();
 
-        match callee {
-            JSValue::BoundFunction(bound) => {
+        match callee.kind() {
+            JsValueKind::BoundFunction => {
+                let bound = callee.as_bound_function().unwrap();
                 let mut all = bound.bound_args.clone();
 
                 all.extend(args);
 
-                self.call(*bound.target, bound.bound_this.clone(), all)
+                self.call(bound.target, bound.bound_this.clone(), all)
             }
 
-            JSValue::NativeFunction(f) => {
+            JsValueKind::NativeFunction => {
+                let f = callee.as_native_function().unwrap();
                 let mut all = vec![this];
 
                 all.extend(args);
                 f(self, all)
             }
 
-            JSValue::Function(chunk, params, env, name, _) => {
+            JsValueKind::Function => {
+                let FunctionData {
+                    chunk,
+                    params,
+                    env,
+                    name,
+                    identity: _,
+                } = callee.as_function().unwrap();
                 let func_name_str = name.map(|id| chunk.intern.borrow().name(id).to_string());
                 let env = self.create_function_env(
                     &chunk,
                     callee_clone,
-                    env,
+                    env.clone(),
                     &params,
                     args,
-                    name,
+                    *name,
                     chunk.uses_arguments,
                 )?;
 
-                self.with_call_frame(env, this, chunk, func_name_str)
+                self.with_call_frame(env, this, chunk.clone(), func_name_str)
             }
 
-            JSValue::ArrowFunction(chunk, params, env, lexical_this, _) => {
-                let env =
-                    self.create_function_env(&chunk, callee_clone, env, &params, args, None, false)?;
+            JsValueKind::ArrowFunction => {
+                let ArrowFunctionData {
+                    chunk,
+                    params,
+                    env,
+                    lexical_this,
+                    identity: _,
+                } = callee.as_arrow_function().unwrap();
+                let env = self.create_function_env(
+                    &chunk,
+                    callee_clone,
+                    env.clone(),
+                    &params,
+                    args,
+                    None,
+                    false,
+                )?;
                 let this = lexical_this.map(|this| *this).unwrap_or(this);
-                self.with_call_frame(env, this, chunk, None)
+                self.with_call_frame(env, this, chunk.clone(), None)
             }
 
-            JSValue::Object(object) => {
+            JsValueKind::Object => {
+                let object = callee.as_object().unwrap();
                 let callable = object.borrow().get("__call__");
-                if matches!(callable, JSValue::Undefined) {
+                if matches!(callable.kind(), JsValueKind::Undefined) {
                     let stack = self
                         .frames
                         .iter()
@@ -1814,7 +1845,7 @@ impl VM {
                     break;
                 }
                 FunctionParam::Positional(id) => {
-                    env.define(id, args.get(index).cloned().unwrap_or(JSValue::Undefined));
+                    env.define(id, args.get(index).cloned().unwrap_or(JSValue::undefined()));
                 }
             }
         }
@@ -1828,15 +1859,19 @@ impl VM {
         let a = self.to_primitive(a, PrimitiveHint::Default)?;
         let b = self.to_primitive(b, PrimitiveHint::Default)?;
         let result = match (a, b) {
-            (JSValue::String(a), b) => JSValue::String(format!("{a}{}", b.to_console_string())),
-            (a, JSValue::String(b)) => JSValue::String(format!("{}{b}", a.to_console_string())),
-            (JSValue::BigInt(a), JSValue::BigInt(b)) => JSValue::BigInt(a + b),
-            (JSValue::BigInt(_), _) | (_, JSValue::BigInt(_)) => {
+            (JsValueKind::String(a), b) => {
+                JsValueKind::String(format!("{a}{}", b.to_console_string()))
+            }
+            (a, JsValueKind::String(b)) => {
+                JsValueKind::String(format!("{}{b}", a.to_console_string()))
+            }
+            (JsValueKind::BigInt(a), JsValueKind::BigInt(b)) => JsValueKind::BigInt(a + b),
+            (JsValueKind::BigInt(_), _) | (_, JsValueKind::BigInt(_)) => {
                 return Err(JSError::TypeError(
                     "Cannot mix BigInt and other types".into(),
                 ));
             }
-            (a, b) => JSValue::Number(a.to_number() + b.to_number()),
+            (a, b) => JsValueKind::Number(a.to_number() + b.to_number()),
         };
         self.stack.push(result);
         Ok(())
@@ -1855,27 +1890,27 @@ impl VM {
     pub(crate) fn is_callable(&self, value: &JSValue) -> bool {
         matches!(
             value,
-            JSValue::Function(..)
-                | JSValue::ArrowFunction(..)
-                | JSValue::NativeFunction(..)
-                | JSValue::BoundFunction(..)
-        ) || matches!(value, JSValue::Object(object) if !matches!(object.borrow().get("__call__"), JSValue::Undefined))
+            JsValueKind::Function
+                | JsValueKind::ArrowFunction
+                | JsValueKind::NativeFunction
+                | JsValueKind::BoundFunction
+        ) || matches!(value, JsValueKind::Object(object) if !matches!(object.borrow().get("__call__"), JsValueKind::Undefined))
     }
 
     fn to_primitive(&mut self, value: JSValue, hint: PrimitiveHint) -> JSResult<JSValue> {
         if !matches!(
             value,
-            JSValue::Object(_)
-                | JSValue::Function(..)
-                | JSValue::ArrowFunction(..)
-                | JSValue::NativeFunction(..)
-                | JSValue::BoundFunction(..)
+            JsValueKind::Object(_)
+                | JsValueKind::Function
+                | JsValueKind::ArrowFunction
+                | JsValueKind::NativeFunction
+                | JsValueKind::BoundFunction
         ) {
             return Ok(value);
         }
 
         let exotic = self.resolve_method_property(&value, "@@toPrimitive")?;
-        if !matches!(exotic, JSValue::Undefined) {
+        if !matches!(exotic, JsValueKind::Undefined) {
             if !self.is_callable(&exotic) {
                 return Err(JSError::TypeError(
                     "@@toPrimitive is not callable".to_string(),
@@ -1884,15 +1919,15 @@ impl VM {
             let result = self.call(
                 exotic,
                 value.clone(),
-                vec![JSValue::String(hint.as_str().to_string())],
+                vec![JsValueKind::String(hint.as_str().to_string())],
             )?;
             if matches!(
                 result,
-                JSValue::Object(_)
-                    | JSValue::Function(..)
-                    | JSValue::ArrowFunction(..)
-                    | JSValue::NativeFunction(..)
-                    | JSValue::BoundFunction(..)
+                JsValueKind::Object(_)
+                    | JsValueKind::Function
+                    | JsValueKind::ArrowFunction
+                    | JsValueKind::NativeFunction
+                    | JsValueKind::BoundFunction
             ) {
                 return Err(JSError::TypeError(
                     "@@toPrimitive must return a primitive value".to_string(),
@@ -1911,11 +1946,11 @@ impl VM {
                 let result = self.call(method, value.clone(), Vec::new())?;
                 if !matches!(
                     result,
-                    JSValue::Object(_)
-                        | JSValue::Function(..)
-                        | JSValue::ArrowFunction(..)
-                        | JSValue::NativeFunction(..)
-                        | JSValue::BoundFunction(..)
+                    JsValueKind::Object(_)
+                        | JsValueKind::Function
+                        | JsValueKind::ArrowFunction
+                        | JsValueKind::NativeFunction
+                        | JsValueKind::BoundFunction
                 ) {
                     return Ok(result);
                 }
@@ -1933,11 +1968,11 @@ impl VM {
         let a = self.to_primitive(a, PrimitiveHint::Number)?;
         let b = self.to_primitive(b, PrimitiveHint::Number)?;
         let result = match (a, b) {
-            (JSValue::BigInt(a), JSValue::BigInt(b)) => {
+            (JsValueKind::BigInt(a), JsValueKind::BigInt(b)) => {
                 if matches!(op, ArithmeticOp::Div | ArithmeticOp::Mod) && b == BigInt::from(0) {
                     return Err(JSError::RangeError("Division by zero".into()));
                 }
-                JSValue::BigInt(match op {
+                JsValueKind::BigInt(match op {
                     ArithmeticOp::Sub => a - b,
                     ArithmeticOp::Mul => a * b,
                     ArithmeticOp::Div => a / b,
@@ -1950,14 +1985,14 @@ impl VM {
                     }
                 })
             }
-            (JSValue::BigInt(_), _) | (_, JSValue::BigInt(_)) => {
+            (JsValueKind::BigInt(_), _) | (_, JsValueKind::BigInt(_)) => {
                 return Err(JSError::TypeError(
                     "Cannot mix BigInt and other types".into(),
                 ));
             }
             (a, b) => {
                 let (a, b) = (a.to_number(), b.to_number());
-                JSValue::Number(match op {
+                JsValueKind::Number(match op {
                     ArithmeticOp::Sub => a - b,
                     ArithmeticOp::Mul => a * b,
                     ArithmeticOp::Div => a / b,
@@ -1978,7 +2013,7 @@ impl VM {
         let b = self.pop()?;
         let a = self.pop()?;
         let result = op(&a, &b);
-        self.stack.push(JSValue::Boolean(result));
+        self.stack.push(JsValueKind::Boolean(result));
         Ok(())
     }
 
@@ -1992,12 +2027,12 @@ impl VM {
         let a = self.to_primitive(a, PrimitiveHint::Number)?;
         let b = self.to_primitive(b, PrimitiveHint::Number)?;
         let ordering = match (&a, &b) {
-            (JSValue::String(a), JSValue::String(b)) => Some(a.cmp(b)),
-            (JSValue::BigInt(a), JSValue::BigInt(b)) => Some(a.cmp(b)),
+            (JsValueKind::String(a), JsValueKind::String(b)) => Some(a.cmp(b)),
+            (JsValueKind::BigInt(a), JsValueKind::BigInt(b)) => Some(a.cmp(b)),
             _ => a.to_number().partial_cmp(&b.to_number()),
         };
         let result = ordering.map(op).unwrap_or(false);
-        self.stack.push(JSValue::Boolean(result));
+        self.stack.push(JsValueKind::Boolean(result));
         Ok(())
     }
 
@@ -2008,7 +2043,7 @@ impl VM {
         let a = self.to_primitive(a, PrimitiveHint::Number)?;
         let b = self.to_primitive(b, PrimitiveHint::Number)?;
         let result = match (a, b) {
-            (JSValue::BigInt(a), JSValue::BigInt(b)) => JSValue::BigInt(match op {
+            (JsValueKind::BigInt(a), JsValueKind::BigInt(b)) => JsValueKind::BigInt(match op {
                 BitwiseOp::And => a & b,
                 BitwiseOp::Or => a | b,
                 BitwiseOp::Xor => a ^ b,
@@ -2024,14 +2059,14 @@ impl VM {
                     }
                 }
             }),
-            (JSValue::BigInt(_), _) | (_, JSValue::BigInt(_)) => {
+            (JsValueKind::BigInt(_), _) | (_, JsValueKind::BigInt(_)) => {
                 return Err(JSError::TypeError(
                     "Cannot mix BigInt and other types".into(),
                 ));
             }
             (a, b) => {
                 let (a, b) = (to_int32(a.to_number()), to_int32(b.to_number()));
-                JSValue::Number(match op {
+                JsValueKind::Number(match op {
                     BitwiseOp::And => a & b,
                     BitwiseOp::Or => a | b,
                     BitwiseOp::Xor => a ^ b,
@@ -2045,25 +2080,25 @@ impl VM {
     }
 
     fn get_iterator(&mut self, value: JSValue) -> JSResult<JSValue> {
-        if let JSValue::String(string) = value {
+        if let JsValueKind::String(string) = value {
             let source = self.array_from_values(
                 string
                     .chars()
-                    .map(|character| JSValue::String(character.to_string()))
+                    .map(|character| JsValueKind::String(character.to_string()))
                     .collect(),
             );
             return Ok(indexed_iterator(source));
         }
-        let JSValue::Object(object) = &value else {
+        let JsValueKind::Object(object) = &value else {
             return Err(JSError::TypeError(format!(
                 "{} is not iterable",
                 value.type_of()
             )));
         };
         let iterator_method = object.borrow().get("@@iterator");
-        if !matches!(iterator_method, JSValue::Undefined | JSValue::Null) {
+        if !matches!(iterator_method, JsValueKind::Undefined | JsValueKind::Null) {
             let iterator = self.call(iterator_method, value.clone(), Vec::new())?;
-            if !matches!(iterator, JSValue::Object(_)) {
+            if !matches!(iterator, JsValueKind::Object(_)) {
                 return Err(JSError::TypeError(
                     "iterator method did not return an object".into(),
                 ));
@@ -2079,7 +2114,7 @@ impl VM {
 
     fn collect_iterable_values(&mut self, value: JSValue) -> JSResult<Vec<JSValue>> {
         let iterator = self.get_iterator(value)?;
-        let JSValue::Object(iterator_object) = &iterator else {
+        let JsValueKind::Object(iterator_object) = &iterator else {
             unreachable!("get_iterator must return an object");
         };
         let mut values = Vec::new();
@@ -2097,7 +2132,7 @@ impl VM {
 
             let next = iterator_object.borrow().get("next");
             let result = self.call(next, iterator.clone(), Vec::new())?;
-            let JSValue::Object(result) = result else {
+            let JsValueKind::Object(result) = result else {
                 return Err(JSError::TypeError(
                     "iterator result is not an object".into(),
                 ));
@@ -2117,22 +2152,22 @@ const INDEXED_ITERATOR_INDEX: &str = "__pixi_indexed_iterator_index";
 fn indexed_iterator(source: JSValue) -> JSValue {
     let mut iterator = JSObject::new();
     iterator.set(INDEXED_ITERATOR_SOURCE.to_string(), source);
-    iterator.set(INDEXED_ITERATOR_INDEX.to_string(), JSValue::Number(0.0));
+    iterator.set(INDEXED_ITERATOR_INDEX.to_string(), JsValueKind::Number(0.0));
     iterator.set(
         "next".to_string(),
-        JSValue::NativeFunction(indexed_iterator_next),
+        JsValueKind::NativeFunction(indexed_iterator_next),
     );
-    JSValue::Object(Rc::new(RefCell::new(iterator)))
+    JsValueKind::Object(Rc::new(RefCell::new(iterator)))
 }
 
 fn generator_iterator(source: JSValue) -> JSValue {
     let indexed_source = source.clone();
-    let JSValue::Object(iterator) = indexed_iterator(indexed_source) else {
+    let JsValueKind::Object(iterator) = indexed_iterator(indexed_source) else {
         unreachable!("indexed iterator must be an object");
     };
     {
         let mut iterator = iterator.borrow_mut();
-        if let JSValue::Object(source) = source {
+        if let JsValueKind::Object(source) = source {
             for key in source.borrow().keys() {
                 if key != "__pixi_array__" {
                     iterator.set(key.clone(), source.borrow().get(&key));
@@ -2142,28 +2177,28 @@ fn generator_iterator(source: JSValue) -> JSValue {
         }
         iterator.set(
             "@@iterator".to_string(),
-            JSValue::NativeFunction(generator_iterator_identity),
+            JsValueKind::NativeFunction(generator_iterator_identity),
         );
         iterator.set(
             "throw".to_string(),
-            JSValue::NativeFunction(generator_iterator_throw),
+            JsValueKind::NativeFunction(generator_iterator_throw),
         );
     }
-    JSValue::Object(iterator)
+    JsValueKind::Object(iterator)
 }
 
 fn generator_iterator_identity(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(args.first().cloned().unwrap_or(JSValue::Undefined))
+    Ok(args.first().cloned().unwrap_or(JsValueKind::Undefined))
 }
 
 fn generator_iterator_throw(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Err(JSError::Thrown(
-        args.get(1).cloned().unwrap_or(JSValue::Undefined),
+        args.get(1).cloned().unwrap_or(JsValueKind::Undefined),
     ))
 }
 
 fn indexed_iterator_next(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let Some(JSValue::Object(iterator)) = args.first() else {
+    let Some(JsValueKind::Object(iterator)) = args.first() else {
         return Err(JSError::TypeError("iterator next: invalid receiver".into()));
     };
     let value = indexed_iterator_step(iterator)?
@@ -2171,14 +2206,14 @@ fn indexed_iterator_next(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> 
     let mut result = JSObject::new();
     result.set(
         "value".to_string(),
-        value.clone().unwrap_or(JSValue::Undefined),
+        value.clone().unwrap_or(JsValueKind::Undefined),
     );
-    result.set("done".to_string(), JSValue::Boolean(value.is_none()));
-    Ok(JSValue::Object(Rc::new(RefCell::new(result))))
+    result.set("done".to_string(), JsValueKind::Boolean(value.is_none()));
+    Ok(JsValueKind::Object(Rc::new(RefCell::new(result))))
 }
 
 fn indexed_iterator_step(iterator: &Rc<RefCell<JSObject>>) -> JSResult<Option<Option<JSValue>>> {
-    let JSValue::Object(source) = iterator.borrow().get(INDEXED_ITERATOR_SOURCE) else {
+    let JsValueKind::Object(source) = iterator.borrow().get(INDEXED_ITERATOR_SOURCE) else {
         return Ok(None);
     };
     let index = iterator.borrow().get(INDEXED_ITERATOR_INDEX).to_number() as usize;
@@ -2188,7 +2223,7 @@ fn indexed_iterator_step(iterator: &Rc<RefCell<JSObject>>) -> JSResult<Option<Op
     }
     iterator.borrow_mut().set(
         INDEXED_ITERATOR_INDEX.to_string(),
-        JSValue::Number((index + 1) as f64),
+        JsValueKind::Number((index + 1) as f64),
     );
     Ok(Some(Some(source.borrow().get(&index.to_string()))))
 }
@@ -2215,7 +2250,7 @@ fn update_array_length_after_index_write(object: &Rc<RefCell<JSObject>>, key: &s
     if !current_length.is_finite() || current_length < required_length as f64 {
         object.borrow_mut().set(
             "length".to_string(),
-            JSValue::Number(required_length as f64),
+            JsValueKind::Number(required_length as f64),
         );
     }
 }

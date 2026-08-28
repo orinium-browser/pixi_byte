@@ -107,7 +107,7 @@ impl JSObject {
             return proto.borrow().get(key);
         }
 
-        JSValue::Undefined
+        JSValue::undefined()
     }
 
     /// 指定したキーに値を設定します。既存のデータプロパティが writable でない場合は false を返します。
@@ -253,7 +253,7 @@ impl JSObject {
             let getter = if has("get") {
                 let g = desc_obj.borrow().get("get");
                 match g {
-                    JSValue::Undefined => None,
+                    g if g.clone().is_undefined() => None,
                     v => Some(v),
                 }
             } else {
@@ -263,7 +263,7 @@ impl JSObject {
             let setter = if has("set") {
                 let s = desc_obj.borrow().get("set");
                 match s {
-                    JSValue::Undefined => None,
+                    s if s.clone().is_undefined() => None,
                     v => Some(v),
                 }
             } else {
@@ -283,7 +283,7 @@ impl JSObject {
             };
 
             let property = Property {
-                value: JSValue::Undefined,
+                value: JSValue::undefined(),
                 enumerable,
                 writable: false,
                 configurable,
@@ -300,7 +300,7 @@ impl JSObject {
                 existing
                     .as_ref()
                     .map(|p| p.value.clone())
-                    .unwrap_or(JSValue::Undefined)
+                    .unwrap_or_else(JSValue::undefined)
             };
 
             let writable = if has("writable") {

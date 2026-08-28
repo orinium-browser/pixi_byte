@@ -1,6 +1,7 @@
 use crate::error::JSResult;
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
+use crate::value::jsvalue::JsValueKind;
 use crate::vm::VM;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -17,7 +18,7 @@ fn epoch_milliseconds() -> f64 {
 }
 
 fn date_now(_vm: &mut VM, _args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(JSValue::Number(epoch_milliseconds().floor()))
+    Ok(JSValue::from_number(epoch_milliseconds().floor()))
 }
 
 fn date_parse(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -28,27 +29,34 @@ fn date_parse(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         .trim()
         .parse::<f64>()
         .unwrap_or(f64::NAN);
-    Ok(JSValue::Number(value))
+    Ok(JSValue::from_number(value))
 }
 
 fn date_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let milliseconds = match args.get(1) {
-        None | Some(JSValue::Undefined) => epoch_milliseconds().floor(),
+        None => epoch_milliseconds().floor(),
+        Some(v) if &JSValue::undefined() == v => epoch_milliseconds().floor(),
         Some(value) => vm.to_number_value(value.clone())?,
     };
-    let Some(JSValue::Object(this)) = args.first() else {
-        return Ok(JSValue::Undefined);
+    let this = if let Some(v) = args.first()
+        && JsValueKind::Object == v.kind()
+    {
+        v.as_object().unwrap()
+    } else {
+        return Ok(JSValue::undefined());
     };
     this.borrow_mut()
-        .set(DATE_VALUE.to_string(), JSValue::Number(milliseconds));
-    Ok(JSValue::Undefined)
+        .set(DATE_VALUE.to_string(), JSValue::from_number(milliseconds));
+    Ok(JSValue::undefined())
 }
 
 fn date_call(_vm: &mut VM, _args: Vec<JSValue>) -> JSResult<JSValue> {
     // A full locale-sensitive Date string is not available yet. Returning a
     // stable timestamp string preserves the required callable shape while the
     // constructor and numeric methods remain standards-compatible.
-    Ok(JSValue::String(epoch_milliseconds().floor().to_string()))
+    Ok(JSValue::from_string(
+        epoch_milliseconds().floor().to_string(),
+    ))
 }
 
 fn date_value(args: &[JSValue], method: &str) -> JSResult<f64> {
@@ -66,11 +74,11 @@ fn date_value(args: &[JSValue], method: &str) -> JSResult<f64> {
 }
 
 fn date_get_time(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(JSValue::Number(date_value(&args, "getTime")?))
+    Ok(JSValue::from_number(date_value(&args, "getTime")?))
 }
 
 fn date_value_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(JSValue::Number(date_value(&args, "valueOf")?))
+    Ok(JSValue::from_number(date_value(&args, "valueOf")?))
 }
 
 fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
@@ -254,6 +262,6 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     date.set("parse".to_string(), JSValue::NativeFunction(date_parse));
     global.borrow_mut().set(
         "Date".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(date))),
+        JSValue::from_object(Rc::new(RefCell::new(date))),
     );
 }

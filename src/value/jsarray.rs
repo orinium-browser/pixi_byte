@@ -38,14 +38,14 @@ impl JSArray {
         self.elements
             .get(index)
             .cloned()
-            .unwrap_or(JSValue::Undefined)
+            .unwrap_or_else(JSValue::undefined)
     }
 
     /// インデックスで要素を設定
     pub fn set(&mut self, index: usize, value: JSValue) {
         // インデックスが配列の長さを超える場合、undefinedで埋める
         if index >= self.elements.len() {
-            self.elements.resize(index + 1, JSValue::Undefined);
+            self.elements.resize(index + 1, JSValue::undefined());
         }
         self.elements[index] = value;
     }
@@ -57,7 +57,7 @@ impl JSArray {
 
     /// 配列の末尾から要素を削除（pop）
     pub fn pop(&mut self) -> JSValue {
-        self.elements.pop().unwrap_or(JSValue::Undefined)
+        self.elements.pop().unwrap_or_else(JSValue::undefined)
     }
 
     /// 配列の先頭に要素を追加（unshift）
@@ -68,7 +68,7 @@ impl JSArray {
     /// 配列の先頭から要素を削除（shift）
     pub fn shift(&mut self) -> JSValue {
         if self.elements.is_empty() {
-            JSValue::Undefined
+            JSValue::undefined()
         } else {
             self.elements.remove(0)
         }
@@ -89,7 +89,7 @@ impl JSArray {
         obj.define_property(
             "__pixi_array__".to_string(),
             Property {
-                value: JSValue::Boolean(true),
+                value: JSValue::from_bool(true),
                 enumerable: false,
                 writable: false,
                 configurable: false,
@@ -100,7 +100,7 @@ impl JSArray {
         obj.define_property(
             "length".to_string(),
             Property {
-                value: JSValue::Number(len as f64),
+                value: JSValue::from_number(len as f64),
                 enumerable: false,
                 writable: true,
                 configurable: false,
@@ -109,7 +109,7 @@ impl JSArray {
             },
         );
 
-        JSValue::Object(Rc::new(RefCell::new(obj)))
+        JSValue::from_object(Rc::new(RefCell::new(obj)))
     }
 
     /// 配列の参照を取得
