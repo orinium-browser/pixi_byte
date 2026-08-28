@@ -1717,7 +1717,7 @@ impl VM {
 
                 all.extend(args);
 
-                self.call(*bound.target, bound.bound_this.clone(), all)
+                self.call(bound.target.as_ref().clone(), bound.bound_this.clone(), all)
             }
 
             JsValueKind::NativeFunction => {
@@ -1767,7 +1767,7 @@ impl VM {
                     None,
                     false,
                 )?;
-                let this = lexical_this.map(|this| *this).unwrap_or(this);
+                let this = lexical_this.as_deref().cloned().unwrap_or(this);
                 self.with_call_frame(env, this, chunk.clone(), None)
             }
 

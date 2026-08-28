@@ -1,6 +1,6 @@
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
-use crate::value::jsvalue::BoundFunctionData;
+use crate::value::jsvalue::{BoundFunctionData, JsValueKind};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -10,14 +10,14 @@ fn dynamic_function_stub(
     _vm: &mut crate::vm::VM,
     _args: Vec<JSValue>,
 ) -> crate::error::JSResult<JSValue> {
-    Ok(JSValue::Undefined)
+    Ok(JSValue::undefined())
 }
 
 fn function_constructor(
     _vm: &mut crate::vm::VM,
     _args: Vec<JSValue>,
 ) -> crate::error::JSResult<JSValue> {
-    Ok(JSValue::NativeFunction(dynamic_function_stub))
+    Ok(JSValue::from_native_function(dynamic_function_stub))
 }
 
 fn function_call(
@@ -34,7 +34,7 @@ fn function_call(
     let this_arg = if !args.is_empty() {
         args.remove(0)
     } else {
-        JSValue::Undefined
+        JSValue::undefined()
     };
 
     vm.call(func, this_arg, args)
@@ -53,18 +53,19 @@ fn function_apply(
     let this_arg = if !args.is_empty() {
         args.remove(0)
     } else {
-        JSValue::Undefined
+        JSValue::undefined()
     };
     let args_array = if !args.is_empty() {
         args.remove(0)
     } else {
-        JSValue::Undefined
+        JSValue::undefined()
     };
 
     // build argument vector from args_array
     let mut call_args_vec: Vec<JSValue> = Vec::new();
-    match args_array {
-        JSValue::Object(arr_ref) => {
+    match args_array.kind() {
+        JsValueKind::Object => {
+            let arr_ref = args_array.as_object().unwrap();
             let len_val = arr_ref.borrow().get("length");
             let mut len = len_val.to_number();
             if len.is_nan() {
@@ -77,7 +78,7 @@ fn function_apply(
                 idx += 1;
             }
         }
-        JSValue::Undefined | JSValue::Null => {}
+        JsValueKind::Undefined | JsValueKind::Null => {}
         _ => {
             return Err(crate::error::JSError::TypeError(
                 "Function.prototype.apply: second argument must be an array or null/undefined"
@@ -103,30 +104,34 @@ fn function_bind(
     let this_arg = if !args.is_empty() {
         args.remove(0)
     } else {
-        JSValue::Undefined
+        JSValue::undefined()
     };
     let bound_args = args; // remaining
 
-    match func {
-        JSValue::BoundFunction(boxed) => {
+    match func.kind() {
+        JsValueKind::BoundFunction => {
+            let boxed = func.as_bound_function().unwrap();
             // If already bound, preserve original target and bound_this, concatenate args
             let mut new_args = boxed.bound_args.clone();
             new_args.extend(bound_args);
             let bf =
                 BoundFunctionData::new((*boxed.target).clone(), boxed.bound_this.clone(), new_args);
-            Ok(JSValue::BoundFunction(Box::new(bf)))
+            Ok(JSValue::from_bound_function(bf))
         }
-        JSValue::Function(..) | JSValue::ArrowFunction(..) | JSValue::NativeFunction(_) => {
+        JsValueKind::Function | JsValueKind::ArrowFunction | JsValueKind::NativeFunction => {
             // create bound function wrapper
             let bf = BoundFunctionData::new(func.clone(), this_arg, bound_args);
-            Ok(JSValue::BoundFunction(Box::new(bf)))
+            Ok(JSValue::from_bound_function(bf))
         }
-        JSValue::Object(object)
-            if !matches!(object.borrow().get("__call__"), JSValue::Undefined) =>
+        JsValueKind::Object
+            if !matches!(
+                func.as_object().unwrap().borrow().get("__call__").kind(),
+                JsValueKind::Undefined
+            ) =>
         {
-            let func = JSValue::Object(object);
+            let func = JSValue::from_object(func.as_object().unwrap());
             let bf = BoundFunctionData::new(func, this_arg, bound_args);
-            Ok(JSValue::BoundFunction(Box::new(bf)))
+            Ok(JSValue::from_bound_function(bf))
         }
         _ => Err(crate::error::JSError::TypeError(
             "Function.prototype.bind: receiver is not a function".to_string(),
@@ -138,32 +143,52 @@ pub fn install(global: &Rc<RefCell<JSObject>>) -> Rc<RefCell<JSObject>> {
     // Create Function constructor-like object (minimal)
     let mut fn_ctor = JSObject::new();
     // Function.prototype object
-    let object_prototype = match global.borrow().get("Object") {
-        JSValue::Object(constructor) => match constructor.borrow().get("prototype") {
-            JSValue::Object(prototype) => Some(prototype),
+    let object_prototype = {
+        let object = global.borrow().get("Object");
+        match object.kind() {
+            JsValueKind::Object => {
+                let constructor = object.as_object().unwrap();
+                let prototype = constructor.borrow().get("prototype");
+
+                match prototype.kind() {
+                    JsValueKind::Object => Some(prototype.as_object().unwrap()),
+                    _ => None,
+                }
+            }
             _ => None,
-        },
-        _ => None,
+        }
     };
     let mut proto = JSObject::with_prototype(object_prototype);
-    proto.set("call".to_string(), JSValue::NativeFunction(function_call));
-    proto.set("apply".to_string(), JSValue::NativeFunction(function_apply));
-    proto.set("bind".to_string(), JSValue::NativeFunction(function_bind));
+    proto.set(
+        "call".to_string(),
+        JSValue::from_native_function(function_call),
+    );
+    proto.set(
+        "apply".to_string(),
+        JSValue::from_native_function(function_apply),
+    );
+    proto.set(
+        "bind".to_string(),
+        JSValue::from_native_function(function_bind),
+    );
     let fn_proto = Rc::new(RefCell::new(proto));
     fn_ctor.set(
         "__call__".to_string(),
-        JSValue::NativeFunction(function_constructor),
+        JSValue::from_native_function(function_constructor),
     );
     fn_ctor.set(
         "__construct__".to_string(),
-        JSValue::NativeFunction(function_constructor),
+        JSValue::from_native_function(function_constructor),
     );
     fn_ctor.set_prototype(Some(Rc::clone(&fn_proto)));
-    fn_ctor.set("prototype".to_string(), JSValue::Object(fn_proto.clone()));
+    fn_ctor.set(
+        "prototype".to_string(),
+        JSValue::from_object(fn_proto.clone()),
+    );
 
     global.borrow_mut().set(
         "Function".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(fn_ctor))),
+        JSValue::from_object(Rc::new(RefCell::new(fn_ctor))),
     );
 
     fn_proto

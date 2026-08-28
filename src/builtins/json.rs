@@ -1,6 +1,7 @@
 use crate::error::{JSError, JSResult};
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
+use crate::value::jsvalue::JsValueKind;
 use crate::vm::VM;
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -33,27 +34,29 @@ fn serialize(
     stack: &mut HashSet<usize>,
     in_array: bool,
 ) -> JSResult<Option<String>> {
-    match value {
-        JSValue::Undefined
-        | JSValue::Function(..)
-        | JSValue::ArrowFunction(..)
-        | JSValue::NativeFunction(_)
-        | JSValue::BoundFunction(..) => Ok(in_array.then(|| "null".to_string())),
-        JSValue::Null => Ok(Some("null".to_string())),
-        JSValue::Boolean(value) => Ok(Some(value.to_string())),
-        JSValue::Number(value) => {
+    match value.kind() {
+        JsValueKind::Undefined
+        | JsValueKind::Function
+        | JsValueKind::ArrowFunction
+        | JsValueKind::NativeFunction
+        | JsValueKind::BoundFunction => Ok(in_array.then(|| "null".to_string())),
+        JsValueKind::Null => Ok(Some("null".to_string())),
+        JsValueKind::Boolean => Ok(Some(value.as_boolean().unwrap().to_string())),
+        JsValueKind::Number => {
+            let value = value.as_number().unwrap();
             if value.is_finite() {
-                Ok(Some(JSValue::Number(*value).to_string()))
+                Ok(Some(JSValue::from_number(value).to_string()))
             } else {
                 Ok(Some("null".to_string()))
             }
         }
-        JSValue::BigInt(_) => Err(JSError::TypeError(
+        JsValueKind::BigInt => Err(JSError::TypeError(
             "Do not know how to serialize a BigInt".to_string(),
         )),
-        JSValue::String(value) => Ok(Some(quote(value))),
-        JSValue::Object(object) => {
-            let identity = Rc::as_ptr(object) as usize;
+        JsValueKind::String => Ok(Some(quote(value.as_string().unwrap()))),
+        JsValueKind::Object => {
+            let object = value.as_object().unwrap();
+            let identity = Rc::as_ptr(&object) as usize;
             if !stack.insert(identity) {
                 return Err(JSError::TypeError(
                     "Converting circular structure to JSON".to_string(),
@@ -62,7 +65,7 @@ fn serialize(
 
             let (is_array, entries): (bool, Vec<(String, JSValue)>) = {
                 let object = object.borrow();
-                let is_array = matches!(object.get("__pixi_array__"), JSValue::Boolean(true));
+                let is_array = object.get("__pixi_array__") == JSValue::from_bool(true);
                 if is_array {
                     let length = object.get("length").to_number().max(0.0) as usize;
                     let entries = (0..length)
@@ -107,10 +110,11 @@ fn serialize(
 }
 
 fn json_stringify(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let value = args.get(1).unwrap_or(&JSValue::Undefined);
+    let undefined = JSValue::undefined();
+    let value = args.get(1).unwrap_or(&undefined);
     Ok(serialize(value, &mut HashSet::new(), false)?
-        .map(JSValue::String)
-        .unwrap_or(JSValue::Undefined))
+        .map(JSValue::from_string)
+        .unwrap_or(JSValue::undefined()))
 }
 
 struct JsonParser<'a> {
@@ -132,10 +136,10 @@ impl JsonParser<'_> {
     fn parse_value(&mut self, vm: &mut VM) -> JSResult<JSValue> {
         self.skip_whitespace();
         match self.source.get(self.offset).copied() {
-            Some(b'n') => self.keyword(b"null", JSValue::Null),
-            Some(b't') => self.keyword(b"true", JSValue::Boolean(true)),
-            Some(b'f') => self.keyword(b"false", JSValue::Boolean(false)),
-            Some(b'"') => self.parse_string().map(JSValue::String),
+            Some(b'n') => self.keyword(b"null", JSValue::null()),
+            Some(b't') => self.keyword(b"true", JSValue::from_bool(true)),
+            Some(b'f') => self.keyword(b"false", JSValue::from_bool(false)),
+            Some(b'"') => self.parse_string().map(JSValue::from_string),
             Some(b'[') => self.parse_array(vm),
             Some(b'{') => self.parse_object(vm),
             Some(b'-' | b'0'..=b'9') => self.parse_number(),
@@ -292,7 +296,7 @@ impl JsonParser<'_> {
                     crate::lexer::token::Span::new(self.offset, self.offset, 0, 0),
                 )
             })?;
-        Ok(JSValue::Number(number))
+        Ok(JSValue::from_number(number))
     }
 
     fn parse_array(&mut self, vm: &mut VM) -> JSResult<JSValue> {
@@ -322,7 +326,7 @@ impl JsonParser<'_> {
             self.skip_whitespace();
             if self.source.get(self.offset) == Some(&b'}') {
                 self.offset += 1;
-                return Ok(JSValue::Object(Rc::new(RefCell::new(object))));
+                return Ok(JSValue::from_object(Rc::new(RefCell::new(object))));
             }
             if !first {
                 if self.source.get(self.offset) != Some(&b',') {
@@ -355,7 +359,8 @@ impl JsonParser<'_> {
 }
 
 fn json_parse(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let source = args.get(1).unwrap_or(&JSValue::Undefined).to_string();
+    let undefined = JSValue::undefined();
+    let source = args.get(1).unwrap_or(&undefined).to_string();
     let mut parser = JsonParser {
         source: source.as_bytes(),
         offset: 0,
@@ -372,11 +377,14 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut json = JSObject::new();
     json.set(
         "stringify".to_string(),
-        JSValue::NativeFunction(json_stringify),
+        JSValue::from_native_function(json_stringify),
     );
-    json.set("parse".to_string(), JSValue::NativeFunction(json_parse));
+    json.set(
+        "parse".to_string(),
+        JSValue::from_native_function(json_parse),
+    );
     global.borrow_mut().set(
         "JSON".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(json))),
+        JSValue::from_object(Rc::new(RefCell::new(json))),
     );
 }

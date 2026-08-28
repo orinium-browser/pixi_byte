@@ -7,24 +7,27 @@ use crate::builtins::regexp;
 use crate::error::{JSError, JSResult};
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
+use crate::value::jsvalue::JsValueKind;
 use crate::vm::VM;
 
 fn receiver(args: &[JSValue], method: &str) -> JSResult<String> {
     match args.first() {
-        Some(JSValue::Null | JSValue::Undefined) | None => Err(JSError::TypeError(format!(
+        Some(value) if !matches!(value.kind(), JsValueKind::Null | JsValueKind::Undefined) => {
+            Ok(value.to_string())
+        }
+        _ => Err(JSError::TypeError(format!(
             "String.prototype.{method}: invalid receiver"
         ))),
-        Some(value) => Ok(value.to_string()),
     }
 }
 
 fn is_callable(value: &JSValue) -> bool {
     matches!(
-        value,
-        JSValue::Function(..)
-            | JSValue::ArrowFunction(..)
-            | JSValue::NativeFunction(..)
-            | JSValue::BoundFunction(..)
+        value.kind(),
+        JsValueKind::Function
+            | JsValueKind::ArrowFunction
+            | JsValueKind::NativeFunction
+            | JsValueKind::BoundFunction
     )
 }
 
@@ -41,7 +44,7 @@ fn string_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         Some(value) => vm.to_string_value(value.clone())?,
         None => String::new(),
     };
-    Ok(JSValue::String(value))
+    Ok(JSValue::from_string(value))
 }
 
 fn string_from_char_code(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -50,18 +53,21 @@ fn string_from_char_code(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> 
         .skip(1)
         .map(|value| value.to_number() as u16)
         .collect();
-    Ok(JSValue::String(String::from_utf16_lossy(&units)))
+    Ok(JSValue::from_string(String::from_utf16_lossy(&units)))
 }
 
 fn string_raw(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let Some(JSValue::Object(template)) = args.get(1) else {
-        return Err(JSError::TypeError(
-            "String.raw requires a template object".to_string(),
-        ));
+    let template = match args.get(1) {
+        Some(value) if value.kind() == JsValueKind::Object => value.as_object().unwrap(),
+        _ => {
+            return Err(JSError::TypeError(
+                "String.raw requires a template object".to_string(),
+            ));
+        }
     };
     let raw = match template.borrow().get("raw") {
-        JSValue::Object(raw) => raw,
-        _ => Rc::clone(template),
+        value if value.kind() == JsValueKind::Object => value.as_object().unwrap().clone(),
+        _ => Rc::clone(&template),
     };
     let length = raw.borrow().get("length").to_number().max(0.0) as usize;
     let mut output = String::new();
@@ -72,12 +78,12 @@ fn string_raw(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
                 &args
                     .get(index + 2)
                     .cloned()
-                    .unwrap_or(JSValue::Undefined)
+                    .unwrap_or(JSValue::undefined())
                     .to_string(),
             );
         }
     }
-    Ok(JSValue::String(output))
+    Ok(JSValue::from_string(output))
 }
 
 fn string_concat(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -85,19 +91,18 @@ fn string_concat(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     for value in args.into_iter().skip(1) {
         output.push_str(&vm.to_string_value(value)?);
     }
-    Ok(JSValue::String(output))
+    Ok(JSValue::from_string(output))
 }
 
 fn string_replace(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = receiver(&args, "replace")?;
-    let search = args.get(1).cloned().unwrap_or(JSValue::Undefined);
-    let replacement = args.get(2).cloned().unwrap_or(JSValue::Undefined);
+    let search = args.get(1).cloned().unwrap_or(JSValue::undefined());
+    let replacement = args.get(2).cloned().unwrap_or(JSValue::undefined());
 
-    if let JSValue::Object(expression) = &search
-        && regexp::is_regexp(expression)
-    {
-        let regex = regexp::compile(expression)?;
-        let global = regexp::flags(expression).contains('g');
+    if JsValueKind::Object == search.kind() && regexp::is_regexp(&search.as_object().unwrap()) {
+        let expression = search.as_object().unwrap();
+        let regex = regexp::compile(&expression)?;
+        let global = regexp::flags(&expression).contains('g');
         let mut output = String::new();
         let mut last_end = 0;
         for captures in regex.captures_iter(&input) {
@@ -120,19 +125,19 @@ fn string_replace(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
             }
         }
         if last_end == 0 && !regex.is_match(&input) {
-            return Ok(JSValue::String(input));
+            return Ok(JSValue::from_string(input));
         }
         output.push_str(&input[last_end..]);
-        return Ok(JSValue::String(output));
+        return Ok(JSValue::from_string(output));
     }
 
     let needle = vm.to_string_value(search)?;
     let Some(start) = input.find(&needle) else {
-        return Ok(JSValue::String(input));
+        return Ok(JSValue::from_string(input));
     };
     let end = start + needle.len();
     let replacement = replacement_text(vm, &replacement, &input, start, end, vec![Some(needle)])?;
-    Ok(JSValue::String(format!(
+    Ok(JSValue::from_string(format!(
         "{}{}{}",
         &input[..start],
         replacement,
@@ -154,13 +159,13 @@ fn replacement_text(
             .map(|capture| {
                 capture
                     .as_ref()
-                    .map(|capture| JSValue::String(capture.clone()))
-                    .unwrap_or(JSValue::Undefined)
+                    .map(|capture| JSValue::from_string(capture.clone()))
+                    .unwrap_or(JSValue::undefined())
             })
             .collect();
-        arguments.push(JSValue::Number(start as f64));
-        arguments.push(JSValue::String(input.to_string()));
-        let result = vm.call(replacement.clone(), JSValue::Undefined, arguments)?;
+        arguments.push(JSValue::from_number(start as f64));
+        arguments.push(JSValue::from_string(input.to_string()));
+        let result = vm.call(replacement.clone(), JSValue::undefined(), arguments)?;
         return vm.to_string_value(result);
     }
 
@@ -197,75 +202,90 @@ fn string_split(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = receiver(&args, "split")?;
     let limit = args
         .get(2)
-        .filter(|value| !matches!(value, JSValue::Undefined))
+        .filter(|value| value.kind() != JsValueKind::Undefined)
         .map(JSValue::to_number)
         .unwrap_or(u32::MAX as f64) as usize;
+
     let parts: Vec<String> = match args.get(1) {
-        None | Some(JSValue::Undefined) => vec![input],
-        Some(JSValue::Object(expression)) if regexp::is_regexp(expression) => {
-            regexp::compile(expression)?
-                .split(&input)
-                .take(limit)
-                .map(str::to_string)
-                .collect()
-        }
-        Some(separator) => {
-            let separator = separator.to_string();
-            if separator.is_empty() {
-                input
-                    .chars()
-                    .take(limit)
-                    .map(|character| character.to_string())
-                    .collect()
-            } else {
-                input
-                    .split(&separator)
+        None => vec![input],
+        Some(value) => match value.kind() {
+            JsValueKind::Undefined => vec![input],
+            JsValueKind::Object if regexp::is_regexp(&value.as_object().unwrap()) => {
+                regexp::compile(&value.as_object().unwrap())?
+                    .split(&input)
                     .take(limit)
                     .map(str::to_string)
                     .collect()
             }
-        }
+            _ => {
+                let separator = value.to_string();
+
+                if separator.is_empty() {
+                    input
+                        .chars()
+                        .take(limit)
+                        .map(|character| character.to_string())
+                        .collect()
+                } else {
+                    input
+                        .split(&separator)
+                        .take(limit)
+                        .map(str::to_string)
+                        .collect()
+                }
+            }
+        },
     };
-    Ok(vm.array_from_values(parts.into_iter().map(JSValue::String).collect()))
+
+    Ok(vm.array_from_values(parts.into_iter().map(JSValue::from_string).collect()))
 }
 
 fn string_trim(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(JSValue::String(receiver(&args, "trim")?.trim().to_string()))
+    Ok(JSValue::from_string(
+        receiver(&args, "trim")?.trim().to_string(),
+    ))
 }
 
 fn string_match(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = receiver(&args, "match")?;
     let expression = match args.get(1) {
-        Some(JSValue::Object(expression)) if regexp::is_regexp(expression) => Rc::clone(expression),
+        Some(value)
+            if value.kind() == JsValueKind::Object
+                && regexp::is_regexp(&value.as_object().unwrap()) =>
+        {
+            Rc::clone(&value.as_object().unwrap())
+        }
         value => {
             let pattern = value.map(JSValue::to_string).unwrap_or_default();
-            let JSValue::Object(expression) = regexp::create(&regex::escape(&pattern), "") else {
-                unreachable!();
-            };
-            expression
+            let expression = regexp::create(&regex::escape(&pattern), "");
+
+            match expression.kind() {
+                JsValueKind::Object => expression.as_object().unwrap().clone(),
+                _ => unreachable!(),
+            }
         }
     };
     let regex = regexp::compile(&expression)?;
     if regexp::flags(&expression).contains('g') {
         let matches: Vec<_> = regex
             .find_iter(&input)
-            .map(|matched| JSValue::String(matched.as_str().to_string()))
+            .map(|matched| JSValue::from_str(matched.as_str()))
             .collect();
         return if matches.is_empty() {
-            Ok(JSValue::Null)
+            Ok(JSValue::null())
         } else {
             Ok(vm.array_from_values(matches))
         };
     }
     let Some(captures) = regex.captures(&input) else {
-        return Ok(JSValue::Null);
+        return Ok(JSValue::null());
     };
     let values = captures
         .iter()
         .map(|capture| {
             capture
-                .map(|capture| JSValue::String(capture.as_str().to_string()))
-                .unwrap_or(JSValue::Undefined)
+                .map(|capture| JSValue::from_string(capture.as_str().to_string()))
+                .unwrap_or(JSValue::undefined())
         })
         .collect();
     Ok(vm.array_from_values(values))
@@ -276,7 +296,7 @@ fn string_includes(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let needle = args.get(1).map(JSValue::to_string).unwrap_or_default();
     let start = args.get(2).map(JSValue::to_number).unwrap_or(0.0).max(0.0) as usize;
     let start = byte_index(&input, start);
-    Ok(JSValue::Boolean(input[start..].contains(&needle)))
+    Ok(JSValue::from_bool(input[start..].contains(&needle)))
 }
 
 fn string_starts_with(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -284,7 +304,7 @@ fn string_starts_with(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let needle = args.get(1).map(JSValue::to_string).unwrap_or_default();
     let start = args.get(2).map(JSValue::to_number).unwrap_or(0.0).max(0.0) as usize;
     let start = byte_index(&input, start);
-    Ok(JSValue::Boolean(input[start..].starts_with(&needle)))
+    Ok(JSValue::from_bool(input[start..].starts_with(&needle)))
 }
 
 fn string_ends_with(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -297,29 +317,29 @@ fn string_ends_with(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         .unwrap_or(length as f64)
         .max(0.0) as usize;
     let end = byte_index(&input, end.min(length));
-    Ok(JSValue::Boolean(input[..end].ends_with(&needle)))
+    Ok(JSValue::from_bool(input[..end].ends_with(&needle)))
 }
 
 fn string_to_lower_case(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(JSValue::String(
+    Ok(JSValue::from_string(
         receiver(&args, "toLowerCase")?.to_lowercase(),
     ))
 }
 
 fn string_to_upper_case(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(JSValue::String(
+    Ok(JSValue::from_string(
         receiver(&args, "toUpperCase")?.to_uppercase(),
     ))
 }
 
 fn string_to_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(JSValue::String(receiver(&args, "toString")?))
+    Ok(JSValue::from_string(receiver(&args, "toString")?))
 }
 
 fn string_char_at(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = receiver(&args, "charAt")?;
     let index = args.get(1).map(JSValue::to_number).unwrap_or(0.0) as usize;
-    Ok(JSValue::String(
+    Ok(JSValue::from_string(
         input
             .chars()
             .nth(index)
@@ -332,9 +352,9 @@ fn string_char_code_at(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = receiver(&args, "charCodeAt")?;
     let index = args.get(1).map(JSValue::to_number).unwrap_or(0.0);
     if !index.is_finite() || index < 0.0 {
-        return Ok(JSValue::Number(f64::NAN));
+        return Ok(JSValue::from_number(f64::NAN));
     }
-    Ok(JSValue::Number(
+    Ok(JSValue::from_number(
         input
             .encode_utf16()
             .nth(index.trunc() as usize)
@@ -357,7 +377,7 @@ fn string_substring(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     if start > end {
         std::mem::swap(&mut start, &mut end);
     }
-    Ok(JSValue::String(
+    Ok(JSValue::from_string(
         input.chars().skip(start).take(end - start).collect(),
     ))
 }
@@ -375,7 +395,7 @@ fn string_slice(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     };
     let start = normalize(args.get(1), 0);
     let end = normalize(args.get(2), length).max(start);
-    Ok(JSValue::String(
+    Ok(JSValue::from_string(
         input
             .chars()
             .skip(start as usize)
@@ -394,7 +414,7 @@ fn string_index_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         .and_then(|suffix| suffix.find(&needle).map(|index| index + start))
         .map(|index| input[..index].encode_utf16().count() as f64)
         .unwrap_or(-1.0);
-    Ok(JSValue::Number(index))
+    Ok(JSValue::from_number(index))
 }
 
 fn string_last_index_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -420,10 +440,10 @@ fn string_last_index_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         }
     };
     if needle.is_empty() {
-        return Ok(JSValue::Number(position as f64));
+        return Ok(JSValue::from_number(position as f64));
     }
     if needle.len() > input.len() {
-        return Ok(JSValue::Number(-1.0));
+        return Ok(JSValue::from_number(-1.0));
     }
     let last_start = position.min(input.len() - needle.len());
     let index = (0..=last_start)
@@ -431,7 +451,7 @@ fn string_last_index_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         .find(|start| input[*start..*start + needle.len()] == needle)
         .map(|index| index as f64)
         .unwrap_or(-1.0);
-    Ok(JSValue::Number(index))
+    Ok(JSValue::from_number(index))
 }
 
 /// Installs String and the methods used by React's production bundle.
@@ -439,82 +459,97 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut prototype = JSObject::new();
     prototype.set(
         "replace".to_string(),
-        JSValue::NativeFunction(string_replace),
+        JSValue::from_native_function(string_replace),
     );
-    prototype.set("concat".to_string(), JSValue::NativeFunction(string_concat));
-    prototype.set("split".to_string(), JSValue::NativeFunction(string_split));
-    prototype.set("trim".to_string(), JSValue::NativeFunction(string_trim));
-    prototype.set("match".to_string(), JSValue::NativeFunction(string_match));
+    prototype.set(
+        "concat".to_string(),
+        JSValue::from_native_function(string_concat),
+    );
+    prototype.set(
+        "split".to_string(),
+        JSValue::from_native_function(string_split),
+    );
+    prototype.set(
+        "trim".to_string(),
+        JSValue::from_native_function(string_trim),
+    );
+    prototype.set(
+        "match".to_string(),
+        JSValue::from_native_function(string_match),
+    );
     prototype.set(
         "includes".to_string(),
-        JSValue::NativeFunction(string_includes),
+        JSValue::from_native_function(string_includes),
     );
     prototype.set(
         "startsWith".to_string(),
-        JSValue::NativeFunction(string_starts_with),
+        JSValue::from_native_function(string_starts_with),
     );
     prototype.set(
         "endsWith".to_string(),
-        JSValue::NativeFunction(string_ends_with),
+        JSValue::from_native_function(string_ends_with),
     );
     prototype.set(
         "toLowerCase".to_string(),
-        JSValue::NativeFunction(string_to_lower_case),
+        JSValue::from_native_function(string_to_lower_case),
     );
     prototype.set(
         "toUpperCase".to_string(),
-        JSValue::NativeFunction(string_to_upper_case),
+        JSValue::from_native_function(string_to_upper_case),
     );
     prototype.set(
         "toString".to_string(),
-        JSValue::NativeFunction(string_to_string),
+        JSValue::from_native_function(string_to_string),
     );
     prototype.set(
         "valueOf".to_string(),
-        JSValue::NativeFunction(string_to_string),
+        JSValue::from_native_function(string_to_string),
     );
     prototype.set(
         "charAt".to_string(),
-        JSValue::NativeFunction(string_char_at),
+        JSValue::from_native_function(string_char_at),
     );
     prototype.set(
         "charCodeAt".to_string(),
-        JSValue::NativeFunction(string_char_code_at),
+        JSValue::from_native_function(string_char_code_at),
     );
     prototype.set(
         "substring".to_string(),
-        JSValue::NativeFunction(string_substring),
+        JSValue::from_native_function(string_substring),
     );
-    prototype.set("slice".to_string(), JSValue::NativeFunction(string_slice));
+    prototype.set(
+        "slice".to_string(),
+        JSValue::from_native_function(string_slice),
+    );
     prototype.set(
         "indexOf".to_string(),
-        JSValue::NativeFunction(string_index_of),
+        JSValue::from_native_function(string_index_of),
     );
     prototype.set(
         "lastIndexOf".to_string(),
-        JSValue::NativeFunction(string_last_index_of),
+        JSValue::from_native_function(string_last_index_of),
     );
 
     let mut constructor = JSObject::new();
     constructor.set(
         "__call__".to_string(),
-        JSValue::NativeFunction(string_constructor),
+        JSValue::from_native_function(string_constructor),
     );
     constructor.set(
         "__construct__".to_string(),
-        JSValue::NativeFunction(string_constructor),
+        JSValue::from_native_function(string_constructor),
     );
     constructor.set(
         "fromCharCode".to_string(),
-        JSValue::NativeFunction(string_from_char_code),
+        JSValue::from_native_function(string_from_char_code),
     );
-    constructor.set("raw".to_string(), JSValue::NativeFunction(string_raw));
+    constructor.set("raw".to_string(), JSValue::from_native_function(string_raw));
     constructor.set(
         "prototype".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(prototype))),
+        JSValue::from_object(Rc::new(RefCell::new(prototype))),
     );
     global.borrow_mut().set(
         "String".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(constructor))),
+        JSValue::from_object(Rc::new(RefCell::new(constructor))),
     );
 }

@@ -60,13 +60,17 @@ fn date_call(_vm: &mut VM, _args: Vec<JSValue>) -> JSResult<JSValue> {
 }
 
 fn date_value(args: &[JSValue], method: &str) -> JSResult<f64> {
-    let Some(JSValue::Object(this)) = args.first() else {
-        return Err(crate::error::JSError::TypeError(format!(
-            "Date.prototype.{method}: invalid receiver"
-        )));
+    let this = match args.first() {
+        Some(value) if value.kind() == JsValueKind::Object => value.as_object().unwrap(),
+        _ => {
+            return Err(crate::error::JSError::TypeError(format!(
+                "Date.prototype.{method}: invalid receiver"
+            )));
+        }
     };
-    match this.borrow().get(DATE_VALUE) {
-        JSValue::Number(value) => Ok(value),
+
+    match this.borrow().get(DATE_VALUE).kind() {
+        JsValueKind::Number => Ok(this.borrow().get(DATE_VALUE).as_number().unwrap()),
         _ => Err(crate::error::JSError::TypeError(format!(
             "Date.prototype.{method}: invalid receiver"
         ))),
@@ -119,24 +123,24 @@ fn date_parts(args: &[JSValue], method: &str) -> JSResult<(i32, u32, u32)> {
 
 fn date_get_date(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let (_, _, day) = date_parts(&args, "getDate")?;
-    Ok(JSValue::Number(day as f64))
+    Ok(JSValue::from_number(day as f64))
 }
 
 fn date_get_month(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let (_, month, _) = date_parts(&args, "getMonth")?;
-    Ok(JSValue::Number(month.saturating_sub(1) as f64))
+    Ok(JSValue::from_number(month.saturating_sub(1) as f64))
 }
 
 fn date_get_full_year(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let (year, _, _) = date_parts(&args, "getFullYear")?;
-    Ok(JSValue::Number(year as f64))
+    Ok(JSValue::from_number(year as f64))
 }
 
 fn date_set_date(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let milliseconds = date_value(&args, "setDate")?;
     let requested_day = args
         .get(1)
-        .unwrap_or(&JSValue::Undefined)
+        .unwrap_or(&JSValue::undefined())
         .to_number()
         .trunc() as i64;
     let days = (milliseconds / 86_400_000.0).floor() as i64;
@@ -144,18 +148,24 @@ fn date_set_date(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let (year, month, _) = civil_from_days(days);
     let updated =
         days_from_civil(year, month, requested_day) as f64 * 86_400_000.0 + time_within_day;
-    if let Some(JSValue::Object(this)) = args.first() {
-        this.borrow_mut()
-            .set(DATE_VALUE.to_string(), JSValue::Number(updated));
+    match args.first() {
+        Some(value) if value.kind() == JsValueKind::Object => {
+            value
+                .as_object()
+                .unwrap()
+                .borrow_mut()
+                .set(DATE_VALUE.to_string(), JSValue::from_number(updated));
+        }
+        _ => {}
     }
-    Ok(JSValue::Number(updated))
+    Ok(JSValue::from_number(updated))
 }
 
 fn set_date_year(args: &[JSValue], method: &str, legacy: bool) -> JSResult<JSValue> {
     let milliseconds = date_value(args, method)?;
     let mut requested_year = args
         .get(1)
-        .unwrap_or(&JSValue::Undefined)
+        .unwrap_or(&JSValue::undefined())
         .to_number()
         .trunc() as i32;
     if legacy && (0..=99).contains(&requested_year) {
@@ -166,11 +176,16 @@ fn set_date_year(args: &[JSValue], method: &str, legacy: bool) -> JSResult<JSVal
     let (_, month, day) = civil_from_days(days);
     let updated = days_from_civil(requested_year, month, i64::from(day)) as f64 * 86_400_000.0
         + time_within_day;
-    if let Some(JSValue::Object(this)) = args.first() {
-        this.borrow_mut()
-            .set(DATE_VALUE.to_string(), JSValue::Number(updated));
+    if let Some(value) = args.first()
+        && value.kind() == JsValueKind::Object
+    {
+        value
+            .as_object()
+            .unwrap()
+            .borrow_mut()
+            .set(DATE_VALUE.to_string(), JSValue::from_number(updated));
     }
-    Ok(JSValue::Number(updated))
+    Ok(JSValue::from_number(updated))
 }
 
 fn date_set_full_year(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -184,7 +199,7 @@ fn date_set_year(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 fn date_to_utc_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let milliseconds = date_value(&args, "toUTCString")?;
     if !milliseconds.is_finite() {
-        return Ok(JSValue::String("Invalid Date".to_string()));
+        return Ok(JSValue::from_str("Invalid Date"));
     }
     let days = (milliseconds / 86_400_000.0).floor() as i64;
     let within_day = milliseconds.rem_euclid(86_400_000.0) as u64;
@@ -197,7 +212,7 @@ fn date_to_utc_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let hour = within_day / 3_600_000;
     let minute = within_day / 60_000 % 60;
     let second = within_day / 1_000 % 60;
-    Ok(JSValue::String(format!(
+    Ok(JSValue::from_string(format!(
         "{}, {:02} {} {:04} {:02}:{:02}:{:02} GMT",
         weekdays[weekday],
         day,
@@ -213,53 +228,59 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut prototype = JSObject::new();
     prototype.set(
         "getTime".to_string(),
-        JSValue::NativeFunction(date_get_time),
+        JSValue::from_native_function(date_get_time),
     );
     prototype.set(
         "valueOf".to_string(),
-        JSValue::NativeFunction(date_value_of),
+        JSValue::from_native_function(date_value_of),
     );
     prototype.set(
         "getDate".to_string(),
-        JSValue::NativeFunction(date_get_date),
+        JSValue::from_native_function(date_get_date),
     );
     prototype.set(
         "getMonth".to_string(),
-        JSValue::NativeFunction(date_get_month),
+        JSValue::from_native_function(date_get_month),
     );
     prototype.set(
         "getFullYear".to_string(),
-        JSValue::NativeFunction(date_get_full_year),
+        JSValue::from_native_function(date_get_full_year),
     );
     prototype.set(
         "setDate".to_string(),
-        JSValue::NativeFunction(date_set_date),
+        JSValue::from_native_function(date_set_date),
     );
     prototype.set(
         "setFullYear".to_string(),
-        JSValue::NativeFunction(date_set_full_year),
+        JSValue::from_native_function(date_set_full_year),
     );
     prototype.set(
         "setYear".to_string(),
-        JSValue::NativeFunction(date_set_year),
+        JSValue::from_native_function(date_set_year),
     );
     prototype.set(
         "toUTCString".to_string(),
-        JSValue::NativeFunction(date_to_utc_string),
+        JSValue::from_native_function(date_to_utc_string),
     );
 
     let mut date = JSObject::new();
-    date.set("__call__".to_string(), JSValue::NativeFunction(date_call));
+    date.set(
+        "__call__".to_string(),
+        JSValue::from_native_function(date_call),
+    );
     date.set(
         "__construct__".to_string(),
-        JSValue::NativeFunction(date_constructor),
+        JSValue::from_native_function(date_constructor),
     );
     date.set(
         "prototype".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(prototype))),
+        JSValue::from_object(Rc::new(RefCell::new(prototype))),
     );
-    date.set("now".to_string(), JSValue::NativeFunction(date_now));
-    date.set("parse".to_string(), JSValue::NativeFunction(date_parse));
+    date.set("now".to_string(), JSValue::from_native_function(date_now));
+    date.set(
+        "parse".to_string(),
+        JSValue::from_native_function(date_parse),
+    );
     global.borrow_mut().set(
         "Date".to_string(),
         JSValue::from_object(Rc::new(RefCell::new(date))),

@@ -8,6 +8,7 @@ use regex::RegexBuilder;
 use crate::error::{JSError, JSResult};
 use crate::value::JSValue;
 use crate::value::jsobject::JSObject;
+use crate::value::jsvalue::JsValueKind;
 use crate::vm::VM;
 
 const PATTERN: &str = "__regexp_pattern";
@@ -288,14 +289,17 @@ pub(crate) fn is_regexp(object: &Rc<RefCell<JSObject>>) -> bool {
 }
 
 fn regexp_test(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let Some(JSValue::Object(object)) = args.first() else {
-        return Err(JSError::TypeError(
-            "RegExp.test: invalid receiver".to_string(),
-        ));
+    let object = match args.first() {
+        Some(value) if value.kind() == JsValueKind::Object => value.as_object().unwrap(),
+        _ => {
+            return Err(JSError::TypeError(
+                "RegExp.test: invalid receiver".to_string(),
+            ));
+        }
     };
     let input = args.get(1).map(JSValue::to_string).unwrap_or_default();
-    let expression = compile(object)?;
-    let flags = flags(object);
+    let expression = compile(&object)?;
+    let flags = flags(&object);
     let stateful = flags.contains('g') || flags.contains('y');
     let start = if stateful {
         let last_index = object.borrow().get("lastIndex").to_number().max(0.0) as usize;
@@ -304,8 +308,8 @@ fn regexp_test(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
             None => {
                 object
                     .borrow_mut()
-                    .set("lastIndex".to_string(), JSValue::Number(0.0));
-                return Ok(JSValue::Boolean(false));
+                    .set("lastIndex".to_string(), JSValue::from_number(0.0));
+                return Ok(JSValue::from_bool(false));
             }
         }
     } else {
@@ -320,28 +324,31 @@ fn regexp_test(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
             .unwrap_or(0.0);
         object
             .borrow_mut()
-            .set("lastIndex".to_string(), JSValue::Number(last_index));
+            .set("lastIndex".to_string(), JSValue::from_number(last_index));
     }
-    Ok(JSValue::Boolean(matched.is_some()))
+    Ok(JSValue::from_bool(matched.is_some()))
 }
 
 fn regexp_exec(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let Some(JSValue::Object(object)) = args.first() else {
-        return Err(JSError::TypeError(
-            "RegExp.exec: invalid receiver".to_string(),
-        ));
+    let object = match args.first() {
+        Some(value) if value.kind() == JsValueKind::Object => value.as_object().unwrap(),
+        _ => {
+            return Err(JSError::TypeError(
+                "RegExp.exec: invalid receiver".to_string(),
+            ));
+        }
     };
     let input = args.get(1).map(JSValue::to_string).unwrap_or_default();
-    let expression = compile(object)?;
-    let flags = flags(object);
+    let expression = compile(&object)?;
+    let flags = flags(&object);
     let stateful = flags.contains('g') || flags.contains('y');
     let start = if stateful {
         let last_index = object.borrow().get("lastIndex").to_number().max(0.0) as usize;
         let Some(start) = byte_offset_for_utf16(&input, last_index) else {
             object
                 .borrow_mut()
-                .set("lastIndex".to_string(), JSValue::Number(0.0));
-            return Ok(JSValue::Null);
+                .set("lastIndex".to_string(), JSValue::from_number(0.0));
+            return Ok(JSValue::null());
         };
         start
     } else {
@@ -354,9 +361,9 @@ fn regexp_exec(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         if stateful {
             object
                 .borrow_mut()
-                .set("lastIndex".to_string(), JSValue::Number(0.0));
+                .set("lastIndex".to_string(), JSValue::from_number(0.0));
         }
-        return Ok(JSValue::Null);
+        return Ok(JSValue::null());
     };
     if stateful {
         let last_index = captures
@@ -365,25 +372,26 @@ fn regexp_exec(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
             .unwrap_or(0.0);
         object
             .borrow_mut()
-            .set("lastIndex".to_string(), JSValue::Number(last_index));
+            .set("lastIndex".to_string(), JSValue::from_number(last_index));
     }
     let values = captures
         .iter()
         .map(|capture| {
             capture
-                .map(|capture| JSValue::String(capture.as_str().to_string()))
-                .unwrap_or(JSValue::Undefined)
+                .map(|capture| JSValue::from_string(capture.as_str().to_string()))
+                .unwrap_or(JSValue::undefined())
         })
         .collect();
     let result = vm.array_from_values(values);
-    if let JSValue::Object(result) = &result {
+    if result.kind() == JsValueKind::Object {
+        let result = result.as_object().unwrap();
         let index = captures.get(0).map(|capture| capture.start()).unwrap_or(0);
         result
             .borrow_mut()
-            .set("index".to_string(), JSValue::Number(index as f64));
+            .set("index".to_string(), JSValue::from_number(index as f64));
         result
             .borrow_mut()
-            .set("input".to_string(), JSValue::String(input));
+            .set("input".to_string(), JSValue::from_string(input));
     }
     Ok(result)
 }
@@ -409,49 +417,99 @@ fn utf16_offset(input: &str, byte: usize) -> usize {
 /// Creates a RegExp object for a parsed literal.
 pub fn create(pattern: &str, flags: &str) -> JSValue {
     let mut object = JSObject::new();
-    object.set(PATTERN.to_string(), JSValue::String(pattern.to_string()));
-    object.set(FLAGS.to_string(), JSValue::String(flags.to_string()));
-    object.set("source".to_string(), JSValue::String(pattern.to_string()));
-    object.set("flags".to_string(), JSValue::String(flags.to_string()));
-    object.set("global".to_string(), JSValue::Boolean(flags.contains('g')));
+    object.set(
+        PATTERN.to_string(),
+        JSValue::from_string(pattern.to_string()),
+    );
+    object.set(FLAGS.to_string(), JSValue::from_string(flags.to_string()));
+    object.set(
+        "source".to_string(),
+        JSValue::from_string(pattern.to_string()),
+    );
+    object.set("flags".to_string(), JSValue::from_string(flags.to_string()));
+    object.set(
+        "global".to_string(),
+        JSValue::from_bool(flags.contains('g')),
+    );
     object.set(
         "ignoreCase".to_string(),
-        JSValue::Boolean(flags.contains('i')),
+        JSValue::from_bool(flags.contains('i')),
     );
     object.set(
         "multiline".to_string(),
-        JSValue::Boolean(flags.contains('m')),
+        JSValue::from_bool(flags.contains('m')),
     );
-    object.set("dotAll".to_string(), JSValue::Boolean(flags.contains('s')));
-    object.set("unicode".to_string(), JSValue::Boolean(flags.contains('u')));
-    object.set("sticky".to_string(), JSValue::Boolean(flags.contains('y')));
-    object.set("lastIndex".to_string(), JSValue::Number(0.0));
-    object.set("test".to_string(), JSValue::NativeFunction(regexp_test));
-    object.set("exec".to_string(), JSValue::NativeFunction(regexp_exec));
-    JSValue::Object(Rc::new(RefCell::new(object)))
+    object.set(
+        "dotAll".to_string(),
+        JSValue::from_bool(flags.contains('s')),
+    );
+    object.set(
+        "unicode".to_string(),
+        JSValue::from_bool(flags.contains('u')),
+    );
+    object.set(
+        "sticky".to_string(),
+        JSValue::from_bool(flags.contains('y')),
+    );
+    object.set("lastIndex".to_string(), JSValue::from_number(0.0));
+    object.set(
+        "test".to_string(),
+        JSValue::from_native_function(regexp_test),
+    );
+    object.set(
+        "exec".to_string(),
+        JSValue::from_native_function(regexp_exec),
+    );
+    JSValue::from_object(Rc::new(RefCell::new(object)))
 }
 
 fn regexp_constructor(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let pattern = match args.get(1) {
-        Some(JSValue::Object(object)) if is_regexp(object) => {
-            object.borrow().get(PATTERN).to_string()
+        Some(value) if value.kind() == JsValueKind::Object => {
+            let object = value.as_object().unwrap();
+            if is_regexp(&object) {
+                object.borrow().get(PATTERN).to_string()
+            } else {
+                value.to_string()
+            }
         }
-        Some(JSValue::Undefined) | None => String::new(),
+        Some(value) if value.kind() == JsValueKind::Undefined => String::new(),
+        None => String::new(),
         Some(value) => value.to_string(),
     };
+
     let flags = match args.get(2) {
-        Some(JSValue::Undefined) | None => match args.get(1) {
-            Some(JSValue::Object(object)) if is_regexp(object) => {
-                object.borrow().get(FLAGS).to_string()
+        Some(value) if value.kind() == JsValueKind::Undefined => match args.get(1) {
+            Some(value) if value.kind() == JsValueKind::Object => {
+                let object = value.as_object().unwrap();
+                if is_regexp(&object) {
+                    object.borrow().get(FLAGS).to_string()
+                } else {
+                    String::new()
+                }
+            }
+            _ => String::new(),
+        },
+        None => match args.get(1) {
+            Some(value) if value.kind() == JsValueKind::Object => {
+                let object = value.as_object().unwrap();
+                if is_regexp(&object) {
+                    object.borrow().get(FLAGS).to_string()
+                } else {
+                    String::new()
+                }
             }
             _ => String::new(),
         },
         Some(value) => value.to_string(),
     };
+
     let value = create(&pattern, &flags);
-    if let JSValue::Object(object) = &value {
-        compile(object)?;
+
+    if value.kind() == JsValueKind::Object {
+        compile(&value.as_object().unwrap())?;
     }
+
     Ok(value)
 }
 
@@ -460,14 +518,14 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut constructor = JSObject::new();
     constructor.set(
         "__construct__".to_string(),
-        JSValue::NativeFunction(regexp_constructor),
+        JSValue::from_native_function(regexp_constructor),
     );
     constructor.set(
         "__call__".to_string(),
-        JSValue::NativeFunction(regexp_constructor),
+        JSValue::from_native_function(regexp_constructor),
     );
     global.borrow_mut().set(
         "RegExp".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(constructor))),
+        JSValue::from_object(Rc::new(RefCell::new(constructor))),
     );
 }

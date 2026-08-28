@@ -27,13 +27,13 @@ fn encode_uri_component(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
             let _ = write!(output, "%{byte:02X}");
         }
     }
-    Ok(JSValue::String(output))
+    Ok(JSValue::from_string(output))
 }
 
 /// Installs URI encoding functions on the global object.
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     global.borrow_mut().set(
         "encodeURIComponent".to_string(),
-        JSValue::NativeFunction(encode_uri_component),
+        JSValue::from_native_function(encode_uri_component),
     );
 }

@@ -10,11 +10,12 @@ use crate::error::{JSError, JSResult};
 use crate::lexer::Span;
 use crate::value::JSValue;
 use crate::value::jsobject::{JSObject, Property};
+use crate::value::jsvalue::JsValueKind;
 use crate::vm::VM;
 
 fn receiver(args: &[JSValue], method: &str) -> JSResult<f64> {
     match args.first() {
-        Some(JSValue::Number(value)) => Ok(*value),
+        Some(value) if value.kind() == JsValueKind::Number => Ok(value.as_number().unwrap()),
         _ => Err(JSError::TypeError(format!(
             "Number.prototype.{method}: invalid receiver"
         ))),
@@ -22,38 +23,53 @@ fn receiver(args: &[JSValue], method: &str) -> JSResult<f64> {
 }
 
 fn number_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let value = args.get(1).cloned().unwrap_or(JSValue::Number(0.0));
-    Ok(JSValue::Number(vm.to_number_value(value)?))
+    let value = args.get(1).cloned().unwrap_or(JSValue::from_number(0.0));
+    Ok(JSValue::from_number(vm.to_number_value(value)?))
 }
 
 fn big_int_constructor(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let value = args.get(1).unwrap_or(&JSValue::Undefined);
-    let integer = match value {
-        JSValue::BigInt(value) => value.clone(),
-        JSValue::Boolean(value) => BigInt::from(u8::from(*value)),
-        JSValue::Number(value) if value.is_finite() && value.fract() == 0.0 => {
-            BigInt::from_f64(*value).ok_or_else(|| {
-                JSError::RangeError("The number cannot be converted to a BigInt".into())
+    let undefined = JSValue::undefined();
+    let value = args.get(1).unwrap_or(&undefined);
+
+    let integer = match value.kind() {
+        JsValueKind::BigInt => value.as_bigint().unwrap().clone(),
+        JsValueKind::Boolean => BigInt::from(u8::from(value.as_boolean().unwrap())),
+        JsValueKind::Number => {
+            let value = value.as_number().unwrap();
+
+            if value.is_finite() && value.fract() == 0.0 {
+                BigInt::from_f64(value).ok_or_else(|| {
+                    JSError::RangeError("Cannot convert number to a BigInt".into())
+                })?
+            } else {
+                return Err(JSError::RangeError(
+                    "Cannot convert number to a BigInt".into(),
+                ));
+            }
+        }
+        JsValueKind::String => {
+            let value = value.as_string().unwrap();
+
+            value.trim().parse().map_err(|_| {
+                JSError::SyntaxError(
+                    format!("Cannot convert {value} to a BigInt"),
+                    Span::new(0, 0, 0, 0),
+                )
             })?
         }
-        JSValue::String(value) => value.trim().parse().map_err(|_| {
-            JSError::SyntaxError(
-                format!("Cannot convert {value} to a BigInt"),
-                Span::new(0, 0, 0, 0),
-            )
-        })?,
         _ => {
             return Err(JSError::RangeError(
-                "The value cannot be converted to a BigInt".to_string(),
+                "Cannot convert value to a BigInt".into(),
             ));
         }
     };
-    Ok(JSValue::BigInt(integer))
+
+    Ok(JSValue::from_bigint(integer))
 }
 
 fn global_is_nan(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let value = args.get(1).map(JSValue::to_number).unwrap_or(f64::NAN);
-    Ok(JSValue::Boolean(value.is_nan()))
+    Ok(JSValue::from_bool(value.is_nan()))
 }
 
 fn parse_int(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -73,7 +89,7 @@ fn parse_int(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         };
     }
     if !(2..=36).contains(&radix) {
-        return Ok(JSValue::Number(f64::NAN));
+        return Ok(JSValue::from_number(f64::NAN));
     }
     if radix == 16 && (input.starts_with("0x") || input.starts_with("0X")) {
         input = &input[2..];
@@ -88,19 +104,19 @@ fn parse_int(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         digits += 1;
     }
     if digits == 0 {
-        return Ok(JSValue::Number(f64::NAN));
+        return Ok(JSValue::from_number(f64::NAN));
     }
-    Ok(JSValue::Number(if negative { -value } else { value }))
+    Ok(JSValue::from_number(if negative { -value } else { value }))
 }
 
 fn parse_float(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = args.get(1).map(JSValue::to_string).unwrap_or_default();
     let input = input.trim_start();
     if input.starts_with("Infinity") || input.starts_with("+Infinity") {
-        return Ok(JSValue::Number(f64::INFINITY));
+        return Ok(JSValue::from_number(f64::INFINITY));
     }
     if input.starts_with("-Infinity") {
-        return Ok(JSValue::Number(f64::NEG_INFINITY));
+        return Ok(JSValue::from_number(f64::NEG_INFINITY));
     }
     let mut parsed = None;
     for (end, _) in input.char_indices().skip(1) {
@@ -111,7 +127,7 @@ fn parse_float(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     if let Ok(value) = input.parse::<f64>() {
         parsed = Some(value);
     }
-    Ok(JSValue::Number(parsed.unwrap_or(f64::NAN)))
+    Ok(JSValue::from_number(parsed.unwrap_or(f64::NAN)))
 }
 
 fn number_to_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -123,7 +139,9 @@ fn number_to_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         ));
     }
     if radix == 10 || !value.is_finite() || value.fract() != 0.0 {
-        return Ok(JSValue::String(JSValue::Number(value).to_string()));
+        return Ok(JSValue::from_string(
+            JSValue::from_number(value).to_string(),
+        ));
     }
 
     let negative = value.is_sign_negative();
@@ -145,63 +163,72 @@ fn number_to_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         digits.push('-');
     }
     digits.reverse();
-    Ok(JSValue::String(digits.into_iter().collect()))
+    Ok(JSValue::from_string(digits.into_iter().collect()))
 }
 
 fn number_value_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(JSValue::Number(receiver(&args, "valueOf")?))
+    Ok(JSValue::from_number(receiver(&args, "valueOf")?))
 }
 
 /// Installs Number and its primitive prototype.
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     {
         let mut global = global.borrow_mut();
-        global.set("isNaN".to_string(), JSValue::NativeFunction(global_is_nan));
-        global.set("parseInt".to_string(), JSValue::NativeFunction(parse_int));
+        global.set(
+            "isNaN".to_string(),
+            JSValue::from_native_function(global_is_nan),
+        );
+        global.set(
+            "parseInt".to_string(),
+            JSValue::from_native_function(parse_int),
+        );
         global.set(
             "parseFloat".to_string(),
-            JSValue::NativeFunction(parse_float),
+            JSValue::from_native_function(parse_float),
         );
         global.set(
             "BigInt".to_string(),
-            JSValue::NativeFunction(big_int_constructor),
+            JSValue::from_native_function(big_int_constructor),
         );
         global.define_property(
             "Infinity".to_string(),
-            Property::read_only(JSValue::Number(f64::INFINITY)),
+            Property::read_only(JSValue::from_number(f64::INFINITY)),
         );
         global.define_property(
             "NaN".to_string(),
-            Property::read_only(JSValue::Number(f64::NAN)),
+            Property::read_only(JSValue::from_number(f64::NAN)),
         );
     }
 
     let mut prototype = JSObject::new();
     prototype.set(
         "toString".to_string(),
-        JSValue::NativeFunction(number_to_string),
+        JSValue::from_native_function(number_to_string),
     );
     prototype.set(
         "valueOf".to_string(),
-        JSValue::NativeFunction(number_value_of),
+        JSValue::from_native_function(number_value_of),
     );
 
     let mut constructor = JSObject::new();
     constructor.set(
         "__call__".to_string(),
-        JSValue::NativeFunction(number_constructor),
+        JSValue::from_native_function(number_constructor),
     );
     constructor.set(
         "prototype".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(prototype))),
+        JSValue::from_object(Rc::new(RefCell::new(prototype))),
     );
-    constructor.set("parseInt".to_string(), JSValue::NativeFunction(parse_int));
+    constructor.set(
+        "parseInt".to_string(),
+        JSValue::from_native_function(parse_int),
+    );
     constructor.set(
         "parseFloat".to_string(),
-        JSValue::NativeFunction(parse_float),
+        JSValue::from_native_function(parse_float),
     );
     global.borrow_mut().set(
         "Number".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(constructor))),
+        JSValue::from_object(Rc::new(RefCell::new(constructor))),
     );
 }
