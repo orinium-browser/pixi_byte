@@ -649,8 +649,8 @@ impl VM {
                     && Rc::ptr_eq(&constructor_object, &regexp_constructor)
                 {
                     let is_regexp = matches!(
-                        &value,
-                        JsValueKind::Object(object) if crate::builtins::regexp::is_regexp(object)
+                        &value.kind(),
+                        JsValueKind::Object if crate::builtins::regexp::is_regexp(&value.as_object().unwrap())
                     );
                     self.stack.push(JSValue::from_bool(is_regexp));
                     return Ok(ControlFlow::Continue);
@@ -1717,7 +1717,7 @@ impl VM {
 
                 all.extend(args);
 
-                self.call(bound.target, bound.bound_this.clone(), all)
+                self.call(*bound.target, bound.bound_this.clone(), all)
             }
 
             JsValueKind::NativeFunction => {
@@ -1858,20 +1858,26 @@ impl VM {
         let a = self.pop()?;
         let a = self.to_primitive(a, PrimitiveHint::Default)?;
         let b = self.to_primitive(b, PrimitiveHint::Default)?;
-        let result = match (a, b) {
-            (JsValueKind::String(a), b) => {
-                JsValueKind::String(format!("{a}{}", b.to_console_string()))
+        let result = match (a.kind(), b.kind()) {
+            (JsValueKind::String, _) => {
+                let a = a.as_string().unwrap();
+                JSValue::from_string(format!("{a}{}", b.to_console_string()))
             }
-            (a, JsValueKind::String(b)) => {
-                JsValueKind::String(format!("{}{b}", a.to_console_string()))
+            (_, JsValueKind::String) => {
+                let b = b.as_string().unwrap();
+                JSValue::from_string(format!("{}{b}", a.to_console_string()))
             }
-            (JsValueKind::BigInt(a), JsValueKind::BigInt(b)) => JsValueKind::BigInt(a + b),
-            (JsValueKind::BigInt(_), _) | (_, JsValueKind::BigInt(_)) => {
+            (JsValueKind::BigInt, JsValueKind::BigInt) => {
+                let a = a.as_bigint().unwrap();
+                let b = b.as_bigint().unwrap();
+                JSValue::from_bigint(a + b)
+            }
+            (JsValueKind::BigInt, _) | (_, JsValueKind::BigInt) => {
                 return Err(JSError::TypeError(
                     "Cannot mix BigInt and other types".into(),
                 ));
             }
-            (a, b) => JsValueKind::Number(a.to_number() + b.to_number()),
+            _ => JSValue::from_number(a.to_number() + b.to_number()),
         };
         self.stack.push(result);
         Ok(())
@@ -1889,18 +1895,18 @@ impl VM {
 
     pub(crate) fn is_callable(&self, value: &JSValue) -> bool {
         matches!(
-            value,
+            value.kind(),
             JsValueKind::Function
                 | JsValueKind::ArrowFunction
                 | JsValueKind::NativeFunction
                 | JsValueKind::BoundFunction
-        ) || matches!(value, JsValueKind::Object(object) if !matches!(object.borrow().get("__call__"), JsValueKind::Undefined))
+        ) || matches!(value.kind(), JsValueKind::Object if !matches!(value.as_object().unwrap().borrow().get("__call__").kind(), JsValueKind::Undefined))
     }
 
     fn to_primitive(&mut self, value: JSValue, hint: PrimitiveHint) -> JSResult<JSValue> {
         if !matches!(
-            value,
-            JsValueKind::Object(_)
+            value.kind(),
+            JsValueKind::Object
                 | JsValueKind::Function
                 | JsValueKind::ArrowFunction
                 | JsValueKind::NativeFunction
@@ -1910,7 +1916,7 @@ impl VM {
         }
 
         let exotic = self.resolve_method_property(&value, "@@toPrimitive")?;
-        if !matches!(exotic, JsValueKind::Undefined) {
+        if !matches!(exotic.kind(), JsValueKind::Undefined) {
             if !self.is_callable(&exotic) {
                 return Err(JSError::TypeError(
                     "@@toPrimitive is not callable".to_string(),
@@ -1919,11 +1925,11 @@ impl VM {
             let result = self.call(
                 exotic,
                 value.clone(),
-                vec![JsValueKind::String(hint.as_str().to_string())],
+                vec![JSValue::from_str(hint.as_str())],
             )?;
             if matches!(
-                result,
-                JsValueKind::Object(_)
+                result.kind(),
+                JsValueKind::Object
                     | JsValueKind::Function
                     | JsValueKind::ArrowFunction
                     | JsValueKind::NativeFunction
@@ -1945,8 +1951,8 @@ impl VM {
             if self.is_callable(&method) {
                 let result = self.call(method, value.clone(), Vec::new())?;
                 if !matches!(
-                    result,
-                    JsValueKind::Object(_)
+                    result.kind(),
+                    JsValueKind::Object
                         | JsValueKind::Function
                         | JsValueKind::ArrowFunction
                         | JsValueKind::NativeFunction
@@ -1967,12 +1973,17 @@ impl VM {
         let a = self.pop()?;
         let a = self.to_primitive(a, PrimitiveHint::Number)?;
         let b = self.to_primitive(b, PrimitiveHint::Number)?;
-        let result = match (a, b) {
-            (JsValueKind::BigInt(a), JsValueKind::BigInt(b)) => {
-                if matches!(op, ArithmeticOp::Div | ArithmeticOp::Mod) && b == BigInt::from(0) {
+
+        let result = match (a.kind(), b.kind()) {
+            (JsValueKind::BigInt, JsValueKind::BigInt) => {
+                let a = a.as_bigint().unwrap();
+                let b = b.as_bigint().unwrap();
+
+                if matches!(op, ArithmeticOp::Div | ArithmeticOp::Mod) && b == &BigInt::from(0) {
                     return Err(JSError::RangeError("Division by zero".into()));
                 }
-                JsValueKind::BigInt(match op {
+
+                JSValue::from_bigint(match op {
                     ArithmeticOp::Sub => a - b,
                     ArithmeticOp::Mul => a * b,
                     ArithmeticOp::Div => a / b,
@@ -1985,14 +1996,14 @@ impl VM {
                     }
                 })
             }
-            (JsValueKind::BigInt(_), _) | (_, JsValueKind::BigInt(_)) => {
+            (JsValueKind::BigInt, _) | (_, JsValueKind::BigInt) => {
                 return Err(JSError::TypeError(
                     "Cannot mix BigInt and other types".into(),
                 ));
             }
-            (a, b) => {
+            _ => {
                 let (a, b) = (a.to_number(), b.to_number());
-                JsValueKind::Number(match op {
+                JSValue::from_number(match op {
                     ArithmeticOp::Sub => a - b,
                     ArithmeticOp::Mul => a * b,
                     ArithmeticOp::Div => a / b,
@@ -2013,7 +2024,7 @@ impl VM {
         let b = self.pop()?;
         let a = self.pop()?;
         let result = op(&a, &b);
-        self.stack.push(JsValueKind::Boolean(result));
+        self.stack.push(JSValue::from_bool(result));
         Ok(())
     }
 
@@ -2026,13 +2037,18 @@ impl VM {
         let a = self.pop()?;
         let a = self.to_primitive(a, PrimitiveHint::Number)?;
         let b = self.to_primitive(b, PrimitiveHint::Number)?;
-        let ordering = match (&a, &b) {
-            (JsValueKind::String(a), JsValueKind::String(b)) => Some(a.cmp(b)),
-            (JsValueKind::BigInt(a), JsValueKind::BigInt(b)) => Some(a.cmp(b)),
+
+        let ordering = match (a.kind(), b.kind()) {
+            (JsValueKind::String, JsValueKind::String) => {
+                Some(a.as_string().unwrap().cmp(b.as_string().unwrap()))
+            }
+            (JsValueKind::BigInt, JsValueKind::BigInt) => {
+                Some(a.as_bigint().unwrap().cmp(b.as_bigint().unwrap()))
+            }
             _ => a.to_number().partial_cmp(&b.to_number()),
         };
         let result = ordering.map(op).unwrap_or(false);
-        self.stack.push(JsValueKind::Boolean(result));
+        self.stack.push(JSValue::from_bool(result));
         Ok(())
     }
 
@@ -2042,31 +2058,38 @@ impl VM {
         let a = self.pop()?;
         let a = self.to_primitive(a, PrimitiveHint::Number)?;
         let b = self.to_primitive(b, PrimitiveHint::Number)?;
-        let result = match (a, b) {
-            (JsValueKind::BigInt(a), JsValueKind::BigInt(b)) => JsValueKind::BigInt(match op {
-                BitwiseOp::And => a & b,
-                BitwiseOp::Or => a | b,
-                BitwiseOp::Xor => a ^ b,
-                BitwiseOp::LeftShift | BitwiseOp::RightShift => {
-                    let shift = b.to_isize().ok_or_else(|| {
-                        JSError::RangeError("BigInt shift count is out of range".into())
-                    })?;
-                    match (op, shift.is_negative()) {
-                        (BitwiseOp::LeftShift, false) | (BitwiseOp::RightShift, true) => {
-                            a << shift.unsigned_abs()
+        let result = match (a.kind(), b.kind()) {
+            (JsValueKind::BigInt, JsValueKind::BigInt) => {
+                let a = a.as_bigint().unwrap();
+                let b = b.as_bigint().unwrap();
+
+                JSValue::from_bigint(match op {
+                    BitwiseOp::And => a & b,
+                    BitwiseOp::Or => a | b,
+                    BitwiseOp::Xor => a ^ b,
+                    BitwiseOp::LeftShift | BitwiseOp::RightShift => {
+                        let shift = b.to_isize().ok_or_else(|| {
+                            JSError::RangeError("BigInt shift count is out of range".into())
+                        })?;
+
+                        match (op, shift.is_negative()) {
+                            (BitwiseOp::LeftShift, false) | (BitwiseOp::RightShift, true) => {
+                                a << shift.unsigned_abs()
+                            }
+                            _ => a >> shift.unsigned_abs(),
                         }
-                        _ => a >> shift.unsigned_abs(),
                     }
-                }
-            }),
-            (JsValueKind::BigInt(_), _) | (_, JsValueKind::BigInt(_)) => {
+                })
+            }
+            (JsValueKind::BigInt, _) | (_, JsValueKind::BigInt) => {
                 return Err(JSError::TypeError(
                     "Cannot mix BigInt and other types".into(),
                 ));
             }
-            (a, b) => {
+            _ => {
                 let (a, b) = (to_int32(a.to_number()), to_int32(b.to_number()));
-                JsValueKind::Number(match op {
+
+                JSValue::from_number(match op {
                     BitwiseOp::And => a & b,
                     BitwiseOp::Or => a | b,
                     BitwiseOp::Xor => a ^ b,
@@ -2080,25 +2103,31 @@ impl VM {
     }
 
     fn get_iterator(&mut self, value: JSValue) -> JSResult<JSValue> {
-        if let JsValueKind::String(string) = value {
+        if JsValueKind::String == value.kind() {
+            let string = value.as_string().unwrap();
             let source = self.array_from_values(
                 string
                     .chars()
-                    .map(|character| JsValueKind::String(character.to_string()))
+                    .map(|character| JSValue::from_string(character.to_string()))
                     .collect(),
             );
             return Ok(indexed_iterator(source));
         }
-        let JsValueKind::Object(object) = &value else {
+        let object = if value.kind() == JsValueKind::Object {
+            value.as_object().unwrap()
+        } else {
             return Err(JSError::TypeError(format!(
                 "{} is not iterable",
                 value.type_of()
             )));
         };
         let iterator_method = object.borrow().get("@@iterator");
-        if !matches!(iterator_method, JsValueKind::Undefined | JsValueKind::Null) {
+        if !matches!(
+            iterator_method.kind(),
+            JsValueKind::Undefined | JsValueKind::Null
+        ) {
             let iterator = self.call(iterator_method, value.clone(), Vec::new())?;
-            if !matches!(iterator, JsValueKind::Object(_)) {
+            if !matches!(iterator.kind(), JsValueKind::Object) {
                 return Err(JSError::TypeError(
                     "iterator method did not return an object".into(),
                 ));
@@ -2114,13 +2143,14 @@ impl VM {
 
     fn collect_iterable_values(&mut self, value: JSValue) -> JSResult<Vec<JSValue>> {
         let iterator = self.get_iterator(value)?;
-        let JsValueKind::Object(iterator_object) = &iterator else {
-            unreachable!("get_iterator must return an object");
+        let iterator_object = match iterator.kind() {
+            JsValueKind::Object => iterator.as_object().unwrap(),
+            _ => unreachable!("get_iterator must return an object"),
         };
         let mut values = Vec::new();
         loop {
-            let fast_step = indexed_iterator_step(iterator_object)?.or(
-                crate::builtins::collection::iterator_step(self, iterator_object)?,
+            let fast_step = indexed_iterator_step(&iterator_object)?.or(
+                crate::builtins::collection::iterator_step(self, &iterator_object)?,
             );
             if let Some(value) = fast_step {
                 let Some(value) = value else {
@@ -2132,10 +2162,13 @@ impl VM {
 
             let next = iterator_object.borrow().get("next");
             let result = self.call(next, iterator.clone(), Vec::new())?;
-            let JsValueKind::Object(result) = result else {
-                return Err(JSError::TypeError(
-                    "iterator result is not an object".into(),
-                ));
+            let result = match result.kind() {
+                JsValueKind::Object => result.as_object().unwrap(),
+                _ => {
+                    return Err(JSError::TypeError(
+                        "iterator result is not an object".into(),
+                    ));
+                }
             };
             if result.borrow().get("done").to_boolean() {
                 break;
@@ -2152,78 +2185,92 @@ const INDEXED_ITERATOR_INDEX: &str = "__pixi_indexed_iterator_index";
 fn indexed_iterator(source: JSValue) -> JSValue {
     let mut iterator = JSObject::new();
     iterator.set(INDEXED_ITERATOR_SOURCE.to_string(), source);
-    iterator.set(INDEXED_ITERATOR_INDEX.to_string(), JsValueKind::Number(0.0));
+    iterator.set(
+        INDEXED_ITERATOR_INDEX.to_string(),
+        JSValue::from_number(0.0),
+    );
     iterator.set(
         "next".to_string(),
-        JsValueKind::NativeFunction(indexed_iterator_next),
+        JSValue::from_native_function(indexed_iterator_next),
     );
-    JsValueKind::Object(Rc::new(RefCell::new(iterator)))
+    JSValue::from_object(Rc::new(RefCell::new(iterator)))
 }
 
 fn generator_iterator(source: JSValue) -> JSValue {
     let indexed_source = source.clone();
-    let JsValueKind::Object(iterator) = indexed_iterator(indexed_source) else {
+    let Some(iterator) = indexed_iterator(indexed_source).as_object() else {
         unreachable!("indexed iterator must be an object");
     };
     {
         let mut iterator = iterator.borrow_mut();
-        if let JsValueKind::Object(source) = source {
-            for key in source.borrow().keys() {
+        // Copy properties from source if it is an object
+        if let JsValueKind::Object = source.kind() {
+            let src_obj = source.as_object().unwrap();
+            for key in src_obj.borrow().keys() {
                 if key != "__pixi_array__" {
-                    iterator.set(key.clone(), source.borrow().get(&key));
+                    iterator.set(key.clone(), src_obj.borrow().get(&key));
                 }
             }
-            iterator.set("length".to_string(), source.borrow().get("length"));
+            iterator.set("length".to_string(), src_obj.borrow().get("length"));
         }
         iterator.set(
             "@@iterator".to_string(),
-            JsValueKind::NativeFunction(generator_iterator_identity),
+            JSValue::from_native_function(generator_iterator_identity),
         );
         iterator.set(
             "throw".to_string(),
-            JsValueKind::NativeFunction(generator_iterator_throw),
+            JSValue::from_native_function(generator_iterator_throw),
         );
     }
-    JsValueKind::Object(iterator)
+    JSValue::from_object(iterator)
 }
 
 fn generator_iterator_identity(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    Ok(args.first().cloned().unwrap_or(JsValueKind::Undefined))
+    Ok(args.first().cloned().unwrap_or(JSValue::undefined()))
 }
 
 fn generator_iterator_throw(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Err(JSError::Thrown(
-        args.get(1).cloned().unwrap_or(JsValueKind::Undefined),
+        args.get(1).cloned().unwrap_or(JSValue::undefined()),
     ))
 }
 
 fn indexed_iterator_next(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let Some(JsValueKind::Object(iterator)) = args.first() else {
-        return Err(JSError::TypeError("iterator next: invalid receiver".into()));
+    // Ensure the first argument is an iterator object
+    let iterator_val = args
+        .first()
+        .ok_or_else(|| JSError::TypeError("iterator next: invalid receiver".into()))?;
+    let iterator = match iterator_val.kind() {
+        JsValueKind::Object => iterator_val.as_object().unwrap(),
+        _ => return Err(JSError::TypeError("iterator next: invalid receiver".into())),
     };
-    let value = indexed_iterator_step(iterator)?
+
+    let value = indexed_iterator_step(&iterator)?
         .ok_or_else(|| JSError::TypeError("iterator next: invalid source".into()))?;
     let mut result = JSObject::new();
     result.set(
         "value".to_string(),
-        value.clone().unwrap_or(JsValueKind::Undefined),
+        value.clone().unwrap_or(JSValue::undefined()),
     );
-    result.set("done".to_string(), JsValueKind::Boolean(value.is_none()));
-    Ok(JsValueKind::Object(Rc::new(RefCell::new(result))))
+    result.set("done".to_string(), JSValue::from_bool(value.is_none()));
+    Ok(JSValue::from_object(Rc::new(RefCell::new(result))))
 }
 
 fn indexed_iterator_step(iterator: &Rc<RefCell<JSObject>>) -> JSResult<Option<Option<JSValue>>> {
-    let JsValueKind::Object(source) = iterator.borrow().get(INDEXED_ITERATOR_SOURCE) else {
-        return Ok(None);
+    // Retrieve the source object from the iterator's stored source value
+    let source = match iterator.borrow().get(INDEXED_ITERATOR_SOURCE).as_object() {
+        Some(obj) => obj,
+        None => return Ok(None),
     };
     let index = iterator.borrow().get(INDEXED_ITERATOR_INDEX).to_number() as usize;
     let length = source.borrow().get("length").to_number().max(0.0) as usize;
     if index >= length {
         return Ok(Some(None));
     }
+    // Increment the iterator index
     iterator.borrow_mut().set(
         INDEXED_ITERATOR_INDEX.to_string(),
-        JsValueKind::Number((index + 1) as f64),
+        JSValue::from_number((index + 1) as f64),
     );
     Ok(Some(Some(source.borrow().get(&index.to_string()))))
 }
@@ -2250,7 +2297,7 @@ fn update_array_length_after_index_write(object: &Rc<RefCell<JSObject>>, key: &s
     if !current_length.is_finite() || current_length < required_length as f64 {
         object.borrow_mut().set(
             "length".to_string(),
-            JsValueKind::Number(required_length as f64),
+            JSValue::from_number(required_length as f64),
         );
     }
 }
