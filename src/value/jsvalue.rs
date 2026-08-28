@@ -5,6 +5,7 @@
 
 use super::jsobject::JSObject;
 use crate::compiler::BytecodeChunk;
+use crate::intern::{FunctionParam, NameId};
 use crate::runtime::Environment;
 use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
@@ -49,15 +50,15 @@ pub enum JSValue {
     /// Bytecode と引数名、キャプチャ環境を持つ JS 関数オブジェクト
     Function(
         Rc<BytecodeChunk>,
-        Vec<String>,
+        Vec<FunctionParam>,
         Option<Rc<RefCell<Environment>>>,
-        Option<String>,
+        Option<NameId>,
         u64,
     ),
     /// Arrow function with a captured lexical environment and lexical `this`.
     ArrowFunction(
         Rc<BytecodeChunk>,
-        Vec<String>,
+        Vec<FunctionParam>,
         Option<Rc<RefCell<Environment>>>,
         Option<Box<JSValue>>,
         u64,

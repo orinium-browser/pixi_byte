@@ -1,10 +1,13 @@
 use crate::error::{JSError, JSResult};
+use crate::intern::{FunctionParam, InternTable, NameId};
 use crate::parser::{
     BinaryOp, BindingPattern, ClassMethod, ClassMethodKind, Expression, Literal, ObjectProperty,
     Program, Statement, UnaryOp, VarKind,
 };
 use crate::value::JSValue;
+use std::cell::RefCell;
 use std::collections::HashSet;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_BYTECODE_ID: AtomicU64 = AtomicU64::new(1);
@@ -14,12 +17,12 @@ static NEXT_BYTECODE_ID: AtomicU64 = AtomicU64::new(1);
 pub enum Opcode {
     // スタック操作
     LoadConst(usize),          // 定数をスタックにロード
-    LoadVar(String),           // 変数をスタックにロード
-    StoreVar(String),          // スタックトップを変数に格納
-    DefineVar(String),         // スタックトップを現在のスコープへ新しく束縛
-    DefineVarIfAbsent(String), // var hoisting without replacing parameters
+    LoadVar(NameId),           // 変数をスタックにロード
+    StoreVar(NameId),          // スタックトップを変数に格納
+    DefineVar(NameId),         // スタックトップを現在のスコープへ新しく束縛
+    DefineVarIfAbsent(NameId), // var hoisting without replacing parameters
     EnterScope,
-    CloneScope(Vec<String>),
+    CloneScope(Vec<NameId>),
     ExitScope,
     Pop,  // スタックトップを削除
     Dup,  // スタックトップを複製
@@ -79,7 +82,7 @@ pub enum Opcode {
     ArrayExtend,
     ObjectSetProperty, // obj[key] = value - スタックから key, value をポップ、obj は残る
     ObjectSpread,      // source の列挙可能なown propertyをobjectへコピー
-    ObjectRest(Vec<String>),
+    ObjectRest(Vec<NameId>),
     ObjectDefineGetter, // object literal getter; object remains on the stack
     ObjectDefineSetter, // object literal setter; object remains on the stack
     Enumerate,          // for-in用の列挙可能なプロパティ名配列を生成
@@ -149,17 +152,36 @@ pub struct BytecodeChunk {
     /// `false` なら呼び出し時に未使用の `arguments` 配列を生成しない。
     /// 安全側のためにデフォルトは `true`（不明な場合は `arguments` を生成する）。
     pub uses_arguments: bool,
+    /// このチャンクが参照する変数名を解決するための共有インターニングテーブル。
+    ///
+    /// コンパイル単位（トップレベル + 全ネスト関数）の**全チャンクが同一の
+    /// `Rc` を共有する**。実行時に `LoadVar` のグローバルフォールバックなどで
+    /// `NameId` を `&str` に戻すために使う。`NameId` は table-local なので、
+    /// このテーブルは必ずその `NameId` を採番したものでなければならない。
+    pub intern: Rc<RefCell<InternTable>>,
 }
 
 impl BytecodeChunk {
-    /// 新しいバイトコードチャンクを作成
+    /// 新しいバイトコードチャンクを作成（独立した新しいインターニングテーブルを持つ）。
+    ///
+    /// 通常は直接使わず、[`Compiler`] 経由で作成し、テーブルを共有すること。単体の
+    /// チャンク（ネストを持たない・実行されない）を作るテスト用途を想定する。
     pub fn new() -> Self {
+        Self::with_intern(Rc::new(RefCell::new(InternTable::new())))
+    }
+
+    /// 指定した共有インターニングテーブルを持つチャンクを作成。
+    ///
+    /// 同じ `Rc<RefCell<InternTable>>` を渡したチャンクどうしは、同一の
+    /// コンパイル単位に属し、`NameId` を共有する。
+    pub fn with_intern(intern: Rc<RefCell<InternTable>>) -> Self {
         Self {
             identity: NEXT_BYTECODE_ID.fetch_add(1, Ordering::Relaxed),
             code: Vec::new(),
             constants: Vec::new(),
             constants_seen: std::collections::HashSet::new(),
             uses_arguments: true,
+            intern,
         }
     }
 
@@ -214,6 +236,15 @@ impl Default for BytecodeChunk {
 pub struct Compiler {
     /// 生成されたバイトコードチャンク
     chunk: BytecodeChunk,
+    /// 変数名の共有インターニングテーブル。
+    ///
+    /// **トップレベルからネスト関数まで、同一コンパイル単位内の全 `Compiler` が
+    /// この `Rc<RefCell<InternTable>>` を共有する**（ネストは [`with_intern`] で
+    /// 親のクローンを受け取る）。`NameId` は table-local なので、ネスト関数の
+    /// 自由変数が外側環境の束縛キーと一致するには、この単一テーブル共有が必須。
+    ///
+    /// [`with_intern`]: Self::with_intern
+    intern: Rc<RefCell<InternTable>>,
     loops: Vec<LoopContext>,
     break_scopes: Vec<Vec<usize>>,
     labels: Vec<LabelContext>,
@@ -237,10 +268,16 @@ struct LabelContext {
 }
 
 impl Compiler {
-    /// 新しいコンパイラインスタンスを作成
+    /// 新しいコンパイラインスタンスを作成。
+    ///
+    /// **トップレベル専用**: 新しい独立した `InternTable` を生成する。
+    /// ネスト関数のコンパイルには必ず [`with_intern`](Self::with_intern) を使い、
+    /// 独自テーブルを生成しないこと。
     pub fn new() -> Self {
+        let intern = Rc::new(RefCell::new(InternTable::new()));
         Self {
-            chunk: BytecodeChunk::new(),
+            chunk: BytecodeChunk::with_intern(Rc::clone(&intern)),
+            intern,
             loops: Vec::new(),
             break_scopes: Vec::new(),
             labels: Vec::new(),
@@ -252,16 +289,37 @@ impl Compiler {
         }
     }
 
-    fn with_super_binding(super_binding: Option<String>) -> Self {
+    /// 指定した共有インターニングテーブルを持つコンパイラを作成。
+    ///
+    /// **ネスト関数のコンパイルは必ずこのメソッドで**、親の `self.intern` を
+    /// クローンして渡すこと。これによりネストコンパイラが独自テーブルを
+    /// 生成することは構造的に防がれ、同一コンパイル単位の全チャンクが
+    /// 同一の `NameId` 空間を共有する。
+    fn with_intern(intern: Rc<RefCell<InternTable>>, super_binding: Option<String>) -> Self {
         Self {
+            chunk: BytecodeChunk::with_intern(Rc::clone(&intern)),
+            intern,
+            loops: Vec::new(),
+            break_scopes: Vec::new(),
+            labels: Vec::new(),
+            pending_loop_label: None,
+            lexical_loop_depth: 0,
+            next_temporary: 0,
             super_binding,
-            ..Self::new()
+            generator_output: None,
         }
+    }
+
+    /// 変数名をインターニングして `NameId` を返す。
+    ///
+    /// `InternTable::intern` は既存名の lookup ではアロケートしない。
+    fn intern_name(&mut self, name: &str) -> JSResult<NameId> {
+        self.intern.borrow_mut().intern(name)
     }
 
     /// ASTをバイトコードにコンパイル
     pub fn compile(mut self, program: Program) -> JSResult<BytecodeChunk> {
-        self.emit_var_declarations(&program.body);
+        self.emit_var_declarations(&program.body)?;
         let mut executable = Vec::new();
         for statement in program.body {
             if matches!(&statement, Statement::FunctionDeclaration { .. }) {
@@ -284,9 +342,11 @@ impl Compiler {
         self.chunk.uses_arguments = statements_reference_arguments(&program.body);
         if let Some(output) = self.generator_output.clone() {
             self.chunk.emit(Opcode::NewArray(0));
-            self.chunk.emit(Opcode::DefineVar(output));
+
+            let name = self.intern_name(&output)?;
+            self.chunk.emit(Opcode::DefineVar(name));
         }
-        self.emit_var_declarations(&program.body);
+        self.emit_var_declarations(&program.body)?;
         let mut executable = Vec::new();
         for statement in program.body {
             if matches!(&statement, Statement::FunctionDeclaration { .. }) {
@@ -298,8 +358,9 @@ impl Compiler {
         for statement in executable {
             self.compile_statement(statement, false)?;
         }
-        if let Some(output) = self.generator_output {
-            self.chunk.emit(Opcode::LoadVar(output));
+        if let Some(output) = self.generator_output.clone() {
+            let name = self.intern_name(&output)?;
+            self.chunk.emit(Opcode::LoadVar(name));
             self.chunk.emit(Opcode::MakeGeneratorIterator);
         } else {
             let undefined = self.chunk.add_constant(JSValue::Undefined);
@@ -309,7 +370,7 @@ impl Compiler {
         Ok(self.chunk)
     }
 
-    fn emit_var_declarations(&mut self, statements: &[Statement]) {
+    fn emit_var_declarations(&mut self, statements: &[Statement]) -> JSResult<()> {
         let mut names = Vec::new();
         collect_var_declarations(statements, &mut names);
         let mut emitted = HashSet::new();
@@ -317,9 +378,11 @@ impl Compiler {
             if emitted.insert(name.clone()) {
                 let undefined = self.chunk.add_constant(JSValue::Undefined);
                 self.chunk.emit(Opcode::LoadConst(undefined));
+                let name = self.intern_name(&name)?;
                 self.chunk.emit(Opcode::DefineVarIfAbsent(name));
             }
         }
+        Ok(())
     }
 
     /// ステートメントをコンパイル
@@ -380,6 +443,8 @@ impl Compiler {
                         let idx = self.chunk.add_constant(JSValue::Undefined);
                         self.chunk.emit(Opcode::LoadConst(idx));
                     }
+
+                    let name = self.intern_name(&name)?;
                     self.chunk.emit(if kind == VarKind::Var {
                         Opcode::StoreVar(name)
                     } else {
@@ -411,7 +476,8 @@ impl Compiler {
                         self.compile_expression(expr)?;
                         self.chunk.emit(Opcode::Pop);
                     }
-                    self.chunk.emit(Opcode::LoadVar(output));
+                    let name = self.intern_name(&output)?;
+                    self.chunk.emit(Opcode::LoadVar(name));
                     self.chunk.emit(Opcode::Return);
                     return Ok(());
                 }
@@ -430,6 +496,7 @@ impl Compiler {
                 is_generator,
             } => {
                 self.emit_function_value(Some(name.clone()), params, body, None, is_generator)?;
+                let name = self.intern_name(&name)?;
                 self.chunk.emit(Opcode::DefineVar(name));
             }
             Statement::If {
@@ -570,8 +637,11 @@ impl Compiler {
                 }
                 self.patch_labeled_continues(loop_label.as_deref(), update_start)?;
                 if !lexical_bindings.is_empty() {
-                    self.chunk
-                        .emit(Opcode::CloneScope(lexical_bindings.clone()));
+                    let mut ids = Vec::with_capacity(lexical_bindings.len());
+                    for lexical_binding in &lexical_bindings {
+                        ids.push(self.intern_name(lexical_binding)?);
+                    }
+                    self.chunk.emit(Opcode::CloneScope(ids));
                 }
                 for update in update {
                     self.compile_expression(update)?;
@@ -607,16 +677,20 @@ impl Compiler {
 
                 self.compile_expression(right)?;
                 self.chunk.emit(Opcode::Enumerate);
-                self.chunk.emit(Opcode::DefineVar(keys.clone()));
+                let name = self.intern_name(&keys)?;
+                self.chunk.emit(Opcode::DefineVar(name));
                 let zero = self.chunk.add_constant(JSValue::Number(0.0));
                 self.chunk.emit(Opcode::LoadConst(zero));
-                self.chunk.emit(Opcode::DefineVar(index.clone()));
+                let name = self.intern_name(&index)?;
+                self.chunk.emit(Opcode::DefineVar(name));
                 let lexical_binding = matches!(kind, Some(VarKind::Let | VarKind::Const));
                 self.mark_labeled_loop_scope(loop_label.as_deref(), lexical_binding)?;
 
                 let loop_start = self.chunk.code.len();
-                self.chunk.emit(Opcode::LoadVar(index.clone()));
-                self.chunk.emit(Opcode::LoadVar(keys.clone()));
+                let name = self.intern_name(&index)?;
+                self.chunk.emit(Opcode::LoadVar(name));
+                let name = self.intern_name(&keys)?;
+                self.chunk.emit(Opcode::LoadVar(name));
                 let length = self
                     .chunk
                     .add_constant(JSValue::String("length".to_string()));
@@ -626,8 +700,10 @@ impl Compiler {
                 let exit_jump = self.chunk.code.len();
                 self.chunk.emit(Opcode::JumpIfFalse(usize::MAX));
 
-                self.chunk.emit(Opcode::LoadVar(keys));
-                self.chunk.emit(Opcode::LoadVar(index.clone()));
+                let name = self.intern_name(&keys)?;
+                self.chunk.emit(Opcode::LoadVar(name));
+                let name = self.intern_name(&index)?;
+                self.chunk.emit(Opcode::LoadVar(name));
                 self.chunk.emit(Opcode::GetProperty);
                 if lexical_binding {
                     self.chunk.emit(Opcode::EnterScope);
@@ -658,11 +734,13 @@ impl Compiler {
                 if lexical_binding {
                     self.chunk.emit(Opcode::ExitScope);
                 }
-                self.chunk.emit(Opcode::LoadVar(index.clone()));
+                let name = self.intern_name(&index)?;
+                self.chunk.emit(Opcode::LoadVar(name));
                 let one = self.chunk.add_constant(JSValue::Number(1.0));
                 self.chunk.emit(Opcode::LoadConst(one));
                 self.chunk.emit(Opcode::Add);
-                self.chunk.emit(Opcode::StoreVar(index));
+                let name = self.intern_name(&index)?;
+                self.chunk.emit(Opcode::StoreVar(name));
                 self.chunk.emit(Opcode::Jump(loop_start));
 
                 let break_cleanup = self.chunk.code.len();
@@ -693,12 +771,14 @@ impl Compiler {
 
                 self.compile_expression(right)?;
                 self.chunk.emit(Opcode::GetIterator);
-                self.chunk.emit(Opcode::DefineVar(iterator.clone()));
+                let name = self.intern_name(&iterator)?;
+                self.chunk.emit(Opcode::DefineVar(name));
                 let lexical_binding = matches!(kind, Some(VarKind::Let | VarKind::Const));
                 self.mark_labeled_loop_scope(loop_label.as_deref(), lexical_binding)?;
 
                 let loop_start = self.chunk.code.len();
-                self.chunk.emit(Opcode::LoadVar(iterator));
+                let name = self.intern_name(&iterator)?;
+                self.chunk.emit(Opcode::LoadVar(name));
                 let exit_jump = self.chunk.code.len();
                 self.chunk.emit(Opcode::IteratorNext(usize::MAX));
                 if lexical_binding {
@@ -783,7 +863,8 @@ impl Compiler {
                     // parameter or local with the same name.
                     self.chunk.emit(Opcode::EnterScope);
                     if let Some(binding) = binding {
-                        self.chunk.emit(Opcode::DefineVar(binding));
+                        let name = self.intern_name(&binding)?;
+                        self.chunk.emit(Opcode::DefineVar(name));
                     } else {
                         self.chunk.emit(Opcode::Pop);
                     }
@@ -835,14 +916,16 @@ impl Compiler {
                 let temporary = format!("__pixi_switch_{}", self.next_temporary);
                 self.next_temporary += 1;
                 self.compile_expression(discriminant)?;
-                self.chunk.emit(Opcode::DefineVar(temporary.clone()));
+                let name = self.intern_name(&temporary)?;
+                self.chunk.emit(Opcode::DefineVar(name));
 
                 let mut case_jumps = Vec::new();
                 for (case_index, (test, _)) in cases.iter().enumerate() {
                     let Some(test) = test else {
                         continue;
                     };
-                    self.chunk.emit(Opcode::LoadVar(temporary.clone()));
+                    let name = self.intern_name(&temporary)?;
+                    self.chunk.emit(Opcode::LoadVar(name));
                     self.compile_expression(test.clone())?;
                     self.chunk.emit(Opcode::StrictEq);
                     let jump = self.chunk.code.len();
@@ -1081,6 +1164,7 @@ impl Compiler {
                 self.chunk.emit(Opcode::LoadConst(idx));
             }
             Expression::Identifier(name) => {
+                let name = self.intern_name(&name)?;
                 self.chunk.emit(Opcode::LoadVar(name));
             }
             Expression::Binary { op, left, right } => {
@@ -1171,7 +1255,8 @@ impl Compiler {
                 match *left {
                     Expression::Identifier(name) => {
                         self.compile_expression(*right)?;
-                        self.chunk.emit(Opcode::StoreVar(name.clone()));
+                        let name = self.intern_name(&name)?;
+                        self.chunk.emit(Opcode::StoreVar(name));
                         self.chunk.emit(Opcode::LoadVar(name));
                     }
                     Expression::MemberAccess {
@@ -1210,7 +1295,8 @@ impl Compiler {
                 prefix,
             } => match *arg {
                 Expression::Identifier(name) => {
-                    self.chunk.emit(Opcode::LoadVar(name.clone()));
+                    let name = self.intern_name(&name)?;
+                    self.chunk.emit(Opcode::LoadVar(name));
                     if !prefix {
                         self.chunk.emit(Opcode::Dup);
                     }
@@ -1282,7 +1368,8 @@ impl Compiler {
                 let binding = self.super_binding.clone().ok_or_else(|| {
                     JSError::InternalError("'super' is only valid inside a derived class".into())
                 })?;
-                self.chunk.emit(Opcode::LoadVar(binding));
+                let name = self.intern_name(&binding)?;
+                self.chunk.emit(Opcode::LoadVar(name));
             }
             Expression::ArrayLiteral(elements) => {
                 // 空の配列を作成してスタックにプッシュ
@@ -1411,10 +1498,19 @@ impl Compiler {
                 self.emit_function_value(name, params, body, None, is_generator)?;
             }
             Expression::ArrowFunction { params, body } => {
+                let mut param_ids = Vec::with_capacity(params.len());
+                for param in &params {
+                    if let Some(rest) = param.strip_prefix("...") {
+                        param_ids.push(FunctionParam::Rest(self.intern_name(rest)?));
+                    } else {
+                        param_ids.push(FunctionParam::Positional(self.intern_name(param)?));
+                    }
+                }
                 let program = Program { body };
-                let function_chunk = Compiler::new().compile_function(program)?;
+                let function_chunk = Compiler::with_intern(Rc::clone(&self.intern), None)
+                    .compile_function(program)?;
                 let func_value =
-                    JSValue::ArrowFunction(Rc::new(function_chunk), params.clone(), None, None, 0);
+                    JSValue::ArrowFunction(Rc::new(function_chunk), param_ids, None, None, 0);
                 let idx = self.chunk.add_constant(func_value);
                 self.chunk.emit(Opcode::CreateFunction(idx));
             }
@@ -1425,7 +1521,8 @@ impl Compiler {
                             "'super' is only valid inside a derived class".into(),
                         )
                     })?;
-                    self.chunk.emit(Opcode::LoadVar(binding));
+                    let name = self.intern_name(&binding)?;
+                    self.chunk.emit(Opcode::LoadVar(name));
                     let call = self.chunk.add_constant(JSValue::String("call".to_string()));
                     self.chunk.emit(Opcode::LoadConst(call));
                     self.chunk.emit(Opcode::LoadThis);
@@ -1446,7 +1543,8 @@ impl Compiler {
                             "'super' is only valid inside a derived class".into(),
                         )
                     })?;
-                    self.chunk.emit(Opcode::LoadVar(binding));
+                    let name = self.intern_name(&binding)?;
+                    self.chunk.emit(Opcode::LoadVar(name));
                     let prototype = self
                         .chunk
                         .add_constant(JSValue::String("prototype".to_string()));
@@ -1603,7 +1701,8 @@ impl Compiler {
                     .generator_output
                     .clone()
                     .ok_or_else(|| JSError::InternalError("yield outside generator".to_string()))?;
-                self.chunk.emit(Opcode::LoadVar(output));
+                let name = self.intern_name(&output)?;
+                self.chunk.emit(Opcode::LoadVar(name));
                 self.compile_expression(*value)?;
                 self.chunk.emit(if delegate {
                     Opcode::ArrayExtend
@@ -1631,12 +1730,24 @@ impl Compiler {
         super_binding: Option<String>,
         is_generator: bool,
     ) -> JSResult<()> {
-        let mut compiler = Compiler::with_super_binding(super_binding);
+        let mut param_ids = Vec::with_capacity(params.len());
+        for param in &params {
+            if let Some(rest) = param.strip_prefix("...") {
+                param_ids.push(FunctionParam::Rest(self.intern_name(rest)?));
+            } else {
+                param_ids.push(FunctionParam::Positional(self.intern_name(param)?));
+            }
+        }
+        let name_id = match name {
+            Some(ref n) => Some(self.intern_name(n)?),
+            None => None,
+        };
+        let mut compiler = Compiler::with_intern(Rc::clone(&self.intern), super_binding);
         if is_generator {
             compiler.generator_output = Some("__pixi_generator_values".to_string());
         }
         let function_chunk = compiler.compile_function(Program { body })?;
-        let value = JSValue::Function(Rc::new(function_chunk), params, None, name, 0);
+        let value = JSValue::Function(Rc::new(function_chunk), param_ids, None, name_id, 0);
         let index = self.chunk.add_constant(value);
         self.chunk.emit(Opcode::CreateFunction(index));
         Ok(())
@@ -1645,10 +1756,11 @@ impl Compiler {
     fn store_binding_pattern(&mut self, pattern: &BindingPattern, define: bool) -> JSResult<()> {
         match pattern {
             BindingPattern::Identifier(name) => {
+                let name = self.intern_name(name)?;
                 self.chunk.emit(if define {
-                    Opcode::DefineVar(name.clone())
+                    Opcode::DefineVar(name)
                 } else {
-                    Opcode::StoreVar(name.clone())
+                    Opcode::StoreVar(name)
                 });
             }
             BindingPattern::Target(Expression::MemberAccess {
@@ -1656,10 +1768,11 @@ impl Compiler {
             }) => {
                 let value = format!("__pixi_pattern_value_{}", self.next_temporary);
                 self.next_temporary += 1;
-                self.chunk.emit(Opcode::DefineVar(value.clone()));
+                let name = self.intern_name(&value)?;
+                self.chunk.emit(Opcode::DefineVar(name));
                 self.compile_expression(*object.clone())?;
                 self.compile_expression(*property.clone())?;
-                self.chunk.emit(Opcode::LoadVar(value));
+                self.chunk.emit(Opcode::LoadVar(name));
                 self.chunk.emit(Opcode::SetProperty);
                 self.chunk.emit(Opcode::Pop);
             }
@@ -1671,16 +1784,17 @@ impl Compiler {
             BindingPattern::Array(items) => {
                 let source = format!("__pixi_pattern_{}", self.next_temporary);
                 self.next_temporary += 1;
-                self.chunk.emit(Opcode::DefineVar(source.clone()));
+                let source_name = self.intern_name(&source)?;
+                self.chunk.emit(Opcode::DefineVar(source_name));
                 for (index, item) in items.iter().enumerate() {
                     let Some(item) = item else { continue };
                     match item {
                         BindingPattern::Rest(rest) => {
-                            self.emit_array_slice(&source, index);
+                            self.emit_array_slice(&source, index)?;
                             self.store_binding_pattern(rest, define)?;
                         }
                         item => {
-                            self.chunk.emit(Opcode::LoadVar(source.clone()));
+                            self.chunk.emit(Opcode::LoadVar(source_name));
                             let index = self.chunk.add_constant(JSValue::Number(index as f64));
                             self.chunk.emit(Opcode::LoadConst(index));
                             self.chunk.emit(Opcode::GetProperty);
@@ -1692,17 +1806,18 @@ impl Compiler {
             BindingPattern::Object(properties) => {
                 let source = format!("__pixi_pattern_{}", self.next_temporary);
                 self.next_temporary += 1;
-                self.chunk.emit(Opcode::DefineVar(source.clone()));
+                let source_name = self.intern_name(&source)?;
+                self.chunk.emit(Opcode::DefineVar(source_name));
                 let mut excluded = Vec::new();
                 for (key, item) in properties {
                     if let BindingPattern::Rest(rest) = item {
-                        self.chunk.emit(Opcode::LoadVar(source.clone()));
+                        self.chunk.emit(Opcode::LoadVar(source_name));
                         self.chunk.emit(Opcode::ObjectRest(excluded.clone()));
                         self.store_binding_pattern(rest, define)?;
                         continue;
                     }
-                    excluded.push(key.clone());
-                    self.chunk.emit(Opcode::LoadVar(source.clone()));
+                    excluded.push(self.intern_name(key)?);
+                    self.chunk.emit(Opcode::LoadVar(source_name));
                     let key = self.chunk.add_constant(JSValue::String(key.clone()));
                     self.chunk.emit(Opcode::LoadConst(key));
                     self.chunk.emit(Opcode::GetProperty);
@@ -1713,26 +1828,28 @@ impl Compiler {
             BindingPattern::Default(pattern, default) => {
                 let source = format!("__pixi_pattern_default_{}", self.next_temporary);
                 self.next_temporary += 1;
-                self.chunk.emit(Opcode::DefineVar(source.clone()));
-                self.chunk.emit(Opcode::LoadVar(source.clone()));
+                let source_name = self.intern_name(&source)?;
+                self.chunk.emit(Opcode::DefineVar(source_name));
+                self.chunk.emit(Opcode::LoadVar(source_name));
                 let undefined = self.chunk.add_constant(JSValue::Undefined);
                 self.chunk.emit(Opcode::LoadConst(undefined));
                 self.chunk.emit(Opcode::StrictEq);
                 let keep_value = self.chunk.code.len();
                 self.chunk.emit(Opcode::JumpIfFalse(usize::MAX));
                 self.compile_expression(default.clone())?;
-                self.chunk.emit(Opcode::StoreVar(source.clone()));
+                self.chunk.emit(Opcode::StoreVar(source_name));
                 let target = self.chunk.code.len();
                 self.patch_jump(keep_value, target);
-                self.chunk.emit(Opcode::LoadVar(source));
+                self.chunk.emit(Opcode::LoadVar(source_name));
                 self.store_binding_pattern(pattern, define)?;
             }
         }
         Ok(())
     }
 
-    fn emit_array_slice(&mut self, source: &str, start: usize) {
-        self.chunk.emit(Opcode::LoadVar("Array".to_string()));
+    fn emit_array_slice(&mut self, source: &str, start: usize) -> JSResult<()> {
+        let name = self.intern_name("Array")?;
+        self.chunk.emit(Opcode::LoadVar(name));
         let prototype = self
             .chunk
             .add_constant(JSValue::String("prototype".to_string()));
@@ -1745,10 +1862,12 @@ impl Compiler {
         self.chunk.emit(Opcode::GetProperty);
         let call = self.chunk.add_constant(JSValue::String("call".to_string()));
         self.chunk.emit(Opcode::LoadConst(call));
-        self.chunk.emit(Opcode::LoadVar(source.to_string()));
+        let name = self.intern_name(source)?;
+        self.chunk.emit(Opcode::LoadVar(name));
         let start = self.chunk.add_constant(JSValue::Number(start as f64));
         self.chunk.emit(Opcode::LoadConst(start));
         self.chunk.emit(Opcode::CallMethod(2));
+        Ok(())
     }
 
     fn compile_class_expression(
@@ -1765,7 +1884,8 @@ impl Compiler {
 
         if let (Some(expression), Some(binding)) = (super_class, super_binding.as_ref()) {
             self.compile_expression(expression)?;
-            self.chunk.emit(Opcode::DefineVar(binding.clone()));
+            let name = self.intern_name(binding)?;
+            self.chunk.emit(Opcode::DefineVar(name));
         }
 
         let (params, body) = match constructor {
@@ -1789,18 +1909,19 @@ impl Compiler {
             None => (Vec::new(), Vec::new()),
         };
         self.emit_function_value(name.clone(), params, body, super_binding.clone(), false)?;
-        self.chunk.emit(Opcode::DefineVar(class_binding.clone()));
+        let class_binding_name = self.intern_name(&class_binding)?;
+        self.chunk.emit(Opcode::DefineVar(class_binding_name));
 
         if let Some(super_binding) = super_binding.as_ref() {
-            self.emit_set_prototype(&class_binding, super_binding, false);
-            self.emit_set_prototype(&class_binding, super_binding, true);
+            self.emit_set_prototype(&class_binding, super_binding, false)?;
+            self.emit_set_prototype(&class_binding, super_binding, true)?;
         }
 
         for method in methods {
             if method.is_static {
-                self.chunk.emit(Opcode::LoadVar(class_binding.clone()));
+                self.chunk.emit(Opcode::LoadVar(class_binding_name));
             } else {
-                self.chunk.emit(Opcode::LoadVar(class_binding.clone()));
+                self.chunk.emit(Opcode::LoadVar(class_binding_name));
                 let prototype = self
                     .chunk
                     .add_constant(JSValue::String("prototype".to_string()));
@@ -1844,35 +1965,44 @@ impl Compiler {
             self.chunk.emit(Opcode::Pop);
         }
 
-        self.chunk.emit(Opcode::LoadVar(class_binding));
+        self.chunk.emit(Opcode::LoadVar(class_binding_name));
         Ok(())
     }
 
-    fn emit_set_prototype(&mut self, class_binding: &str, super_binding: &str, prototype: bool) {
-        self.chunk.emit(Opcode::LoadVar("Object".to_string()));
+    fn emit_set_prototype(
+        &mut self,
+        class_binding: &str,
+        super_binding: &str,
+        prototype: bool,
+    ) -> JSResult<()> {
+        let name = self.intern_name("Object")?;
+        let class_binding_name = self.intern_name(class_binding)?;
+        let super_binding_name = self.intern_name(super_binding)?;
+        self.chunk.emit(Opcode::LoadVar(name));
         let method = self
             .chunk
             .add_constant(JSValue::String("setPrototypeOf".to_string()));
         self.chunk.emit(Opcode::LoadConst(method));
         if prototype {
-            self.chunk.emit(Opcode::LoadVar(class_binding.to_string()));
+            self.chunk.emit(Opcode::LoadVar(class_binding_name));
             let property = self
                 .chunk
                 .add_constant(JSValue::String("prototype".to_string()));
             self.chunk.emit(Opcode::LoadConst(property));
             self.chunk.emit(Opcode::GetProperty);
-            self.chunk.emit(Opcode::LoadVar(super_binding.to_string()));
+            self.chunk.emit(Opcode::LoadVar(super_binding_name));
             let property = self
                 .chunk
                 .add_constant(JSValue::String("prototype".to_string()));
             self.chunk.emit(Opcode::LoadConst(property));
             self.chunk.emit(Opcode::GetProperty);
         } else {
-            self.chunk.emit(Opcode::LoadVar(class_binding.to_string()));
-            self.chunk.emit(Opcode::LoadVar(super_binding.to_string()));
+            self.chunk.emit(Opcode::LoadVar(class_binding_name));
+            self.chunk.emit(Opcode::LoadVar(super_binding_name));
         }
         self.chunk.emit(Opcode::CallMethod(2));
         self.chunk.emit(Opcode::Pop);
+        Ok(())
     }
 }
 
@@ -2052,7 +2182,6 @@ impl Default for Compiler {
         Self::new()
     }
 }
-use std::rc::Rc;
 
 /// `JSValue` の決定論的ハッシュ（プロセス内の重複検出用）。
 fn jsvalue_hash(value: &JSValue) -> u64 {

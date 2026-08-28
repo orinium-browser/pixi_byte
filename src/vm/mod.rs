@@ -6,6 +6,7 @@
 
 use crate::compiler::{BytecodeChunk, Opcode};
 use crate::error::{JSError, JSResult};
+use crate::intern::{FunctionParam, NameId};
 use crate::runtime::{CallFrame, Environment};
 use crate::value::JSValue;
 use crate::value::jsobject::{JSObject, Property};
@@ -149,11 +150,8 @@ impl VM {
             _ => Rc::new(RefCell::new(JSObject::new())),
         };
 
-        let global_frame = CallFrame::new(
-            Environment::with_object_env(global_rc.clone()),
-            JSValue::Object(global_rc.clone()),
-            None,
-        );
+        let global_frame =
+            CallFrame::new(Environment::new(), JSValue::Object(global_rc.clone()), None);
 
         Self {
             stack: Vec::new(),
@@ -415,18 +413,33 @@ impl VM {
                 self.stack.push(value);
             }
             Opcode::LoadVar(name) => {
-                let value = self
-                    .current_env()
-                    .borrow()
-                    .get(name)
-                    .unwrap_or(JSValue::Undefined);
+                let value = if let Some(val) = self.current_env().borrow().get_lexical(*name) {
+                    val
+                } else {
+                    let intern = chunk.intern.borrow();
+                    let name_str = intern.name(*name);
+                    self.global_object.borrow().get(name_str)
+                };
                 self.stack.push(value);
             }
             Opcode::StoreVar(name) => {
                 if let Some(value) = self.stack.pop() {
                     // 既存のスコープチェーンに存在すれば set、なければ現在の env に define
-                    if !self.current_env().borrow().set(name, value.clone()) {
-                        self.current_env().borrow().define(name.clone(), value);
+                    if !self.current_env().borrow().set(*name, value.clone()) {
+                        let is_global = self.current_env().borrow().outer().is_none();
+                        if is_global {
+                            let intern = chunk.intern.borrow();
+                            let name_str = intern.name(*name);
+                            self.global_object.borrow_mut().set(name_str.to_string(), value);
+                        } else {
+                            let intern = chunk.intern.borrow();
+                            let name_str = intern.name(*name);
+                            if self.global_object.borrow().has_property(name_str) {
+                                self.global_object.borrow_mut().set(name_str.to_string(), value);
+                            } else {
+                                self.current_env().borrow().define(name.clone(), value);
+                            }
+                        }
                     }
                 } else {
                     return Err(JSError::InternalError("Stack underflow".to_string()));
@@ -434,13 +447,29 @@ impl VM {
             }
             Opcode::DefineVar(name) => {
                 let value = self.pop()?;
-                self.current_env().borrow().define(name.clone(), value);
+                let is_global = self.current_env().borrow().outer().is_none();
+                if is_global {
+                    let intern = chunk.intern.borrow();
+                    let name_str = intern.name(*name);
+                    self.global_object.borrow_mut().set(name_str.to_string(), value);
+                } else {
+                    self.current_env().borrow().define(name.clone(), value);
+                }
             }
             Opcode::DefineVarIfAbsent(name) => {
                 let value = self.pop()?;
-                self.current_env()
-                    .borrow()
-                    .define_if_absent(name.clone(), value);
+                let is_global = self.current_env().borrow().outer().is_none();
+                if is_global {
+                    let intern = chunk.intern.borrow();
+                    let name_str = intern.name(*name);
+                    if matches!(self.global_object.borrow().get(name_str), JSValue::Undefined) {
+                        self.global_object.borrow_mut().set(name_str.to_string(), value);
+                    }
+                } else {
+                    self.current_env()
+                        .borrow()
+                        .define_if_absent(name.clone(), value);
+                }
             }
             Opcode::EnterScope => {
                 let outer = self.current_env();
@@ -454,7 +483,10 @@ impl VM {
                 })?;
                 let next = Environment::with_outer(outer);
                 for name in names {
-                    let value = current.borrow().get(name).unwrap_or(JSValue::Undefined);
+                    let value = current
+                        .borrow()
+                        .get_lexical(*name)
+                        .unwrap_or(JSValue::Undefined);
                     next.define(name.clone(), value);
                 }
                 self.current_frame_mut().env = Rc::new(RefCell::new(next));
@@ -923,8 +955,10 @@ impl VM {
                 let mut result =
                     crate::value::JSObject::with_prototype(Some(Rc::clone(&self.object_prototype)));
                 if let JSValue::Object(source) = source {
+                    let intern = chunk.intern.borrow();
                     for key in source.borrow().enumerable_keys() {
-                        if !excluded.contains(&key) {
+                        let is_excluded = excluded.iter().any(|&id| intern.name(id) == key);
+                        if !is_excluded {
                             let value = source.borrow().get(&key);
                             result.set(key, value);
                         }
@@ -986,10 +1020,12 @@ impl VM {
                             func_chunk,
                             params,
                             captured,
-                            name_opt.clone(),
+                            name_opt,
                             crate::value::jsvalue::next_function_identity(),
                         );
-                        self.register_user_function(&func, true, length, name_opt.as_deref());
+                        let intern = chunk.intern.borrow();
+                        let name_str = name_opt.map(|id| intern.name(id));
+                        self.register_user_function(&func, true, length, name_str);
                         self.stack.push(func);
                     }
                     JSValue::ArrowFunction(func_chunk, params, _maybe_env, _maybe_this, _) => {
@@ -1684,20 +1720,23 @@ impl VM {
             }
 
             JSValue::Function(chunk, params, env, name, _) => {
+                let func_name_str = name.map(|id| chunk.intern.borrow().name(id).to_string());
                 let env = self.create_function_env(
+                    &chunk,
                     callee_clone,
                     env,
-                    params,
+                    &params,
                     args,
-                    name.clone(),
+                    name,
                     chunk.uses_arguments,
-                );
+                )?;
 
-                self.with_call_frame(env, this, chunk, name)
+                self.with_call_frame(env, this, chunk, func_name_str)
             }
 
             JSValue::ArrowFunction(chunk, params, env, lexical_this, _) => {
-                let env = self.create_function_env(callee_clone, env, params, args, None, false);
+                let env =
+                    self.create_function_env(&chunk, callee_clone, env, &params, args, None, false)?;
                 let this = lexical_this.map(|this| *this).unwrap_or(this);
                 self.with_call_frame(env, this, chunk, None)
             }
@@ -1744,43 +1783,43 @@ impl VM {
 
     fn create_function_env(
         &self,
+        chunk: &BytecodeChunk,
         func: JSValue,
         captured_env: Option<Rc<RefCell<Environment>>>,
-        params: Vec<String>,
+        params: &[FunctionParam],
         args: Vec<JSValue>,
-        name: Option<String>,
+        name: Option<NameId>,
         bind_arguments: bool,
-    ) -> Environment {
+    ) -> JSResult<Environment> {
         let outer = captured_env.unwrap_or_else(|| self.current_env());
 
         let env = Environment::with_outer(outer);
 
-        if let Some(name) = name {
-            env.define(name, func);
+        if let Some(name_id) = name {
+            env.define(name_id, func);
         }
 
         if bind_arguments {
-            env.define(
-                "arguments".to_string(),
-                self.array_from_values(args.clone()),
-            );
+            let id = chunk.intern.borrow_mut().intern("arguments")?;
+            env.define(id, self.array_from_values(args.clone()));
         }
 
-        for (index, parameter) in params.into_iter().enumerate() {
-            if let Some(name) = parameter.strip_prefix("...") {
-                env.define(
-                    name.to_string(),
-                    self.array_from_values(args.get(index..).unwrap_or_default().to_vec()),
-                );
-                break;
+        for (index, parameter) in params.iter().enumerate() {
+            match *parameter {
+                FunctionParam::Rest(id) => {
+                    env.define(
+                        id,
+                        self.array_from_values(args.get(index..).unwrap_or_default().to_vec()),
+                    );
+                    break;
+                }
+                FunctionParam::Positional(id) => {
+                    env.define(id, args.get(index).cloned().unwrap_or(JSValue::Undefined));
+                }
             }
-            env.define(
-                parameter,
-                args.get(index).cloned().unwrap_or(JSValue::Undefined),
-            );
         }
 
-        env
+        Ok(env)
     }
 
     fn add_op(&mut self) -> JSResult<()> {
