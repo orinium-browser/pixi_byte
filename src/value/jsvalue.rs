@@ -9,9 +9,11 @@
 //!   mantissa 最上位ビット=1」でないビット列は、そのまま `f64` として読める。
 //!   （±Infinity と正の quiet NaN は数値として扱う。）
 //! - **ボックス領域（負の quiet NaN）**: 符号=1, 指数=0x7FF, mantissa bit51=1 の
-//!   パターン。上位ビットにタグ、下位ビットにペイロードを載せる。プリミティブ
-//!   （undefined / null / boolean）は即値としてインライン化し、参照型はヒープに
-//!   置いた `BoxedValue` への `Rc` ポインタを積む。
+//!   パターン。タグは bits 48-51（bit 51 は常に 1）、参照型ポインタは bits 0-47
+//!   に載せる。プリミティブ（undefined / null / boolean）は即値としてインライン化し、
+//!   参照型はヒープに置いた `BoxedValue` への `Rc` ポインタを積む。
+//!   ユーザー空間のポインタは 2^47 未満（bit 47 = 0）なので 48 ビットで欠損なく
+//!   復元できる。
 //!
 //! 生の `u64` は **非公開** であり、外部から直接読み書きすることはできない。
 //! 生成・型判定・参照はすべて本モジュールの公開 API（`kind` / `as_*` / `from_*` 等）
@@ -49,20 +51,32 @@ pub type NativeFunctionType =
 const NON_NUMBER_MARK: u64 = 0xFFF8_0000_0000_0000;
 
 /// タグのシフト位置とマスク（ペイロード上位ビット）。
-const TAG_SHIFT: u32 = 45;
-const TAG_MASK: u64 = 0x7F;
+///
+/// mantissa ビット 51 は boxed 領域を示すマーカとして予約済みのため、
+/// タグは bits 48-51 の 4 ビットを使うが、常に bit 51 = 1 に保つ
+/// （タグ値 0x8..=0xF）。
+const TAG_SHIFT: u32 = 48;
+const TAG_MASK: u64 = 0xF;
 
 /// 参照型（ボックス）を示すタグ。
-const TAG_BOXED: u64 = 0x7F;
+const TAG_BOXED: u64 = 0xF;
 
-/// ポインタ部分として利用する下位ビットのマスク（45 ビット = 32 TiB）。
-const PTR_MASK: u64 = (1_u64 << 45) - 1;
+/// ポインタ部分として利用する下位ビットのマスク（48 ビット = 256 TiB）。
+///
+/// ユーザー空間のポインタは 2^47 未満に収まる（bit 47 = 0）ため、
+/// bits 0-47 の 48 ビットでそのまま復元できる。
+const PTR_MASK: u64 = (1_u64 << 48) - 1;
 
 /// 即値タグ（undefined / null / boolean など）。
-const TAG_UNDEFINED: u64 = 0;
-const TAG_NULL: u64 = 1;
-const TAG_FALSE: u64 = 2;
-const TAG_TRUE: u64 = 3;
+const TAG_UNDEFINED: u64 = 0x8;
+const TAG_NULL: u64 = 0x9;
+const TAG_FALSE: u64 = 0xA;
+const TAG_TRUE: u64 = 0xB;
+
+/// 即値を判定する際に比較対象となる可変ペイロード領域
+/// （ポインタ bits 0-47 + タグ bits 48-51）。
+/// bits 52-63 と bit 51 は `NON_NUMBER_MARK` で保証されるためどちら側もマスクする。
+const IMMEDIATE_MASK: u64 = PTR_MASK | (TAG_MASK << TAG_SHIFT);
 
 /// `bits` が「数値として扱える」かどうか（非 non-number 領域）。
 #[inline(always)]
@@ -75,7 +89,7 @@ fn is_number_bits(bits: u64) -> bool {
 const fn immediate(tag: u64) -> u64 {
     // プレフィックス（NON_NUMBER_MARK のうち、タグと重ならない上位部分）
     let prefix = NON_NUMBER_MARK | (tag << TAG_SHIFT);
-    // 即値の場合は下位 45 ビットは必ず 0（ポインタと衝突しないよう PTR_MASK 域は 0）
+    // 即値の場合は下位 48 ビットは必ず 0（ポインタと衝突しないよう PTR_MASK 域は 0）
     prefix & !PTR_MASK
 }
 
@@ -91,7 +105,11 @@ fn boxed_value(kind: JsValueKind, payload: BoxedPayload) -> JSValue {
 /// この値がボックス値かどうか。
 #[inline(always)]
 fn is_boxed_bits(bits: u64) -> bool {
-    ((bits >> TAG_SHIFT) & TAG_MASK) == TAG_BOXED
+    // 負の quiet NaN 領域（NON_NUMBER_MARK）内であることを併せて要求する。
+    // タグビットだけを見ると、指数部/mantissa 上位に 0xF を持つ実数
+    // （例: 2147483647.0 = 0x41DF_FFFF_FFC0_0000）を誤ってボックス値と判定してしまう。
+    (bits & NON_NUMBER_MARK) == NON_NUMBER_MARK
+        && ((bits >> TAG_SHIFT) & TAG_MASK) == TAG_BOXED
 }
 
 /// 値の種類（公開 enum）。
@@ -281,13 +299,13 @@ impl JSValue {
     #[inline(always)]
     pub fn is_undefined(&self) -> bool {
         !is_number_bits(self.0)
-            && (self.0 & (PTR_MASK | (TAG_MASK << TAG_SHIFT))) == immediate(TAG_UNDEFINED)
+            && (self.0 & IMMEDIATE_MASK) == (immediate(TAG_UNDEFINED) & IMMEDIATE_MASK)
     }
 
     #[inline(always)]
     pub fn is_null(&self) -> bool {
         !is_number_bits(self.0)
-            && (self.0 & (PTR_MASK | (TAG_MASK << TAG_SHIFT))) == immediate(TAG_NULL)
+            && (self.0 & IMMEDIATE_MASK) == (immediate(TAG_NULL) & IMMEDIATE_MASK)
     }
 
     #[inline(always)]
@@ -361,6 +379,9 @@ impl JSValue {
 
     /// 文字列を取り出す（存在しなければ `None`）。
     pub fn as_string(&self) -> Option<&str> {
+        if !is_boxed_bits(self.0) {
+            return None;
+        }
         match &self.boxed().payload {
             BoxedPayload::Str(s) => Some(s.as_ref()),
             _ => None,
@@ -373,6 +394,9 @@ impl JSValue {
     }
 
     pub fn as_bigint(&self) -> Option<&BigInt> {
+        if !is_boxed_bits(self.0) {
+            return None;
+        }
         match &self.boxed().payload {
             BoxedPayload::BigInt(b) => Some(b.as_ref()),
             _ => None,
@@ -380,6 +404,9 @@ impl JSValue {
     }
 
     pub fn as_object(&self) -> Option<Rc<RefCell<JSObject>>> {
+        if !is_boxed_bits(self.0) {
+            return None;
+        }
         match &self.boxed().payload {
             BoxedPayload::Object(o) => Some(Rc::clone(o)),
             _ => None,
@@ -387,6 +414,9 @@ impl JSValue {
     }
 
     pub fn as_function(&self) -> Option<&FunctionData> {
+        if !is_boxed_bits(self.0) {
+            return None;
+        }
         match &self.boxed().payload {
             BoxedPayload::Function(d) => Some(d),
             _ => None,
@@ -394,6 +424,9 @@ impl JSValue {
     }
 
     pub fn as_arrow_function(&self) -> Option<&ArrowFunctionData> {
+        if !is_boxed_bits(self.0) {
+            return None;
+        }
         match &self.boxed().payload {
             BoxedPayload::ArrowFunction(d) => Some(d),
             _ => None,
@@ -401,6 +434,9 @@ impl JSValue {
     }
 
     pub fn as_native_function(&self) -> Option<NativeFunctionType> {
+        if !is_boxed_bits(self.0) {
+            return None;
+        }
         match &self.boxed().payload {
             BoxedPayload::NativeFunction(f) => Some(*f),
             _ => None,
@@ -408,6 +444,9 @@ impl JSValue {
     }
 
     pub fn as_bound_function(&self) -> Option<&BoundFunctionData> {
+        if !is_boxed_bits(self.0) {
+            return None;
+        }
         match &self.boxed().payload {
             BoxedPayload::BoundFunction(d) => Some(d),
             _ => None,
@@ -549,11 +588,11 @@ impl JSValue {
             JsValueKind::Object => {
                 let callable = self
                     .as_object()
-                    .and_then(|object| {
+                    .map(|object| {
                         object
                             .try_borrow()
-                            .map(|object| !matches!(object.get("__call__"), JSValue(_r) if JSValue(_r).is_undefined()))
-                            .ok()
+                            .map(|object| !object.get("__call__").is_undefined())
+                            .unwrap_or(false)
                     })
                     .unwrap_or(false);
                 if callable { "function" } else { "object" }
