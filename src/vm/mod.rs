@@ -300,7 +300,7 @@ impl VM {
             let opcode = &chunk.code[pc];
             pc += 1;
 
-            let control = match self.execute_opcode(opcode, &chunk) {
+            let control = match self.execute_opcode(opcode, chunk) {
                 Ok(control) => control,
                 Err(error) => {
                     pending_finally.pop();
@@ -444,7 +444,7 @@ impl VM {
                                     .borrow_mut()
                                     .set(name_str.to_string(), value);
                             } else {
-                                self.current_env().borrow().define(name.clone(), value);
+                                self.current_env().borrow().define(*name, value);
                             }
                         }
                     }
@@ -462,7 +462,7 @@ impl VM {
                         .borrow_mut()
                         .set(name_str.to_string(), value);
                 } else {
-                    self.current_env().borrow().define(name.clone(), value);
+                    self.current_env().borrow().define(*name, value);
                 }
             }
             Opcode::DefineVarIfAbsent(name) => {
@@ -477,9 +477,7 @@ impl VM {
                             .set(name_str.to_string(), value);
                     }
                 } else {
-                    self.current_env()
-                        .borrow()
-                        .define_if_absent(name.clone(), value);
+                    self.current_env().borrow().define_if_absent(*name, value);
                 }
             }
             Opcode::EnterScope => {
@@ -498,7 +496,7 @@ impl VM {
                         .borrow()
                         .get_lexical(*name)
                         .unwrap_or(JSValue::undefined());
-                    next.define(name.clone(), value);
+                    next.define(*name, value);
                 }
                 self.current_frame_mut().env = Rc::new(RefCell::new(next));
             }
@@ -1264,13 +1262,10 @@ impl VM {
                         } else {
                             format!(" (JS stack: {stack})")
                         };
-                        return Err(JSError::TypeError(
-                            format!(
-                                "cannot call property '{key}' on {} receiver{stack}",
-                                object.type_of(),
-                            )
-                            .into(),
-                        ));
+                        return Err(JSError::TypeError(format!(
+                            "cannot call property '{key}' on {} receiver{stack}",
+                            object.type_of(),
+                        )));
                     }
                 };
 
@@ -1738,10 +1733,10 @@ impl VM {
                 } = callee.as_function().unwrap();
                 let func_name_str = name.map(|id| chunk.intern.borrow().name(id).to_string());
                 let env = self.create_function_env(
-                    &chunk,
+                    chunk,
                     callee_clone,
                     env.clone(),
-                    &params,
+                    params,
                     args,
                     *name,
                     chunk.uses_arguments,
@@ -1759,10 +1754,10 @@ impl VM {
                     identity: _,
                 } = callee.as_arrow_function().unwrap();
                 let env = self.create_function_env(
-                    &chunk,
+                    chunk,
                     callee_clone,
                     env.clone(),
-                    &params,
+                    params,
                     args,
                     None,
                     false,
@@ -1801,13 +1796,10 @@ impl VM {
                     .filter_map(|frame| frame.function_name.as_deref())
                     .collect::<Vec<_>>()
                     .join(" -> ");
-                Err(JSError::TypeError(
-                    format!(
-                        "{} is not callable (JS stack: {stack})",
-                        callee.to_console_string()
-                    )
-                    .into(),
-                ))
+                Err(JSError::TypeError(format!(
+                    "{} is not callable (JS stack: {stack})",
+                    callee.to_console_string()
+                )))
             }
         }
     }

@@ -19,18 +19,10 @@ pub use compiler::{Compiler, Opcode};
 pub use lexer::{Lexer, TokenKind};
 pub use parser::Parser;
 
+#[derive(Default)]
 pub struct EvalOptions {
     pub dump_ast: bool,
     pub dump_bytecode: bool,
-}
-
-impl Default for EvalOptions {
-    fn default() -> Self {
-        Self {
-            dump_ast: false,
-            dump_bytecode: false,
-        }
-    }
 }
 
 /// メインインターフェース

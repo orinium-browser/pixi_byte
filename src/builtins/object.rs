@@ -11,13 +11,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 fn object_constructor(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    if let Some(value) = args.get(1) {
-        if matches!(
+    if let Some(value) = args.get(1)
+        && matches!(
             value.clone().kind(),
             JsValueKind::Object | JsValueKind::Function | JsValueKind::ArrowFunction
-        ) {
-            return Ok(value.clone());
-        }
+        )
+    {
+        return Ok(value.clone());
     }
     if let Some(obj) = args.first().and_then(|v| v.as_object()) {
         return Ok(JSValue::from_object(obj));

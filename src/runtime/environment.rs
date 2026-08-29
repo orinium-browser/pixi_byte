@@ -55,8 +55,8 @@ impl Environment {
     pub fn set(&self, name: NameId, value: JSValue) -> bool {
         {
             let mut bindings = self.bindings.borrow_mut();
-            if bindings.contains_key(&name) {
-                bindings.insert(name, value);
+            if let std::collections::hash_map::Entry::Occupied(mut e) = bindings.entry(name) {
+                e.insert(value);
                 return true;
             }
         }

@@ -225,10 +225,10 @@ impl JSObject {
         }
 
         // Non-configurable property cannot be redefined
-        if let Some(old) = self.properties.borrow().get(&key) {
-            if !old.configurable {
-                return false;
-            }
+        if let Some(old) = self.properties.borrow().get(&key)
+            && !old.configurable
+        {
+            return false;
         }
 
         self.properties.borrow_mut().insert(key, property);

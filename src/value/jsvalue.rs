@@ -631,7 +631,7 @@ impl JSValue {
             }
             (JsValueKind::Function, JsValueKind::Function)
             | (JsValueKind::ArrowFunction, JsValueKind::ArrowFunction) => {
-                let (self_id, self_chunk) = function_identity_and_chunk(&self);
+                let (self_id, self_chunk) = function_identity_and_chunk(self);
                 let (other_id, other_chunk) = function_identity_and_chunk(other);
                 (self_id != 0 && self_id == other_id)
                     || (self_id == 0

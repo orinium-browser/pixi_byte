@@ -89,10 +89,10 @@ fn promise_reject(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 
 fn promise_resolve_static(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let value = args.get(1).cloned().unwrap_or(JSValue::undefined());
-    if let Some(object) = value.as_object() {
-        if object.borrow().has_own_property(STATE) {
-            return Ok(value);
-        }
+    if let Some(object) = value.as_object()
+        && object.borrow().has_own_property(STATE)
+    {
+        return Ok(value);
     }
 
     let promise = new_promise(vm);
@@ -243,10 +243,10 @@ fn await_value(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         let to_string = object.borrow().get("toString");
         if is_callable(&to_string) {
             let css = vm.call(to_string, value, Vec::new())?;
-            if let Some(result_object) = resolved.as_object() {
-                if css.clone().is_string() {
-                    result_object.borrow_mut().set("css".to_string(), css);
-                }
+            if let Some(result_object) = resolved.as_object()
+                && css.clone().is_string()
+            {
+                result_object.borrow_mut().set("css".to_string(), css);
             }
         }
         return Ok(resolved);
@@ -267,22 +267,22 @@ fn promise_receiver(value: Option<&JSValue>) -> JSResult<Rc<RefCell<JSObject>>> 
 }
 
 fn resolve_promise(vm: &mut VM, promise: &Rc<RefCell<JSObject>>, value: JSValue) {
-    if let Some(other) = value.as_object() {
-        if other.borrow().has_own_property(STATE) {
-            if Rc::ptr_eq(promise, &other) {
-                settle_promise(
-                    vm,
-                    promise,
-                    true,
-                    JSValue::from_string("Promise cannot resolve itself".to_string()),
-                );
-                return;
-            }
-            let resolve = bound_settler(promise_resolve, promise);
-            let reject = bound_settler(promise_reject, promise);
-            let _ = promise_then(vm, vec![JSValue::from_object(other), resolve, reject]);
+    if let Some(other) = value.as_object()
+        && other.borrow().has_own_property(STATE)
+    {
+        if Rc::ptr_eq(promise, &other) {
+            settle_promise(
+                vm,
+                promise,
+                true,
+                JSValue::from_string("Promise cannot resolve itself".to_string()),
+            );
             return;
         }
+        let resolve = bound_settler(promise_resolve, promise);
+        let reject = bound_settler(promise_reject, promise);
+        let _ = promise_then(vm, vec![JSValue::from_object(other), resolve, reject]);
+        return;
     }
     settle_promise(vm, promise, false, value);
 }
