@@ -20,7 +20,10 @@ fn object_literals_accept_string_number_and_keyword_keys() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::from_string("equalsonefallback".to_string()));
+    assert_eq!(
+        result,
+        JSValue::from_string("equalsonefallback".to_string())
+    );
 }
 
 #[test]

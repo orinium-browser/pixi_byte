@@ -104,7 +104,10 @@ fn callable_object_with_bound_constructor_preserves_class_construction() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::from_string("true:11:undefined".to_string()));
+    assert_eq!(
+        result,
+        JSValue::from_string("true:11:undefined".to_string())
+    );
 }
 
 #[test]

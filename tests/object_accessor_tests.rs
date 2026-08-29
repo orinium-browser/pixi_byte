@@ -191,7 +191,10 @@ fn host_property_hooks_handle_missing_properties() {
     target.set(
         pixi_byte::value::jsobject::HOST_GET_PROPERTY.to_string(),
         JSValue::from_native_function(|_vm, args| {
-            Ok(JSValue::from_string(format!("read:{}", args[1].to_string())))
+            Ok(JSValue::from_string(format!(
+                "read:{}",
+                args[1].to_string()
+            )))
         }),
     );
     target.set(

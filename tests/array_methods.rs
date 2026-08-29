@@ -216,7 +216,10 @@ fn array_join_uses_custom_object_to_string() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::from_string(".py-2{padding:0.5rem}".to_string()));
+    assert_eq!(
+        result,
+        JSValue::from_string(".py-2{padding:0.5rem}".to_string())
+    );
 }
 
 #[test]
@@ -230,7 +233,10 @@ fn array_to_string_delegates_to_join() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::from_string(".py-2,padding:0.5rem".to_string()));
+    assert_eq!(
+        result,
+        JSValue::from_string(".py-2,padding:0.5rem".to_string())
+    );
 }
 
 #[test]

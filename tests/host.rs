@@ -84,6 +84,12 @@ fn host_data_can_be_mutated_by_native() {
         .borrow_mut()
         .set("bumpHost".to_string(), native);
 
-    assert_eq!(engine.eval("bumpHost()").unwrap(), JSValue::from_number(1.0));
-    assert_eq!(engine.eval("bumpHost()").unwrap(), JSValue::from_number(2.0));
+    assert_eq!(
+        engine.eval("bumpHost()").unwrap(),
+        JSValue::from_number(1.0)
+    );
+    assert_eq!(
+        engine.eval("bumpHost()").unwrap(),
+        JSValue::from_number(2.0)
+    );
 }

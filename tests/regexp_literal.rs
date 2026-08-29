@@ -35,7 +35,10 @@ fn regexp_exec_returns_captures_and_match_index() {
 #[test]
 fn division_is_not_tokenized_as_a_regexp() {
     let mut engine = JSEngine::new();
-    assert_eq!(engine.eval("12 / 3 / 2").unwrap(), JSValue::from_number(2.0));
+    assert_eq!(
+        engine.eval("12 / 3 / 2").unwrap(),
+        JSValue::from_number(2.0)
+    );
 }
 
 #[test]

@@ -25,70 +25,65 @@ fn test_object_builtins_registered_and_functional() {
         "Object.getPrototypeOf not installed as native function"
     );
 
-            // Object.create を直接呼び出してプロトタイプが正しく設定されるかを確認
-            // まず prototype オブジェクトを作成
-            let proto = pixi_byte::value::jsobject::JSObject::new();
-            let proto_obj = JSValue::from_object(std::rc::Rc::new(std::cell::RefCell::new(proto)));
+    // Object.create を直接呼び出してプロトタイプが正しく設定されるかを確認
+    // まず prototype オブジェクトを作成
+    let proto = pixi_byte::value::jsobject::JSObject::new();
+    let proto_obj = JSValue::from_object(std::rc::Rc::new(std::cell::RefCell::new(proto)));
 
-            if let Some(f) = obj_ref.borrow().get("create").as_native_function() {
-                let res = f(&mut vm, vec![proto_obj.clone()]).unwrap();
-                match res.as_object() {
-                    Some(new_obj_ref) => {
-                        // プロトタイプが設定されていることを確認
-                        let got = new_obj_ref.borrow().get_prototype();
-                        assert!(got.is_some());
-                        if let Some(gp) = got {
-                            // 同一参照かどうか
-                            assert_eq!(
-                                std::rc::Rc::ptr_eq(
-                                    &gp,
-                                    &std::rc::Rc::new(std::cell::RefCell::new(
-                                        pixi_byte::value::jsobject::JSObject::new()
-                                    ))
-                                    .clone()
-                                ),
-                                false
-                            );
-                            // ここでは proto_obj と同じプロトタイプが設定されていることを期待
-                        }
-                    }
-                    _ => panic!("Object.create did not return an object"),
+    if let Some(f) = obj_ref.borrow().get("create").as_native_function() {
+        let res = f(&mut vm, vec![proto_obj.clone()]).unwrap();
+        match res.as_object() {
+            Some(new_obj_ref) => {
+                // プロトタイプが設定されていることを確認
+                let got = new_obj_ref.borrow().get_prototype();
+                assert!(got.is_some());
+                if let Some(gp) = got {
+                    // 同一参照かどうか
+                    assert_eq!(
+                        std::rc::Rc::ptr_eq(
+                            &gp,
+                            &std::rc::Rc::new(std::cell::RefCell::new(
+                                pixi_byte::value::jsobject::JSObject::new()
+                            ))
+                            .clone()
+                        ),
+                        false
+                    );
+                    // ここでは proto_obj と同じプロトタイプが設定されていることを期待
                 }
-            } else {
-                panic!("create not callable");
             }
+            _ => panic!("Object.create did not return an object"),
+        }
+    } else {
+        panic!("create not callable");
+    }
 
-            // Object.getPrototypeOf を直接呼び出してプロトタイプを取得できることを確認
-            // 先ほど作ったオブジェクトを再利用するため再度作成
-            if let Some(f) = obj_ref.borrow().get("create").as_native_function() {
-                let created = f(&mut vm, vec![proto_obj.clone()]).unwrap();
-                if let Some(created_ref) = created.as_object() {
-                    if let Some(getp) = obj_ref
-                        .borrow()
-                        .get("getPrototypeOf")
-                        .as_native_function()
-                    {
-                        let got =
-                            getp(&mut vm, vec![JSValue::from_object(created_ref.clone())]).unwrap();
-                        if let Some(gp_ref) = got.as_object() {
-                            // gp_ref should point to same prototype as proto_obj
-                            if let Some(proto_clone_ref) = proto_obj.as_object() {
-                                assert!(std::rc::Rc::ptr_eq(&gp_ref, &proto_clone_ref));
-                            }
-                        } else if got.is_null() {
-                            panic!("getPrototypeOf returned null unexpectedly");
-                        } else {
-                            panic!("getPrototypeOf returned unexpected value");
-                        }
-                    } else {
-                        panic!("getPrototypeOf not callable");
+    // Object.getPrototypeOf を直接呼び出してプロトタイプを取得できることを確認
+    // 先ほど作ったオブジェクトを再利用するため再度作成
+    if let Some(f) = obj_ref.borrow().get("create").as_native_function() {
+        let created = f(&mut vm, vec![proto_obj.clone()]).unwrap();
+        if let Some(created_ref) = created.as_object() {
+            if let Some(getp) = obj_ref.borrow().get("getPrototypeOf").as_native_function() {
+                let got = getp(&mut vm, vec![JSValue::from_object(created_ref.clone())]).unwrap();
+                if let Some(gp_ref) = got.as_object() {
+                    // gp_ref should point to same prototype as proto_obj
+                    if let Some(proto_clone_ref) = proto_obj.as_object() {
+                        assert!(std::rc::Rc::ptr_eq(&gp_ref, &proto_clone_ref));
                     }
+                } else if got.is_null() {
+                    panic!("getPrototypeOf returned null unexpectedly");
                 } else {
-                    panic!("create did not return object for second call");
+                    panic!("getPrototypeOf returned unexpected value");
                 }
             } else {
-                panic!("create not callable for second call");
+                panic!("getPrototypeOf not callable");
             }
+        } else {
+            panic!("create did not return object for second call");
+        }
+    } else {
+        panic!("create not callable for second call");
+    }
 }
 
 #[test]
@@ -115,7 +110,10 @@ fn test_object_create_with_descriptors() {
         if let Some(create_fn) = obj_ref.borrow().get("create").as_native_function() {
             let res = create_fn(
                 &mut vm,
-                vec![proto_obj.clone(), JSValue::from_object(desc_outer_rc.clone())],
+                vec![
+                    proto_obj.clone(),
+                    JSValue::from_object(desc_outer_rc.clone()),
+                ],
             )
             .unwrap();
             match res.as_object() {
@@ -155,10 +153,14 @@ fn test_is_prototype_of() {
             if let Some(created_ref) = created.as_object() {
                 // call isPrototypeOf on proto
                 if let Some(proto_constructor) = global.borrow().get("Object").as_object() {
-                    if let Some(proto_proto) = proto_constructor.borrow().get("prototype").as_object()
+                    if let Some(proto_proto) =
+                        proto_constructor.borrow().get("prototype").as_object()
                     {
                         // proto_proto is Object.prototype, but we want to call isPrototypeOf on proto_obj instance
-                        if let Some(isp) = proto_proto.borrow().get("isPrototypeOf").as_native_function()
+                        if let Some(isp) = proto_proto
+                            .borrow()
+                            .get("isPrototypeOf")
+                            .as_native_function()
                         {
                             // method expects receiver as first arg
                             let res = isp(
@@ -213,7 +215,9 @@ fn test_object_to_string() {
                 // call on a function value (NativeFunction)
                 let res2 = to_str(
                     &mut vm,
-                    vec![JSValue::from_native_function(|_, _| Ok(JSValue::undefined()))],
+                    vec![JSValue::from_native_function(|_, _| {
+                        Ok(JSValue::undefined())
+                    })],
                 )
                 .unwrap();
                 match res2.as_string() {
@@ -252,11 +256,7 @@ fn test_define_property_and_get_own_property_descriptor() {
         let desc_rc = std::rc::Rc::new(std::cell::RefCell::new(desc));
 
         // call Object.defineProperty(target, "x", desc)
-        if let Some(def_fn) = obj_ref
-            .borrow()
-            .get("defineProperty")
-            .as_native_function()
-        {
+        if let Some(def_fn) = obj_ref.borrow().get("defineProperty").as_native_function() {
             let _ = def_fn(
                 &mut vm,
                 vec![
@@ -298,7 +298,8 @@ fn test_define_property_and_get_own_property_descriptor() {
         // accessor property: { get: function() { return 42 }, set: function(v) { } }
         let _accessor_desc = pixi_byte::value::jsobject::JSObject::new();
         // represent getter as NativeFunction
-        let getter_native = JSValue::from_native_function(|_vm, _args| Ok(JSValue::from_number(42.0)));
+        let getter_native =
+            JSValue::from_native_function(|_vm, _args| Ok(JSValue::from_number(42.0)));
         let getter_val = getter_native.clone();
 
         let mut accessor_desc = pixi_byte::value::jsobject::JSObject::new();
@@ -309,11 +310,7 @@ fn test_define_property_and_get_own_property_descriptor() {
         );
         let accessor_desc_rc = std::rc::Rc::new(std::cell::RefCell::new(accessor_desc));
 
-        if let Some(def_fn2) = obj_ref
-            .borrow()
-            .get("defineProperty")
-            .as_native_function()
-        {
+        if let Some(def_fn2) = obj_ref.borrow().get("defineProperty").as_native_function() {
             let _ = def_fn2(
                 &mut vm,
                 vec![

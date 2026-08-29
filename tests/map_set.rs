@@ -69,7 +69,10 @@ fn set_for_each_uses_web_compatible_arguments_and_this_value() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::from_string("set:aatrueset:bbtrue".to_string()));
+    assert_eq!(
+        result,
+        JSValue::from_string("set:aatrueset:bbtrue".to_string())
+    );
 }
 
 #[test]

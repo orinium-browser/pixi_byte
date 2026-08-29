@@ -87,5 +87,8 @@ fn function_call_preserves_thrown_error_objects() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::from_string("TypeError: broken".to_string()));
+    assert_eq!(
+        result,
+        JSValue::from_string("TypeError: broken".to_string())
+    );
 }

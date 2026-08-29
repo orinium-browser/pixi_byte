@@ -13,7 +13,10 @@ fn date_calendar_fields_and_set_date_use_epoch_milliseconds() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::from_string("1970:0:1:2:86400000".to_string()));
+    assert_eq!(
+        result,
+        JSValue::from_string("1970:0:1:2:86400000".to_string())
+    );
 }
 
 #[test]

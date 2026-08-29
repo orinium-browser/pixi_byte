@@ -72,5 +72,8 @@ fn callable_proxy_forwards_function_properties_and_class_construction() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::from_string("function:true:true:13".to_string()));
+    assert_eq!(
+        result,
+        JSValue::from_string("function:true:true:13".to_string())
+    );
 }

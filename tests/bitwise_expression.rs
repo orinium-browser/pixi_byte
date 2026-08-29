@@ -23,5 +23,8 @@ fn bitwise_and_shift_expressions_follow_javascript_precedence() {
 #[test]
 fn exponentiation_is_right_associative() {
     let mut engine = JSEngine::new();
-    assert_eq!(engine.eval("2 ** 3 ** 2").unwrap(), JSValue::from_number(512.0));
+    assert_eq!(
+        engine.eval("2 ** 3 ** 2").unwrap(),
+        JSValue::from_number(512.0)
+    );
 }
