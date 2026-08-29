@@ -9,6 +9,6 @@ fn encode_uri_component_uses_utf8_percent_encoding() {
 
     assert_eq!(
         result,
-        JSValue::String("a%20b%2F%E6%97%A5%E6%9C%AC!~*'()".to_string())
+        JSValue::from_string("a%20b%2F%E6%97%A5%E6%9C%AC!~*'()".to_string())
     );
 }

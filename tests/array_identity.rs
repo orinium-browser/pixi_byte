@@ -5,11 +5,11 @@ fn array_literals_are_identified_as_arrays() {
     let mut engine = JSEngine::new();
     assert_eq!(
         engine.eval("Array.isArray([])").unwrap(),
-        JSValue::Boolean(true)
+        JSValue::from_bool(true)
     );
     assert_eq!(
         engine.eval("Array.isArray({ length: 0 })").unwrap(),
-        JSValue::Boolean(false)
+        JSValue::from_bool(false)
     );
 }
 
@@ -26,5 +26,5 @@ fn array_literals_inherit_array_prototype_methods() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }

@@ -22,7 +22,7 @@ fn labeled_break_exits_blocks_and_switches() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(2.0));
+    assert_eq!(result, JSValue::from_number(2.0));
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn labeled_continue_targets_the_named_loop() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(3.0));
+    assert_eq!(result, JSValue::from_number(3.0));
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn labeled_break_unwinds_the_target_loop_lexical_environment() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("outer".to_string()));
+    assert_eq!(result, JSValue::from_string("outer".to_string()));
 }
 
 #[test]
@@ -78,5 +78,5 @@ fn labeled_continue_unwinds_inner_lexical_environments() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("outer".to_string()));
+    assert_eq!(result, JSValue::from_string("outer".to_string()));
 }

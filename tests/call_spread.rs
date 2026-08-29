@@ -12,7 +12,7 @@ fn rest_parameters_collect_remaining_arguments() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -28,7 +28,7 @@ fn function_calls_expand_spread_arguments() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(6.0));
+    assert_eq!(result, JSValue::from_number(6.0));
 }
 
 #[test]
@@ -46,5 +46,5 @@ fn method_calls_expand_spread_arguments_and_preserve_receiver() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(6.0));
+    assert_eq!(result, JSValue::from_number(6.0));
 }

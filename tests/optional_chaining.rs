@@ -3,12 +3,12 @@ use pixi_byte::{JSEngine, JSValue};
 #[test]
 fn optional_member_access_returns_undefined_for_nullish_receiver() {
     let mut engine = JSEngine::new();
-    assert_eq!(engine.eval("null?.value;").unwrap(), JSValue::Undefined);
+    assert_eq!(engine.eval("null?.value;").unwrap(), JSValue::undefined());
     assert_eq!(
         engine
             .eval("const value = { answer: 42 }; value?.answer;")
             .unwrap(),
-        JSValue::Number(42.0)
+        JSValue::from_number(42.0)
     );
 }
 
@@ -26,7 +26,7 @@ fn optional_method_call_preserves_receiver() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(42.0));
+    assert_eq!(result, JSValue::from_number(42.0));
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn optional_call_returns_undefined_for_missing_function() {
     let mut engine = JSEngine::new();
     assert_eq!(
         engine.eval("const value = {}; value.missing?.();").unwrap(),
-        JSValue::Undefined
+        JSValue::undefined()
     );
 }
 
@@ -51,5 +51,5 @@ fn nullish_coalescing_only_evaluates_fallback_for_nullish_values() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(4.0));
+    assert_eq!(result, JSValue::from_number(4.0));
 }

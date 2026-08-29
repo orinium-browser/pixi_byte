@@ -9,7 +9,7 @@ fn object_is_uses_same_value_semantics() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -31,7 +31,7 @@ fn object_static_methods_do_not_treat_the_constructor_as_an_argument() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn get_prototype_of_accepts_functions_and_boxable_primitives() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn ordinary_and_explicit_null_prototypes_are_distinct() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn get_own_property_names_includes_non_enumerable_properties() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("1:hidden:0".to_string()));
+    assert_eq!(result, JSValue::from_string("1:hidden:0".to_string()));
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn get_own_property_names_hides_engine_callable_slots() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn property_descriptor_methods_accept_functions() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn bound_set_prototype_of_forwards_arguments() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, pixi_byte::JSValue::Boolean(true));
+    assert_eq!(result, pixi_byte::JSValue::from_bool(true));
 }
 
 #[test]
@@ -151,7 +151,7 @@ fn object_assign_accepts_function_targets_and_sources() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, pixi_byte::JSValue::Boolean(true));
+    assert_eq!(result, pixi_byte::JSValue::from_bool(true));
 }
 
 #[test]
@@ -171,5 +171,5 @@ fn entries_values_and_from_entries_round_trip_enumerable_properties() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, pixi_byte::JSValue::Boolean(true));
+    assert_eq!(result, pixi_byte::JSValue::from_bool(true));
 }

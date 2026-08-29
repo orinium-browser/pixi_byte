@@ -6,7 +6,7 @@ fn numeric_object_keys_use_their_canonical_string_value() {
     let result = engine
         .eval(r#"const modules = {93e3: "locale", 1.0: "one"}; modules[93000] + ":" + modules[1];"#)
         .unwrap();
-    assert_eq!(result, JSValue::String("locale:one".to_string()));
+    assert_eq!(result, JSValue::from_string("locale:one".to_string()));
 }
 
 #[test]
@@ -20,7 +20,7 @@ fn object_literals_accept_string_number_and_keyword_keys() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("equalsonefallback".to_string()));
+    assert_eq!(result, JSValue::from_string("equalsonefallback".to_string()));
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn object_literals_accept_shorthand_properties() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(42.0));
+    assert_eq!(result, JSValue::from_number(42.0));
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn object_literals_support_getters_and_setters() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(12.0));
+    assert_eq!(result, JSValue::from_number(12.0));
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn object_literals_support_method_shorthand() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(6.0));
+    assert_eq!(result, JSValue::from_number(6.0));
 }
 
 #[test]
@@ -88,7 +88,7 @@ fn methods_named_get_and_set_are_not_parsed_as_accessors() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(8.0));
+    assert_eq!(result, JSValue::from_number(8.0));
 }
 
 #[test]
@@ -104,5 +104,5 @@ fn object_literals_support_spread_and_computed_keys() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(5.0));
+    assert_eq!(result, JSValue::from_number(5.0));
 }

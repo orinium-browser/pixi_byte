@@ -16,7 +16,7 @@ fn exposes_ecmascript_numeric_globals() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -34,5 +34,5 @@ fn bigint_preserves_arbitrary_precision_operations() {
     "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }

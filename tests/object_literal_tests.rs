@@ -6,23 +6,14 @@ fn test_array_literal() {
 
     // 基本的な配列リテラル
     let result = engine.eval("[1, 2, 3]").unwrap();
-    match result {
-        JSValue::Object(_) => {
-            // 配列はオブジェクトとして扱われる
-            assert!(true);
-        }
-        _ => panic!("Expected object for array literal"),
-    }
+    assert!(result.is_object(), "Expected object for array literal");
 }
 
 #[test]
 fn test_array_literal_empty() {
     let mut engine = JSEngine::new();
     let result = engine.eval("[]").unwrap();
-    match result {
-        JSValue::Object(_) => assert!(true),
-        _ => panic!("Expected object for empty array"),
-    }
+    assert!(result.is_object(), "Expected object for empty array");
 }
 
 #[test]
@@ -31,20 +22,14 @@ fn test_object_literal() {
 
     // 基本的なオブジェクトリテラル
     let result = engine.eval(r#"({ name: "Alice", age: 30 })"#).unwrap();
-    match result {
-        JSValue::Object(_) => assert!(true),
-        _ => panic!("Expected object for object literal"),
-    }
+    assert!(result.is_object(), "Expected object for object literal");
 }
 
 #[test]
 fn test_object_literal_empty() {
     let mut engine = JSEngine::new();
     let result = engine.eval("({})").unwrap();
-    match result {
-        JSValue::Object(_) => assert!(true),
-        _ => panic!("Expected object for empty object"),
-    }
+    assert!(result.is_object(), "Expected object for empty object");
 }
 
 #[test]
@@ -61,7 +46,7 @@ fn test_member_access_dot() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(10.0));
+    assert_eq!(result, JSValue::from_number(10.0));
 }
 
 #[test]
@@ -78,7 +63,7 @@ fn test_member_access_bracket() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("Bob".to_string()));
+    assert_eq!(result, JSValue::from_string("Bob".to_string()));
 }
 
 #[test]
@@ -96,7 +81,7 @@ fn test_member_assignment() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(42.0));
+    assert_eq!(result, JSValue::from_number(42.0));
 }
 
 #[test]
@@ -113,7 +98,7 @@ fn test_array_index_access() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(20.0));
+    assert_eq!(result, JSValue::from_number(20.0));
 }
 
 #[test]
@@ -130,5 +115,5 @@ fn test_nested_object() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(100.0));
+    assert_eq!(result, JSValue::from_number(100.0));
 }

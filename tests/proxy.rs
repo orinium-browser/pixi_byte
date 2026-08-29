@@ -17,7 +17,7 @@ fn proxy_get_and_set_traps_are_invoked() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(9.0));
+    assert_eq!(result, JSValue::from_number(9.0));
 }
 
 #[test]
@@ -32,7 +32,7 @@ fn proxy_internal_properties_do_not_leak_through_enumeration() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn callable_proxy_forwards_calls_and_apply_traps() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("5:7".to_string()));
+    assert_eq!(result, JSValue::from_string("5:7".to_string()));
 }
 
 #[test]
@@ -72,5 +72,5 @@ fn callable_proxy_forwards_function_properties_and_class_construction() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("function:true:true:13".to_string()));
+    assert_eq!(result, JSValue::from_string("function:true:true:13".to_string()));
 }

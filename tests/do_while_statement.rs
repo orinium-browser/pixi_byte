@@ -15,7 +15,7 @@ fn do_while_runs_before_testing_its_condition() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(1.0));
+    assert_eq!(result, JSValue::from_number(1.0));
 }
 
 #[test]
@@ -41,5 +41,5 @@ fn do_while_supports_break_and_continue() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(8.0));
+    assert_eq!(result, JSValue::from_number(8.0));
 }

@@ -8,48 +8,38 @@ fn test_array_prototype_push_pop_native() {
 
     // Array が登録されている
     let array_ctor = global.borrow().get("Array");
-    match array_ctor {
-        JSValue::Object(ref ctor_ref) => {
-            // prototype がある
-            let proto = ctor_ref.borrow().get("prototype");
-            match proto {
-                JSValue::Object(proto_ref) => {
-                    // push/pop がネイティブで登録されている
-                    let push = proto_ref.borrow().get("push");
-                    let pop = proto_ref.borrow().get("pop");
-                    match push {
-                        JSValue::NativeFunction(_) => {}
-                        _ => panic!("push not native"),
-                    }
-                    match pop {
-                        JSValue::NativeFunction(_) => {}
-                        _ => panic!("pop not native"),
-                    }
+    let ctor_ref = array_ctor
+        .as_object()
+        .unwrap_or_else(|| panic!("Array global not object"));
+    // prototype がある
+    let proto = ctor_ref.borrow().get("prototype");
+    let proto_ref = proto
+        .as_object()
+        .unwrap_or_else(|| panic!("Array.prototype not object"));
+    // push/pop がネイティブで登録されている
+    let push = proto_ref.borrow().get("push");
+    let pop = proto_ref.borrow().get("pop");
+    assert!(push.is_native_function(), "push not native");
+    assert!(pop.is_native_function(), "pop not native");
 
-                    // 簡単な配列オブジェクトを作り、push/pop を呼び出す
-                    let mut arr = pixi_byte::value::jsobject::JSObject::new();
-                    arr.set("length".to_string(), JSValue::Number(0.0));
-                    let arr_obj = JSValue::Object(std::rc::Rc::new(std::cell::RefCell::new(arr)));
+    // 簡単な配列オブジェクトを作り、push/pop を呼び出す
+    let mut arr = pixi_byte::value::jsobject::JSObject::new();
+    arr.set("length".to_string(), JSValue::from_number(0.0));
+    let arr_obj = JSValue::from_object(std::rc::Rc::new(std::cell::RefCell::new(arr)));
 
-                    // CallMethod semantics expect stack: ..., object, property, arg1,arg2..., and opcode will inject receiver.
-                    // We'll invoke the native function directly via CallMethod path simulation: fetch method and call with receiver.
-                    if let JSValue::NativeFunction(f) = proto_ref.borrow().get("push") {
-                        let res = f(&mut vm, vec![arr_obj.clone(), JSValue::Number(10.0)]).unwrap();
-                        assert_eq!(res, JSValue::Number(1.0));
-                    } else {
-                        panic!("push not callable");
-                    }
+    // CallMethod semantics expect stack: ..., object, property, arg1,arg2..., and opcode will inject receiver.
+    // We'll invoke the native function directly via CallMethod path simulation: fetch method and call with receiver.
+    if let Some(f) = proto_ref.borrow().get("push").as_native_function() {
+        let res = f(&mut vm, vec![arr_obj.clone(), JSValue::from_number(10.0)]).unwrap();
+        assert_eq!(res, JSValue::from_number(1.0));
+    } else {
+        panic!("push not callable");
+    }
 
-                    if let JSValue::NativeFunction(f) = proto_ref.borrow().get("pop") {
-                        let res = f(&mut vm, vec![arr_obj.clone()]).unwrap();
-                        assert_eq!(res, JSValue::Number(10.0));
-                    } else {
-                        panic!("pop not callable");
-                    }
-                }
-                _ => panic!("Array.prototype not object"),
-            }
-        }
-        _ => panic!("Array global not object"),
+    if let Some(f) = proto_ref.borrow().get("pop").as_native_function() {
+        let res = f(&mut vm, vec![arr_obj.clone()]).unwrap();
+        assert_eq!(res, JSValue::from_number(10.0));
+    } else {
+        panic!("pop not callable");
     }
 }

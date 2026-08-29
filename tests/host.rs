@@ -19,7 +19,7 @@ fn native_can_read_host_data() {
     engine.set_host(host);
 
     // native function that downcasts vm.host and reads a value from it
-    let native = JSValue::NativeFunction(|vm: &mut VM, _args| {
+    let native = JSValue::from_native_function(|vm: &mut VM, _args| {
         let host = vm
             .host
             .as_ref()
@@ -28,7 +28,7 @@ fn native_can_read_host_data() {
         let js_host = (&*borrowed as &dyn std::any::Any)
             .downcast_ref::<JsHost>()
             .ok_or_else(|| JSError::InternalError("wrong host type".to_string()))?;
-        Ok(JSValue::Number(js_host.count as f64))
+        Ok(JSValue::from_number(js_host.count as f64))
     });
 
     engine
@@ -37,7 +37,7 @@ fn native_can_read_host_data() {
         .set("readHost".to_string(), native);
 
     let result = engine.eval("readHost()").unwrap();
-    assert_eq!(result, JSValue::Number(42.0));
+    assert_eq!(result, JSValue::from_number(42.0));
 }
 
 #[test]
@@ -45,9 +45,9 @@ fn host_is_none_by_default() {
     let mut engine = JSEngine::new();
 
     // when host is not set, the native returns false
-    let native = JSValue::NativeFunction(|vm: &mut VM, _args| match &vm.host {
-        Some(_) => Ok(JSValue::Boolean(true)),
-        None => Ok(JSValue::Boolean(false)),
+    let native = JSValue::from_native_function(|vm: &mut VM, _args| match &vm.host {
+        Some(_) => Ok(JSValue::from_bool(true)),
+        None => Ok(JSValue::from_bool(false)),
     });
 
     engine
@@ -56,7 +56,7 @@ fn host_is_none_by_default() {
         .set("hasHost".to_string(), native);
 
     let result = engine.eval("hasHost()").unwrap();
-    assert_eq!(result, JSValue::Boolean(false));
+    assert_eq!(result, JSValue::from_bool(false));
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn host_data_can_be_mutated_by_native() {
     let mut engine = JSEngine::new();
     engine.set_host(host);
 
-    let native = JSValue::NativeFunction(|vm: &mut VM, _args| {
+    let native = JSValue::from_native_function(|vm: &mut VM, _args| {
         let host = vm
             .host
             .as_ref()
@@ -76,7 +76,7 @@ fn host_data_can_be_mutated_by_native() {
             .downcast_mut::<JsHost>()
             .ok_or_else(|| JSError::InternalError("wrong host type".to_string()))?;
         js_host.count += 1;
-        Ok(JSValue::Number(js_host.count as f64))
+        Ok(JSValue::from_number(js_host.count as f64))
     });
 
     engine
@@ -84,6 +84,6 @@ fn host_data_can_be_mutated_by_native() {
         .borrow_mut()
         .set("bumpHost".to_string(), native);
 
-    assert_eq!(engine.eval("bumpHost()").unwrap(), JSValue::Number(1.0));
-    assert_eq!(engine.eval("bumpHost()").unwrap(), JSValue::Number(2.0));
+    assert_eq!(engine.eval("bumpHost()").unwrap(), JSValue::from_number(1.0));
+    assert_eq!(engine.eval("bumpHost()").unwrap(), JSValue::from_number(2.0));
 }

@@ -16,7 +16,7 @@ fn object_keys_returns_enumerable_own_keys() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -32,7 +32,7 @@ fn object_keys_boxes_primitives_and_accepts_callable_values() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("012:0:0:0".to_string()));
+    assert_eq!(result, JSValue::from_string("012:0:0:0".to_string()));
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn object_assign_copies_sources_from_left_to_right() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -65,5 +65,5 @@ fn extracted_object_assign_uses_its_first_argument_as_the_target() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }

@@ -11,7 +11,7 @@ fn test_simple_function() {
     "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(5.0));
+    assert_eq!(result, JSValue::from_number(5.0));
 }
 
 #[test]
@@ -25,7 +25,7 @@ fn test_function_with_args() {
     "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(5.0));
+    assert_eq!(result, JSValue::from_number(5.0));
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn function_without_return_produces_undefined() {
     let result = engine
         .eval("function update() { const value = {}; value.current = {}; } update();")
         .unwrap();
-    assert_eq!(result, JSValue::Undefined);
+    assert_eq!(result, JSValue::undefined());
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn parameter_shadows_the_function_name() {
     let result = engine
         .eval("(function value(value) { return value; })(42);")
         .unwrap();
-    assert_eq!(result, JSValue::Number(42.0));
+    assert_eq!(result, JSValue::from_number(42.0));
 }
 
 #[test]
@@ -61,5 +61,5 @@ fn local_declaration_does_not_overwrite_an_outer_binding() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("2:1".to_string()));
+    assert_eq!(result, JSValue::from_string("2:1".to_string()));
 }

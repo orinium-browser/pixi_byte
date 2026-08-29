@@ -15,7 +15,7 @@ fn set_constructs_from_arrays_and_mutates_membership() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn map_supports_identity_keys_and_chained_set() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn map_keeps_large_bigint_keys_distinct() {
     "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn set_for_each_uses_web_compatible_arguments_and_this_value() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("set:aatrueset:bbtrue".to_string()));
+    assert_eq!(result, JSValue::from_string("set:aatrueset:bbtrue".to_string()));
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn map_for_each_visits_values_and_keys_in_insertion_order() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("a1trueb2true".to_string()));
+    assert_eq!(result, JSValue::from_string("a1trueb2true".to_string()));
 }
 
 #[test]
@@ -106,7 +106,7 @@ fn map_iteration_can_update_existing_entries_without_extending_iteration() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("3:24".to_string()));
+    assert_eq!(result, JSValue::from_string("3:24".to_string()));
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn set_exposes_the_iterator_protocol() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("abfalsetrue".to_string()));
+    assert_eq!(result, JSValue::from_string("abfalsetrue".to_string()));
 }
 
 #[test]
@@ -138,7 +138,7 @@ fn for_of_consumes_set_values() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("ab".to_string()));
+    assert_eq!(result, JSValue::from_string("ab".to_string()));
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn array_spread_consumes_set_values() {
     let result = engine
         .eval(r#"[...new Set(["a", "b", "a"])].join("");"#)
         .unwrap();
-    assert_eq!(result, JSValue::String("ab".to_string()));
+    assert_eq!(result, JSValue::from_string("ab".to_string()));
 }
 
 #[test]
@@ -164,7 +164,7 @@ fn map_iterators_expose_keys_values_and_entries() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("a1a1".to_string()));
+    assert_eq!(result, JSValue::from_string("a1a1".to_string()));
 }
 
 #[test]
@@ -181,5 +181,5 @@ fn weak_map_supports_object_keys_without_iteration() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }

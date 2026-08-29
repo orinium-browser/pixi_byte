@@ -14,7 +14,7 @@ fn function_declarations_are_available_before_their_source_position() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(42.0));
+    assert_eq!(result, JSValue::from_number(42.0));
 }
 
 #[test]
@@ -33,5 +33,5 @@ fn function_body_declarations_are_hoisted_per_call() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("ready".to_string()));
+    assert_eq!(result, JSValue::from_string("ready".to_string()));
 }

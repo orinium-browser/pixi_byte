@@ -5,11 +5,11 @@ fn numbers_support_radix_to_string() {
     let mut engine = JSEngine::new();
     assert_eq!(
         engine.eval("(255).toString(16)").unwrap(),
-        JSValue::String("ff".to_string())
+        JSValue::from_string("ff".to_string())
     );
     assert_eq!(
         engine.eval("(35).toString(36)").unwrap(),
-        JSValue::String("z".to_string())
+        JSValue::from_string("z".to_string())
     );
 }
 
@@ -32,14 +32,14 @@ fn math_exposes_functions_used_by_react() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
 fn math_random_returns_a_fraction() {
     let mut engine = JSEngine::new();
     let result = engine.eval("Math.random()").unwrap();
-    let JSValue::Number(value) = result else {
+    let Some(value) = result.as_number() else {
         panic!("Math.random did not return a number");
     };
     assert!((0.0..1.0).contains(&value));

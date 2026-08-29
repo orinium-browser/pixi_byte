@@ -13,7 +13,7 @@ fn arrow_functions_support_expression_and_block_bodies() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(10.0));
+    assert_eq!(result, JSValue::from_number(10.0));
 }
 
 #[test]
@@ -30,7 +30,7 @@ fn zero_parameter_arrow_captures_outer_bindings() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(7.0));
+    assert_eq!(result, JSValue::from_number(7.0));
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn arrows_work_as_promise_reactions() {
         .unwrap();
     engine.run_jobs().unwrap();
 
-    assert_eq!(engine.eval("result").unwrap(), JSValue::Number(21.0));
+    assert_eq!(engine.eval("result").unwrap(), JSValue::from_number(21.0));
 }
 
 #[test]
@@ -63,5 +63,5 @@ fn arrow_function_keeps_lexical_this_through_call() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(42.0));
+    assert_eq!(result, JSValue::from_number(42.0));
 }

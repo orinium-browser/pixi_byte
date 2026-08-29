@@ -43,6 +43,6 @@ fn contextual_keywords_are_allowed_as_function_names() {
         engine
             .eval("function of(value) { return value; } of(42);")
             .unwrap(),
-        pixi_byte::JSValue::Number(42.0)
+        pixi_byte::JSValue::from_number(42.0)
     );
 }

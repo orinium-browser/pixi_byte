@@ -13,7 +13,7 @@ fn object_literals_inherit_object_prototype_methods() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -28,7 +28,7 @@ fn constructed_instances_inherit_object_prototype_methods() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -43,5 +43,5 @@ fn object_prototype_exposes_a_constructible_constructor() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }

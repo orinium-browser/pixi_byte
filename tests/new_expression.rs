@@ -7,8 +7,8 @@ fn object_constructor(
     _args: Vec<JSValue>,
 ) -> pixi_byte::JSResult<JSValue> {
     let mut result = pixi_byte::value::jsobject::JSObject::new();
-    result.set("value".to_string(), JSValue::Number(9.0));
-    Ok(JSValue::Object(Rc::new(RefCell::new(result))))
+    result.set("value".to_string(), JSValue::from_number(9.0));
+    Ok(JSValue::from_object(Rc::new(RefCell::new(result))))
 }
 
 #[test]
@@ -24,7 +24,7 @@ fn new_calls_constructor_with_a_fresh_this_object() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(42.0));
+    assert_eq!(result, JSValue::from_number(42.0));
 }
 
 #[test]
@@ -39,7 +39,7 @@ fn constructor_object_return_value_replaces_this() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(7.0));
+    assert_eq!(result, JSValue::from_number(7.0));
 }
 
 #[test]
@@ -48,16 +48,16 @@ fn object_can_expose_an_internal_constructor_entry_point() {
     let mut constructor = pixi_byte::value::jsobject::JSObject::new();
     constructor.set(
         "__construct__".to_string(),
-        JSValue::NativeFunction(object_constructor),
+        JSValue::from_native_function(object_constructor),
     );
     engine.global_mut().borrow_mut().set(
         "ObjectConstructor".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(constructor))),
+        JSValue::from_object(Rc::new(RefCell::new(constructor))),
     );
 
     assert_eq!(
         engine.eval("new ObjectConstructor().value").unwrap(),
-        JSValue::Number(9.0)
+        JSValue::from_number(9.0)
     );
 }
 
@@ -75,7 +75,7 @@ fn new_accepts_member_expression_constructors() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(42.0));
+    assert_eq!(result, JSValue::from_number(42.0));
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn implicit_object_expression_does_not_replace_constructor_this() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("internal".to_string()));
+    assert_eq!(result, JSValue::from_string("internal".to_string()));
 }
 
 #[test]

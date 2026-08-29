@@ -18,7 +18,7 @@ fn for_in_enumerates_own_and_inherited_properties() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(3.0));
+    assert_eq!(result, JSValue::from_number(3.0));
 }
 
 #[test]
@@ -44,5 +44,5 @@ fn for_in_supports_existing_bindings_break_and_continue() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }

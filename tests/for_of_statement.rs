@@ -15,7 +15,7 @@ fn for_of_iterates_array_values() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("abc".to_string()));
+    assert_eq!(result, JSValue::from_string("abc".to_string()));
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn for_of_supports_var_binding_and_continue() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(7.0));
+    assert_eq!(result, JSValue::from_number(7.0));
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn for_of_let_closures_capture_each_iteration_binding() {
 
     assert_eq!(
         result,
-        JSValue::String("px:horizontal,py:vertical".to_string())
+        JSValue::from_string("px:horizontal,py:vertical".to_string())
     );
 }
 
@@ -75,7 +75,7 @@ fn for_of_let_scope_is_restored_by_continue_and_break() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(12.0));
+    assert_eq!(result, JSValue::from_number(12.0));
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn nested_callbacks_capture_bindings_from_their_for_of_iteration() {
 
     assert_eq!(
         result,
-        JSValue::String("0.5rem,0.5rem,undefined".to_string())
+        JSValue::from_string("0.5rem,0.5rem,undefined".to_string())
     );
 }
 
@@ -129,7 +129,7 @@ fn classic_for_let_closures_capture_each_iteration_binding() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(12.0));
+    assert_eq!(result, JSValue::from_number(12.0));
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn classic_for_let_scope_is_restored_by_break() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(9.0));
+    assert_eq!(result, JSValue::from_number(9.0));
 }
 
 #[test]
@@ -165,7 +165,7 @@ fn for_in_let_closures_capture_each_iteration_binding() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("px,py".to_string()));
+    assert_eq!(result, JSValue::from_string("px,py".to_string()));
 }
 
 #[test]
@@ -186,7 +186,7 @@ fn for_in_let_scope_is_restored_by_continue_and_break() {
         )
         .unwrap();
 
-    let JSValue::String(value) = result else {
+    let Some(value) = result.as_string() else {
         panic!("expected string");
     };
     assert!(value.starts_with("outer:"));

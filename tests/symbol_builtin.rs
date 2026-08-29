@@ -12,7 +12,7 @@ fn symbol_for_returns_stable_registry_values() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -27,5 +27,5 @@ fn symbol_call_returns_unique_values_and_well_known_symbols() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, pixi_byte::JSValue::Boolean(true));
+    assert_eq!(result, pixi_byte::JSValue::from_bool(true));
 }

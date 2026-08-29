@@ -14,7 +14,7 @@ fn error_is_callable_and_exposes_standard_properties() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -33,7 +33,7 @@ fn thrown_errors_are_preserved_by_catch() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("boom".to_string()));
+    assert_eq!(result, JSValue::from_string("boom".to_string()));
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn native_error_subtypes_are_callable_and_constructible() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn native_error_constructors_have_function_type_and_call_method() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -87,5 +87,5 @@ fn function_call_preserves_thrown_error_objects() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("TypeError: broken".to_string()));
+    assert_eq!(result, JSValue::from_string("TypeError: broken".to_string()));
 }

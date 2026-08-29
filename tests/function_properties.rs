@@ -13,7 +13,7 @@ fn function_constructor_is_callable_and_inherits_function_methods() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn bound_functions_can_store_own_properties() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -39,7 +39,7 @@ fn functions_inherit_object_prototype_methods() {
         engine
             .eval("(function example() {}).propertyIsEnumerable('prototype')")
             .unwrap(),
-        JSValue::Boolean(false)
+        JSValue::from_bool(false)
     );
 }
 
@@ -62,7 +62,7 @@ fn functions_keep_own_properties_and_constructor_prototypes() {
         .unwrap();
     assert_eq!(
         result,
-        JSValue::String("container:box:42:true:true".to_string())
+        JSValue::from_string("container:box:42:true:true".to_string())
     );
 }
 
@@ -84,7 +84,7 @@ fn prototype_assignment_supports_react_style_inheritance_setup() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("ready:true".to_string()));
+    assert_eq!(result, JSValue::from_string("ready:true".to_string()));
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn closure_own_properties_are_isolated() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("first:true".to_string()));
+    assert_eq!(result, JSValue::from_string("first:true".to_string()));
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn chained_prototype_method_assignment_updates_each_constructor() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("ready:ready".to_string()));
+    assert_eq!(result, JSValue::from_string("ready:ready".to_string()));
 }
 
 #[test]
@@ -139,7 +139,7 @@ fn nested_constructor_keeps_its_assigned_prototype_methods() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("ready".to_string()));
+    assert_eq!(result, JSValue::from_string("ready".to_string()));
 }
 
 #[test]
@@ -152,5 +152,5 @@ fn callable_builtin_objects_inherit_function_prototype_methods() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("42:3".to_string()));
+    assert_eq!(result, JSValue::from_string("42:3".to_string()));
 }

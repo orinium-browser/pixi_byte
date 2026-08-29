@@ -6,11 +6,11 @@ fn in_operator_checks_own_and_inherited_properties() {
 
     assert_eq!(
         engine.eval(r#""own" in { own: 1 }"#).unwrap(),
-        JSValue::Boolean(true)
+        JSValue::from_bool(true)
     );
     assert_eq!(
         engine.eval(r#""missing" in { own: 1 }"#).unwrap(),
-        JSValue::Boolean(false)
+        JSValue::from_bool(false)
     );
     assert_eq!(
         engine
@@ -22,7 +22,7 @@ fn in_operator_checks_own_and_inherited_properties() {
                 "#,
             )
             .unwrap(),
-        JSValue::Boolean(true)
+        JSValue::from_bool(true)
     );
 }
 

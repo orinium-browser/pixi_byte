@@ -17,7 +17,7 @@ fn bitwise_compound_assignments_update_identifiers() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(5.0));
+    assert_eq!(result, JSValue::from_number(5.0));
 }
 
 #[test]
@@ -33,5 +33,5 @@ fn bitwise_compound_assignments_update_members() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(5.0));
+    assert_eq!(result, JSValue::from_number(5.0));
 }

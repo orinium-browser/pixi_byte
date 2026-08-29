@@ -13,7 +13,7 @@ fn sequence_expression_evaluates_left_to_right_and_returns_the_last_value() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(12.0));
+    assert_eq!(result, JSValue::from_number(12.0));
 }
 
 #[test]
@@ -31,5 +31,5 @@ fn commas_still_separate_function_arguments_and_array_elements() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(23.0));
+    assert_eq!(result, JSValue::from_number(23.0));
 }

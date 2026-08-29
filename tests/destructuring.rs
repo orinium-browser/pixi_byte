@@ -12,7 +12,7 @@ fn array_and_object_declarations_bind_values() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(9.0));
+    assert_eq!(result, JSValue::from_number(9.0));
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn for_of_supports_array_binding_patterns() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(5.0));
+    assert_eq!(result, JSValue::from_number(5.0));
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn declaration_list_can_mix_identifiers_and_patterns() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(5.0));
+    assert_eq!(result, JSValue::from_number(5.0));
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn array_destructuring_assignment_updates_existing_bindings() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(7.0));
+    assert_eq!(result, JSValue::from_number(7.0));
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn destructuring_assignment_supports_member_targets() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(5.0));
+    assert_eq!(result, JSValue::from_number(5.0));
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn function_parameters_support_binding_patterns() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(5.0));
+    assert_eq!(result, JSValue::from_number(5.0));
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn arrow_parameters_support_binding_patterns() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(5.0));
+    assert_eq!(result, JSValue::from_number(5.0));
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn async_arrow_supports_binding_patterns_in_synchronous_mode() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(5.0));
+    assert_eq!(result, JSValue::from_number(5.0));
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn object_binding_patterns_support_rest() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(5.0));
+    assert_eq!(result, JSValue::from_number(5.0));
 }
 
 #[test]
@@ -145,5 +145,5 @@ fn object_binding_patterns_accept_string_keys() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(42.0));
+    assert_eq!(result, JSValue::from_number(42.0));
 }

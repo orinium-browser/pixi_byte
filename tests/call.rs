@@ -18,12 +18,12 @@ fn rust_invokes_js_function_from_global() {
     let result = engine
         .call(
             add,
-            JSValue::Undefined,
-            vec![JSValue::Number(1.0), JSValue::Number(2.0)],
+            JSValue::undefined(),
+            vec![JSValue::from_number(1.0), JSValue::from_number(2.0)],
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(3.0));
+    assert_eq!(result, JSValue::from_number(3.0));
 }
 
 #[test]
@@ -34,10 +34,10 @@ fn rust_invokes_js_function_returning_object() {
         .eval("(function make() { return { x: 10 }; })")
         .unwrap();
 
-    let result = engine.call(make, JSValue::Undefined, Vec::new()).unwrap();
+    let result = engine.call(make, JSValue::undefined(), Vec::new()).unwrap();
 
-    if let JSValue::Object(obj_ref) = result {
-        assert_eq!(obj_ref.borrow().get("x"), JSValue::Number(10.0));
+    if let Some(obj_ref) = result.as_object() {
+        assert_eq!(obj_ref.borrow().get("x"), JSValue::from_number(10.0));
     } else {
         panic!("expected object, got {:?}", result);
     }
@@ -50,14 +50,14 @@ fn rust_invokes_function_with_this() {
     let get_x = engine.eval("(function getX() { return this.x; })").unwrap();
 
     let mut this_obj = pixi_byte::value::jsobject::JSObject::new();
-    this_obj.set("x".to_string(), JSValue::Number(7.0));
+    this_obj.set("x".to_string(), JSValue::from_number(7.0));
     let this_rc = std::rc::Rc::new(std::cell::RefCell::new(this_obj));
 
     let result = engine
-        .call(get_x, JSValue::Object(this_rc), Vec::new())
+        .call(get_x, JSValue::from_object(this_rc), Vec::new())
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(7.0));
+    assert_eq!(result, JSValue::from_number(7.0));
 }
 
 #[test]
@@ -65,9 +65,9 @@ fn rust_invokes_native_function() {
     let mut engine = JSEngine::new();
 
     // natives receive `[this, ...args]`, so skip the first element when summing
-    let native = JSValue::NativeFunction(|_vm, args| {
+    let native = JSValue::from_native_function(|_vm, args| {
         let sum: f64 = args.iter().skip(1).map(JSValue::to_number).sum();
-        Ok(JSValue::Number(sum))
+        Ok(JSValue::from_number(sum))
     });
 
     engine
@@ -80,23 +80,23 @@ fn rust_invokes_native_function() {
     let result = engine
         .call(
             sum_nums,
-            JSValue::Undefined,
+            JSValue::undefined(),
             vec![
-                JSValue::Number(1.0),
-                JSValue::Number(2.0),
-                JSValue::Number(3.0),
+                JSValue::from_number(1.0),
+                JSValue::from_number(2.0),
+                JSValue::from_number(3.0),
             ],
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(6.0));
+    assert_eq!(result, JSValue::from_number(6.0));
 }
 
 #[test]
 fn call_with_non_function_returns_error() {
     let mut engine = JSEngine::new();
 
-    let result = engine.call(JSValue::Number(42.0), JSValue::Undefined, Vec::new());
+    let result = engine.call(JSValue::from_number(42.0), JSValue::undefined(), Vec::new());
 
     assert!(result.is_err());
 }

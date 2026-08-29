@@ -12,7 +12,7 @@ fn template_literal_interpolates_expressions() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("value=4!".to_string()));
+    assert_eq!(result, JSValue::from_string("value=4!".to_string()));
 }
 
 #[test]
@@ -20,7 +20,7 @@ fn template_literal_supports_object_literals_in_interpolation() {
     let mut engine = JSEngine::new();
     let result = engine.eval("`${({ value: 2 }).value}`;").unwrap();
 
-    assert_eq!(result, JSValue::String("2".to_string()));
+    assert_eq!(result, JSValue::from_string("2".to_string()));
 }
 
 #[test]
@@ -39,7 +39,7 @@ fn string_concatenation_uses_custom_object_to_string() {
 
     assert_eq!(
         result,
-        JSValue::String(".py-2{padding:0.5rem}:rule=.py-2".to_string())
+        JSValue::from_string(".py-2{padding:0.5rem}:rule=.py-2".to_string())
     );
 }
 
@@ -48,7 +48,7 @@ fn addition_uses_custom_object_value_of() {
     let mut engine = JSEngine::new();
     let result = engine.eval("({ valueOf() { return 40; } }) + 2").unwrap();
 
-    assert_eq!(result, JSValue::Number(42.0));
+    assert_eq!(result, JSValue::from_number(42.0));
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn string_and_number_conversion_use_their_respective_primitive_hints() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("string:42:43".to_string()));
+    assert_eq!(result, JSValue::from_string("string:42:43".to_string()));
 }
 
 #[test]
@@ -88,7 +88,7 @@ fn conversion_calls_symbol_to_primitive_with_the_requested_hint() {
 
     assert_eq!(
         result,
-        JSValue::String("text:5:6:string,number,default".to_string())
+        JSValue::from_string("text:5:6:string,number,default".to_string())
     );
 }
 
@@ -107,7 +107,7 @@ fn string_replace_uses_custom_object_to_string() {
 
     assert_eq!(
         result,
-        JSValue::String(".py-2{padding:0.5rem}:.py-2{padding:0.5rem}".to_string())
+        JSValue::from_string(".py-2{padding:0.5rem}:.py-2{padding:0.5rem}".to_string())
     );
 }
 
@@ -123,7 +123,7 @@ fn string_constructor_uses_custom_object_to_string() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String(".py-2".to_string()));
+    assert_eq!(result, JSValue::from_string(".py-2".to_string()));
 }
 
 #[test]
@@ -139,12 +139,12 @@ fn tagged_template_receives_strings_and_values() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("a2b".to_string()));
+    assert_eq!(result, JSValue::from_string("a2b".to_string()));
 }
 
 #[test]
 fn string_raw_can_be_used_as_a_template_tag() {
     let mut engine = JSEngine::new();
     let result = engine.eval(r#"String.raw`\b${2}`"#).unwrap();
-    assert_eq!(result, JSValue::String("\\b2".to_string()));
+    assert_eq!(result, JSValue::from_string("\\b2".to_string()));
 }

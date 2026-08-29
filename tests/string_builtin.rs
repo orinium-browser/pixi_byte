@@ -14,14 +14,14 @@ fn string_primitives_expose_common_prototype_methods() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
 fn concat_appends_each_argument_after_string_conversion() {
     let mut engine = JSEngine::new();
     let result = engine.eval(r#""Scratch".concat(" ", 3, true)"#).unwrap();
-    assert_eq!(result, JSValue::String("Scratch 3true".to_string()));
+    assert_eq!(result, JSValue::from_string("Scratch 3true".to_string()));
 }
 
 #[test]
@@ -38,7 +38,7 @@ fn replace_supports_global_regexes_templates_and_callbacks() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn string_constructor_and_from_char_code_are_callable() {
     let result = engine
         .eval(r#"String(42) + String.fromCharCode(65, 66)"#)
         .unwrap();
-    assert_eq!(result, JSValue::String("42AB".to_string()));
+    assert_eq!(result, JSValue::from_string("42AB".to_string()));
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn char_code_at_uses_utf16_code_units() {
     let result = engine
         .eval(r#""A😀".charCodeAt(0) === 65 && "A😀".charCodeAt(1) === 55357"#)
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -72,5 +72,5 @@ fn last_index_of_honors_the_search_position() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }

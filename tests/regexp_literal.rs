@@ -5,7 +5,7 @@ fn regexp_literal_can_start_with_equals() {
     let mut engine = JSEngine::new();
     assert_eq!(
         engine.eval(r#"/=+$/.test("===")"#).unwrap(),
-        JSValue::Boolean(true)
+        JSValue::from_bool(true)
     );
 }
 
@@ -14,7 +14,7 @@ fn regexp_literals_support_flags_and_test() {
     let mut engine = JSEngine::new();
     assert_eq!(
         engine.eval(r#"/^hello/i.test("Hello world")"#).unwrap(),
-        JSValue::Boolean(true)
+        JSValue::from_bool(true)
     );
 }
 
@@ -29,13 +29,13 @@ fn regexp_exec_returns_captures_and_match_index() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
 fn division_is_not_tokenized_as_a_regexp() {
     let mut engine = JSEngine::new();
-    assert_eq!(engine.eval("12 / 3 / 2").unwrap(), JSValue::Number(2.0));
+    assert_eq!(engine.eval("12 / 3 / 2").unwrap(), JSValue::from_number(2.0));
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn javascript_unicode_escapes_are_supported_in_regexp_literals() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn regexp_constructor_exposes_source_flags_and_test() {
 fn regexp_is_callable_without_new() {
     let mut engine = pixi_byte::JSEngine::new();
     let result = engine.eval("RegExp('^ok$').test('ok')").unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -75,14 +75,14 @@ fn regexp_values_support_instanceof() {
     let result = engine
         .eval(r#"/ok/ instanceof RegExp && new RegExp("ok") instanceof RegExp && !({} instanceof RegExp)"#)
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
 fn javascript_character_classes_allow_a_literal_open_bracket() {
     let mut engine = pixi_byte::JSEngine::new();
     let result = engine.eval(r#"/[\\^$.*+?()[\]{}|]/g.test("[")"#).unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn legacy_character_class_ranges_allow_class_escapes_as_endpoints() {
     let result = engine
         .eval(r#"/^[\w-_]+$/.test("min-h-") && /[a-\s]/.test(" ")"#)
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn unsupported_lookarounds_do_not_prevent_regexp_construction() {
     let result = engine
         .eval(r#"new RegExp("\\s+(add|subtract)\\b(?!\\))\\s*(?=[,])").test(" add ,")"#)
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn invalid_quantifier_braces_are_treated_as_literals() {
     let result = engine
         .eval(r#"/{([^,]*?)}/.test("{value}") && /a{2,3}/.test("aaa")"#)
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn global_regexp_test_and_exec_update_last_index() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -149,5 +149,5 @@ fn sticky_regexp_requires_a_match_at_last_index_and_uses_utf16_offsets() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }

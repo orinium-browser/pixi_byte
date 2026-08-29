@@ -14,7 +14,7 @@ fn member_updates_preserve_prefix_and_postfix_results() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -30,5 +30,5 @@ fn member_assignment_returns_the_assigned_value() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }

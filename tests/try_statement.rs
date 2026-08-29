@@ -17,7 +17,7 @@ fn catch_receives_the_thrown_value() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("boom".to_string()));
+    assert_eq!(result, JSValue::from_string("boom".to_string()));
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn finally_runs_after_normal_and_exceptional_completion() {
 
     assert_eq!(
         result,
-        JSValue::String("try-catch-finally-normal-finally".to_string())
+        JSValue::from_string("try-catch-finally-normal-finally".to_string())
     );
 }
 
@@ -73,7 +73,7 @@ fn finally_rethrows_an_unhandled_value() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn catch_binding_is_optional() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn catch_binding_does_not_overwrite_an_outer_binding() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("outer".to_string()));
+    assert_eq!(result, JSValue::from_string("outer".to_string()));
 }
 
 #[test]
@@ -133,5 +133,5 @@ fn exception_unwinds_loop_lexical_environment_before_catch() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("outer".to_string()));
+    assert_eq!(result, JSValue::from_string("outer".to_string()));
 }

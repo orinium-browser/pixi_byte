@@ -13,7 +13,7 @@ fn function_clones_retain_reference_identity() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -30,7 +30,7 @@ fn bound_function_clones_retain_reference_identity() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn repeated_closure_creation_produces_distinct_identities() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -64,7 +64,7 @@ fn assigning_an_array_index_grows_length() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(3.0));
+    assert_eq!(result, JSValue::from_number(3.0));
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn object_keys_enumerates_function_properties() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -124,5 +124,5 @@ fn minified_webpack_deferred_entry_runs() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(1.0));
+    assert_eq!(result, JSValue::from_number(1.0));
 }

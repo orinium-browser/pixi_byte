@@ -21,12 +21,12 @@ fn promise_then_runs_asynchronously_and_chains_values() {
 
     assert_eq!(
         engine.eval("result").unwrap(),
-        JSValue::String("sync".into())
+        JSValue::from_string("sync".into())
     );
     engine.run_jobs().unwrap();
     assert_eq!(
         engine.eval("result").unwrap(),
-        JSValue::String("sync-first-21".into())
+        JSValue::from_string("sync-first-21".into())
     );
 }
 
@@ -64,7 +64,7 @@ fn babel_generator_async_helper_advances_generator_promises() {
     engine.run_jobs().unwrap();
     assert_eq!(
         engine.eval("result").unwrap(),
-        JSValue::String("done".to_string())
+        JSValue::from_string("done".to_string())
     );
 }
 
@@ -87,7 +87,7 @@ fn generator_switch_eagerly_evaluates_babel_chunk_yields() {
             "#,
         )
         .unwrap();
-    assert_eq!(engine.eval("calls").unwrap(), JSValue::Number(4.0));
+    assert_eq!(engine.eval("calls").unwrap(), JSValue::from_number(4.0));
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn promise_catch_handles_rejection() {
     engine.run_jobs().unwrap();
     assert_eq!(
         engine.eval("reason").unwrap(),
-        JSValue::String("failed".into())
+        JSValue::from_string("failed".into())
     );
 }
 
@@ -133,7 +133,7 @@ fn promise_ignores_later_settlement_attempts() {
     engine.run_jobs().unwrap();
     assert_eq!(
         engine.eval("result").unwrap(),
-        JSValue::String("first".into())
+        JSValue::from_string("first".into())
     );
 }
 
@@ -154,11 +154,11 @@ fn promise_static_resolve_and_reject_create_settled_promises() {
     engine.run_jobs().unwrap();
     assert_eq!(
         engine.eval("fulfilled").unwrap(),
-        JSValue::String("yes".into())
+        JSValue::from_string("yes".into())
     );
     assert_eq!(
         engine.eval("rejected").unwrap(),
-        JSValue::String("no".into())
+        JSValue::from_string("no".into())
     );
 }
 
@@ -179,7 +179,7 @@ fn promise_all_preserves_input_order() {
     engine.run_jobs().unwrap();
     assert_eq!(
         engine.eval("combined").unwrap(),
-        JSValue::String("first-second".into())
+        JSValue::from_string("first-second".into())
     );
 }
 
@@ -197,7 +197,7 @@ fn await_unwraps_fulfilled_promises_and_synchronous_lazy_results() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(7.0));
+    assert_eq!(result, JSValue::from_number(7.0));
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn await_drains_pending_promise_reactions() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(4.0));
+    assert_eq!(result, JSValue::from_number(4.0));
 }
 
 #[test]
@@ -235,7 +235,7 @@ fn await_stringifies_synchronous_lazy_result_css() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("body{color:red}".to_string()));
+    assert_eq!(result, JSValue::from_string("body{color:red}".to_string()));
 }
 
 #[test]
@@ -271,6 +271,6 @@ fn eager_generator_evaluates_every_webpack_style_chunk_request() {
 
     assert_eq!(
         result,
-        JSValue::String("5263,999,7674,5199,2299,2123:function".to_string())
+        JSValue::from_string("5263,999,7674,5199,2299,2123:function".to_string())
     );
 }

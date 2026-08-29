@@ -17,7 +17,7 @@ fn class_expression_constructs_instances_and_calls_methods() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("box:6".to_string()));
+    assert_eq!(result, JSValue::from_string("box:6".to_string()));
 }
 
 #[test]
@@ -39,7 +39,7 @@ fn class_extends_and_super_constructor_preserve_prototype_chain() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("true:true:5".to_string()));
+    assert_eq!(result, JSValue::from_string("true:true:5".to_string()));
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn bound_class_construction_uses_the_target_prototype_and_new_instance() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("true:7:undefined".to_string()));
+    assert_eq!(result, JSValue::from_string("true:7:undefined".to_string()));
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn callable_object_constructor_uses_the_inner_function_prototype() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("true:9".to_string()));
+    assert_eq!(result, JSValue::from_string("true:9".to_string()));
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn callable_object_with_bound_constructor_preserves_class_construction() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("true:11:undefined".to_string()));
+    assert_eq!(result, JSValue::from_string("true:11:undefined".to_string()));
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn callable_object_exposes_inner_class_properties_and_is_constructible() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("Box:true:true:15".to_string()));
+    assert_eq!(result, JSValue::from_string("Box:true:true:15".to_string()));
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn anonymous_class_expression_can_extend_a_base_class() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(4.0));
+    assert_eq!(result, JSValue::from_number(4.0));
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn implicit_derived_constructor_forwards_arguments_to_base_class() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("ready".to_string()));
+    assert_eq!(result, JSValue::from_string("ready".to_string()));
 }
 
 #[test]
@@ -181,7 +181,7 @@ fn super_method_calls_use_the_derived_instance_as_receiver() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("child-base".to_string()));
+    assert_eq!(result, JSValue::from_string("child-base".to_string()));
 }
 
 #[test]
@@ -197,7 +197,7 @@ fn async_method_and_await_are_accepted_in_synchronous_mode() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(4.0));
+    assert_eq!(result, JSValue::from_number(4.0));
 }
 
 #[test]
@@ -211,7 +211,7 @@ fn async_function_expression_is_accepted_in_synchronous_mode() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(4.0));
+    assert_eq!(result, JSValue::from_number(4.0));
 }
 
 #[test]
@@ -233,7 +233,7 @@ fn generator_method_collects_yielded_values() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(3.0));
+    assert_eq!(result, JSValue::from_number(3.0));
 }
 
 #[test]
@@ -253,7 +253,7 @@ fn generator_function_collects_yielded_values() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(5.0));
+    assert_eq!(result, JSValue::from_number(5.0));
 }
 
 #[test]
@@ -271,7 +271,7 @@ fn generator_functions_return_iterator_result_objects() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("5:false:true".to_string()));
+    assert_eq!(result, JSValue::from_string("5:false:true".to_string()));
 }
 
 #[test]
@@ -281,7 +281,7 @@ fn generator_function_expressions_return_iterators() {
         engine
             .eval("function run() { const values = function* () { yield 4; }; const iterator = values(); const key = 'next'; return iterator[key]().value; } run();")
             .unwrap(),
-        JSValue::Number(4.0)
+        JSValue::from_number(4.0)
     );
 }
 
@@ -296,7 +296,7 @@ fn generator_can_yield_a_regular_expression_literal() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -314,7 +314,7 @@ fn method_parameters_support_destructuring_and_defaults() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(7.0));
+    assert_eq!(result, JSValue::from_number(7.0));
 }
 
 #[test]
@@ -336,5 +336,5 @@ fn class_accessors_are_invoked_as_properties() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("box:5:10".to_string()));
+    assert_eq!(result, JSValue::from_string("box:5:10".to_string()));
 }

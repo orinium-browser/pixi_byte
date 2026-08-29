@@ -56,7 +56,7 @@ use pixi_byte::{JSResult, JSValue, value::JSObject};
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     global.borrow_mut().set(
         "println".to_string(),
-        JSValue::NativeFunction(println_native),
+        JSValue::from_native_function(println_native),
     );
 }
 
@@ -72,5 +72,5 @@ fn println_native(_vm: &mut pixi_byte::vm::VM, args: Vec<JSValue>) -> JSResult<J
 
     println!();
 
-    Ok(JSValue::Undefined)
+    Ok(JSValue::undefined())
 }

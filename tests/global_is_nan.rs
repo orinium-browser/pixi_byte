@@ -12,5 +12,5 @@ fn global_is_nan_applies_number_conversion() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }

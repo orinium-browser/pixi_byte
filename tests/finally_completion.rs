@@ -20,7 +20,7 @@ fn return_runs_finally_before_leaving_the_function() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("try-finally:42".to_string()));
+    assert_eq!(result, JSValue::from_string("try-finally:42".to_string()));
 }
 
 #[test]
@@ -45,7 +45,7 @@ fn return_unwinds_nested_finally_blocks() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("done:inner-outer".to_string()));
+    assert_eq!(result, JSValue::from_string("done:inner-outer".to_string()));
 }
 
 #[test]
@@ -65,5 +65,5 @@ fn return_inside_finally_overrides_an_earlier_return() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("finally".to_string()));
+    assert_eq!(result, JSValue::from_string("finally".to_string()));
 }

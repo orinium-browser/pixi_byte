@@ -1,4 +1,4 @@
-use pixi_byte::{JSEngine, JSValue};
+use pixi_byte::JSEngine;
 
 #[test]
 fn test_simple_closure() {
@@ -14,9 +14,9 @@ fn test_simple_closure() {
     "#;
 
     let res = engine.eval(src).expect("eval failed");
-    match res {
-        JSValue::Number(n) => assert_eq!(n, 8.0),
-        other => panic!("unexpected result: {}", other),
+    match res.as_number() {
+        Some(n) => assert_eq!(n, 8.0),
+        _ => panic!("unexpected result: {}", res),
     }
 }
 
@@ -37,8 +37,8 @@ fn test_closure_capture_after_mutation() {
     "#;
 
     let res = engine.eval(src).expect("eval failed");
-    match res {
-        JSValue::Number(n) => assert_eq!(n, 2.0),
-        other => panic!("unexpected result: {}", other),
+    match res.as_number() {
+        Some(n) => assert_eq!(n, 2.0),
+        _ => panic!("unexpected result: {}", res),
     }
 }

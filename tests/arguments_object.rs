@@ -14,7 +14,7 @@ fn functions_expose_their_arguments_by_index_and_length() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(32.0));
+    assert_eq!(result, JSValue::from_number(32.0));
 }
 
 #[test]
@@ -31,7 +31,7 @@ fn array_slice_can_copy_an_arguments_object() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("a-b".to_string()));
+    assert_eq!(result, JSValue::from_string("a-b".to_string()));
 }
 
 #[test]
@@ -49,5 +49,5 @@ fn arrow_functions_use_the_enclosing_arguments_binding() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("outer".to_string()));
+    assert_eq!(result, JSValue::from_string("outer".to_string()));
 }

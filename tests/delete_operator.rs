@@ -13,7 +13,7 @@ fn delete_removes_an_own_property() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn deleting_a_missing_or_inherited_property_succeeds() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -45,5 +45,5 @@ fn deleting_an_identifier_does_not_remove_its_binding() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }

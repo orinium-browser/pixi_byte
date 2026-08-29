@@ -17,7 +17,7 @@ fn instanceof_checks_the_constructor_prototype_chain() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -26,25 +26,25 @@ fn instanceof_supports_host_constructor_checks() {
     let mut constructor = JSObject::new();
     constructor.set(
         HOST_HAS_INSTANCE.to_string(),
-        JSValue::NativeFunction(|_vm, args| {
+        JSValue::from_native_function(|_vm, args| {
             let matches = match args.get(1) {
-                Some(JSValue::Number(value)) => *value == 42.0,
+                Some(value) => value.as_number() == Some(42.0),
                 _ => false,
             };
-            Ok(JSValue::Boolean(matches))
+            Ok(JSValue::from_bool(matches))
         }),
     );
     engine.global_mut().borrow_mut().set(
         "Answer".to_string(),
-        JSValue::Object(Rc::new(RefCell::new(constructor))),
+        JSValue::from_object(Rc::new(RefCell::new(constructor))),
     );
 
     assert_eq!(
         engine.eval("42 instanceof Answer").unwrap(),
-        JSValue::Boolean(true)
+        JSValue::from_bool(true)
     );
     assert_eq!(
         engine.eval("41 instanceof Answer").unwrap(),
-        JSValue::Boolean(false)
+        JSValue::from_bool(false)
     );
 }

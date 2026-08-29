@@ -13,7 +13,7 @@ fn array_for_each_is_generic_through_function_call() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(6.0));
+    assert_eq!(result, JSValue::from_number(6.0));
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn array_for_each_call_keeps_receiver_before_callback_this_arg() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Number(7.0));
+    assert_eq!(result, JSValue::from_number(7.0));
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn array_for_each_is_generic_over_strings() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("abc".to_string()));
+    assert_eq!(result, JSValue::from_string("abc".to_string()));
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn array_from_supports_array_like_iterables_and_mapping() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn array_order_search_and_flattening_methods_work() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn array_mutation_methods_update_values_and_length() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn array_read_methods_return_expected_results() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -133,7 +133,7 @@ fn array_for_each_calls_back_in_index_order() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("0a1b2c".to_string()));
+    assert_eq!(result, JSValue::from_string("0a1b2c".to_string()));
 }
 
 #[test]
@@ -159,7 +159,7 @@ fn array_iteration_methods_support_component_data_transforms() {
 
     assert_eq!(
         result,
-        JSValue::String("1,3,5,7:5,7:12:true:true:4321".to_string())
+        JSValue::from_string("1,3,5,7:5,7:12:true:true:4321".to_string())
     );
 }
 
@@ -181,7 +181,7 @@ fn array_iterators_expose_keys_values_and_entries() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::Boolean(true));
+    assert_eq!(result, JSValue::from_bool(true));
 }
 
 #[test]
@@ -202,7 +202,7 @@ fn array_prototype_methods_are_not_enumerable() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("0:0".to_string()));
+    assert_eq!(result, JSValue::from_string("0:0".to_string()));
 }
 
 #[test]
@@ -216,7 +216,7 @@ fn array_join_uses_custom_object_to_string() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String(".py-2{padding:0.5rem}".to_string()));
+    assert_eq!(result, JSValue::from_string(".py-2{padding:0.5rem}".to_string()));
 }
 
 #[test]
@@ -230,7 +230,7 @@ fn array_to_string_delegates_to_join() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String(".py-2,padding:0.5rem".to_string()));
+    assert_eq!(result, JSValue::from_string(".py-2,padding:0.5rem".to_string()));
 }
 
 #[test]
@@ -245,7 +245,7 @@ fn array_to_string_uses_an_overridden_join_method() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("custom".to_string()));
+    assert_eq!(result, JSValue::from_string("custom".to_string()));
 }
 
 #[test]
@@ -260,7 +260,7 @@ fn array_to_string_falls_back_when_join_is_not_callable() {
             "#,
         )
         .unwrap();
-    assert_eq!(result, JSValue::String("[object Array]".to_string()));
+    assert_eq!(result, JSValue::from_string("[object Array]".to_string()));
 }
 
 #[test]
@@ -279,6 +279,6 @@ fn reduce_callbacks_capture_each_invocation_parameters() {
         .unwrap();
     assert_eq!(
         result,
-        JSValue::String("px:horizontal,py:vertical".to_string())
+        JSValue::from_string("px:horizontal,py:vertical".to_string())
     );
 }

@@ -24,7 +24,7 @@ fn switch_matches_cases_and_falls_through() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::String("two-three".to_string()));
+    assert_eq!(result, JSValue::from_string("two-three".to_string()));
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn switch_uses_default_only_when_no_case_matches() {
                 "#,
             )
             .unwrap(),
-        JSValue::String("matched".to_string())
+        JSValue::from_string("matched".to_string())
     );
 }
 
@@ -72,5 +72,5 @@ fn switch_break_does_not_exit_an_enclosing_loop() {
         )
         .unwrap();
 
-    assert_eq!(result, JSValue::Number(32.0));
+    assert_eq!(result, JSValue::from_number(32.0));
 }
