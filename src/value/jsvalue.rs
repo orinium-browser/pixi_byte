@@ -108,8 +108,7 @@ fn is_boxed_bits(bits: u64) -> bool {
     // 負の quiet NaN 領域（NON_NUMBER_MARK）内であることを併せて要求する。
     // タグビットだけを見ると、指数部/mantissa 上位に 0xF を持つ実数
     // （例: 2147483647.0 = 0x41DF_FFFF_FFC0_0000）を誤ってボックス値と判定してしまう。
-    (bits & NON_NUMBER_MARK) == NON_NUMBER_MARK
-        && ((bits >> TAG_SHIFT) & TAG_MASK) == TAG_BOXED
+    (bits & NON_NUMBER_MARK) == NON_NUMBER_MARK && ((bits >> TAG_SHIFT) & TAG_MASK) == TAG_BOXED
 }
 
 /// 値の種類（公開 enum）。
