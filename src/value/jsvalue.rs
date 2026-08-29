@@ -97,7 +97,7 @@ const fn immediate(tag: u64) -> u64 {
 fn boxed_value(kind: JsValueKind, payload: BoxedPayload) -> JSValue {
     let boxed = BoxedValue { kind, payload };
     let rc: Rc<BoxedValue> = Rc::new(boxed);
-    let ptr = Rc::into_raw(rc) as *const BoxedValue as u64;
+    let ptr = Rc::into_raw(rc) as u64;
     debug_assert!(ptr & !PTR_MASK == 0, "pointer does not fit in NaN payload");
     JSValue(immediate(TAG_BOXED) | (ptr & PTR_MASK))
 }
