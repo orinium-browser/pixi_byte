@@ -1804,6 +1804,7 @@ impl VM {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_function_env(
         &self,
         chunk: &BytecodeChunk,

@@ -111,16 +111,6 @@ impl JSArray {
 
         JSValue::from_object(Rc::new(RefCell::new(obj)))
     }
-
-    /// 配列の参照を取得
-    pub fn as_ref(&self) -> &JSObject {
-        &self.object
-    }
-
-    /// 配列の可変参照を取得
-    pub fn as_mut(&mut self) -> &mut JSObject {
-        &mut self.object
-    }
 }
 
 impl Default for JSArray {

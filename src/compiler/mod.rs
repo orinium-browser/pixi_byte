@@ -2028,14 +2028,15 @@ impl Compiler {
 
 fn loop_lexical_binding_names(statement: &Statement) -> Vec<String> {
     match statement {
-        Statement::VariableDeclaration { kind, declarations }
-            if matches!(kind, VarKind::Let | VarKind::Const) =>
-        {
-            declarations.iter().map(|(name, _)| name.clone()).collect()
-        }
-        Statement::PatternDeclaration { kind, binding, .. }
-            if matches!(kind, VarKind::Let | VarKind::Const) =>
-        {
+        Statement::VariableDeclaration {
+            kind: VarKind::Let | VarKind::Const,
+            declarations,
+        } => declarations.iter().map(|(name, _)| name.clone()).collect(),
+        Statement::PatternDeclaration {
+            kind: VarKind::Let | VarKind::Const,
+            binding,
+            ..
+        } => {
             let mut names = Vec::new();
             binding_pattern_names(binding, &mut names);
             names
