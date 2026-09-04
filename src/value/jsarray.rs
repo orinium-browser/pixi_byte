@@ -7,8 +7,6 @@ use std::rc::Rc;
 pub struct JSArray {
     /// 配列要素（密な配列として扱う）
     elements: Vec<JSValue>,
-    /// オブジェクトとしてのプロパティ（継承）
-    object: JSObject,
 }
 
 impl JSArray {
@@ -16,16 +14,12 @@ impl JSArray {
     pub fn new() -> Self {
         Self {
             elements: Vec::new(),
-            object: JSObject::new(),
         }
     }
 
     /// 配列から作成
     pub fn from_vec(elements: Vec<JSValue>) -> Self {
-        Self {
-            elements,
-            object: JSObject::new(),
-        }
+        Self { elements }
     }
 
     /// length プロパティを取得
@@ -76,15 +70,13 @@ impl JSArray {
 
     /// 配列をJSObjectに変換
     pub fn to_object(self) -> JSValue {
-        // 現在の実装では、配列は単純にオブジェクトとして扱う
-        // 将来的には、Array.prototypeを持つオブジェクトとして実装
-        let mut obj = self.object;
         let len = self.elements.len();
 
-        // 配列要素をプロパティとして設定
-        for (i, value) in self.elements.into_iter().enumerate() {
-            obj.set(i.to_string(), value);
-        }
+        // 要素ベクトルをそのまま JSObject の要素ストレージへ移す。
+        // 従来は要素ごとに i.to_string() で String キーを作って HashMap に
+        // 展開していたが、その変換コスト（String 生成 / ハッシュ / Property 生成）を
+        // 排除するため、dense な Vec のまま共有する。
+        let mut obj = JSObject::with_elements(self.elements);
 
         obj.define_property(
             "__pixi_array__".to_string(),
