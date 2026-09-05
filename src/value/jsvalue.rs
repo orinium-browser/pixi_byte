@@ -243,6 +243,13 @@ impl JSValue {
         Self::from_string(s.to_string())
     }
 
+    pub fn from_char(c: char) -> Self {
+        let mut buffer = [0u8; char::MAX.len_utf8()];
+        let s = c.encode_utf8(&mut buffer);
+
+        boxed_value(JsValueKind::String, BoxedPayload::Str(s.into()))
+    }
+
     pub fn from_object(o: Rc<RefCell<JSObject>>) -> Self {
         boxed_value(JsValueKind::Object, BoxedPayload::Object(o))
     }
