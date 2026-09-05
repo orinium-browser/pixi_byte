@@ -221,11 +221,7 @@ fn string_split(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
                 let separator = value.to_string();
 
                 if separator.is_empty() {
-                    input
-                        .chars()
-                        .take(limit)
-                        .map(|character| JSValue::from_string(character.to_string()))
-                        .collect()
+                    input.chars().take(limit).map(JSValue::from_char).collect()
                 } else {
                     input
                         .split(&separator)

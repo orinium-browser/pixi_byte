@@ -850,7 +850,7 @@ fn array_from(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRes
             .as_string()
             .unwrap()
             .chars()
-            .map(|character| JSValue::from_str(&character.to_string()))
+            .map(JSValue::from_char)
             .collect::<Vec<_>>()
     } else if source.is_object() {
         let object = source.as_object().unwrap();

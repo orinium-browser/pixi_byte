@@ -835,7 +835,7 @@ impl VM {
                             let value = string
                                 .chars()
                                 .nth(index)
-                                .map(|character| JSValue::from_string(character.to_string()))
+                                .map(JSValue::from_char)
                                 .unwrap_or(JSValue::undefined());
                             self.stack.push(value);
                         } else {
@@ -2098,12 +2098,7 @@ impl VM {
     fn get_iterator(&mut self, value: JSValue) -> JSResult<JSValue> {
         if JsValueKind::String == value.kind() {
             let string = value.as_string().unwrap();
-            let source = self.array_from_values(
-                string
-                    .chars()
-                    .map(|character| JSValue::from_string(character.to_string()))
-                    .collect(),
-            );
+            let source = self.array_from_values(string.chars().map(JSValue::from_char).collect());
             return Ok(indexed_iterator(source));
         }
         let object = if value.kind() == JsValueKind::Object {
