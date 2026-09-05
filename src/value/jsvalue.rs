@@ -240,7 +240,7 @@ impl JSValue {
     }
 
     pub fn from_str(s: &str) -> Self {
-        Self::from_string(s.to_string())
+        boxed_value(JsValueKind::String, BoxedPayload::Str(s.into()))
     }
 
     pub fn from_char(c: char) -> Self {
