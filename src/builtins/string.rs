@@ -206,15 +206,15 @@ fn string_split(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         .map(JSValue::to_number)
         .unwrap_or(u32::MAX as f64) as usize;
 
-    let parts: Vec<String> = match args.get(1) {
-        None => vec![input],
+    let parts: Vec<JSValue> = match args.get(1) {
+        None => vec![JSValue::from_string(input)],
         Some(value) => match value.kind() {
-            JsValueKind::Undefined => vec![input],
+            JsValueKind::Undefined => vec![JSValue::from_string(input)],
             JsValueKind::Object if regexp::is_regexp(&value.as_object().unwrap()) => {
                 regexp::compile(&value.as_object().unwrap())?
                     .split(&input)
                     .take(limit)
-                    .map(str::to_string)
+                    .map(JSValue::from_str)
                     .collect()
             }
             _ => {
@@ -224,20 +224,20 @@ fn string_split(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
                     input
                         .chars()
                         .take(limit)
-                        .map(|character| character.to_string())
+                        .map(|character| JSValue::from_string(character.to_string()))
                         .collect()
                 } else {
                     input
                         .split(&separator)
                         .take(limit)
-                        .map(str::to_string)
+                        .map(JSValue::from_str)
                         .collect()
                 }
             }
         },
     };
 
-    Ok(vm.array_from_values(parts.into_iter().map(JSValue::from_string).collect()))
+    Ok(vm.array_from_values(parts))
 }
 
 fn string_trim(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
