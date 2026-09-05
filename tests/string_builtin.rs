@@ -74,3 +74,37 @@ fn last_index_of_honors_the_search_position() {
         .unwrap();
     assert_eq!(result, JSValue::from_bool(true));
 }
+
+#[test]
+fn split_with_shared_slices_handles_multibyte_and_limits() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const a = "カタカナ,ひらがな,漢字".split(",");
+            const b = "A😀B😀C".split("");
+            const c = "x,y,z".split(",", 2);
+            const d = "🐱🐶🐭".split("");
+            a[0] === "カタカナ" && a[1] === "ひらがな" && a[2] === "漢字" &&
+                b.join("-") === "A-😀-B-😀-C" &&
+                c.length === 2 && c[0] === "x" && c[1] === "y" &&
+                d.join("|") === "🐱|🐶|🐭";
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::from_bool(true));
+}
+
+#[test]
+fn split_with_shared_slices_matches_regex_path() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const parts = "a1b22c333".split(/[0-9]+/);
+            parts.join("-") === "a-b-c-";
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::from_bool(true));
+}

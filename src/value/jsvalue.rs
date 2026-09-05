@@ -28,6 +28,7 @@ use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
 use std::cell::RefCell;
 use std::fmt;
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -139,6 +140,12 @@ struct BoxedValue {
 /// ボックス値の実データ。
 enum BoxedPayload {
     Str(Box<str>),
+    /// 共有された文字列の部分スライス。`base[offset..offset + len]` が文字列本体。
+    StrSlice {
+        base: Rc<Box<str>>,
+        offset: usize,
+        len: usize,
+    },
     BigInt(Box<BigInt>),
     Object(Rc<RefCell<JSObject>>),
     Function(FunctionData),
@@ -276,6 +283,25 @@ impl JSValue {
         )
     }
 
+    /// 共有された部分文字列を表すジェネレータを返す。各要素は `input` を共有する
+    /// `StrSlice` として保持され、追加の文字列コピーは発生しない。
+    pub fn str_slices<'a>(
+        input: &'a str,
+        ranges: impl IntoIterator<Item = Range<usize>> + 'a,
+    ) -> impl Iterator<Item = JSValue> + 'a {
+        let base: Rc<Box<str>> = Rc::new(input.into());
+        ranges.into_iter().map(move |range| {
+            boxed_value(
+                JsValueKind::String,
+                BoxedPayload::StrSlice {
+                    base: Rc::clone(&base),
+                    offset: range.start,
+                    len: range.end - range.start,
+                },
+            )
+        })
+    }
+
     // -----------------------------------------------------------------------
     // 型判定・アクセサ
     // -----------------------------------------------------------------------
@@ -390,6 +416,9 @@ impl JSValue {
         }
         match &self.boxed().payload {
             BoxedPayload::Str(s) => Some(s.as_ref()),
+            BoxedPayload::StrSlice { base, offset, len } => {
+                Some(&base.as_ref()[*offset..*offset + *len])
+            }
             _ => None,
         }
     }

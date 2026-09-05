@@ -211,23 +211,36 @@ fn string_split(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         Some(value) => match value.kind() {
             JsValueKind::Undefined => vec![JSValue::from_string(input)],
             JsValueKind::Object if regexp::is_regexp(&value.as_object().unwrap()) => {
-                regexp::compile(&value.as_object().unwrap())?
+                let ranges: Vec<_> = regexp::compile(&value.as_object().unwrap())?
                     .split(&input)
                     .take(limit)
-                    .map(JSValue::from_str)
-                    .collect()
+                    .map(|part| {
+                        let start = part.as_ptr() as usize - input.as_ptr() as usize;
+                        start..start + part.len()
+                    })
+                    .collect();
+                JSValue::str_slices(&input, ranges).collect()
             }
             _ => {
                 let separator = value.to_string();
 
                 if separator.is_empty() {
-                    input.chars().take(limit).map(JSValue::from_char).collect()
+                    let ranges: Vec<_> = input
+                        .char_indices()
+                        .take(limit)
+                        .map(|(index, c)| index..index + c.len_utf8())
+                        .collect();
+                    JSValue::str_slices(&input, ranges).collect()
                 } else {
-                    input
+                    let ranges: Vec<_> = input
                         .split(&separator)
                         .take(limit)
-                        .map(JSValue::from_str)
-                        .collect()
+                        .map(|part| {
+                            let start = part.as_ptr() as usize - input.as_ptr() as usize;
+                            start..start + part.len()
+                        })
+                        .collect();
+                    JSValue::str_slices(&input, ranges).collect()
                 }
             }
         },
