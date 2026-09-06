@@ -96,5 +96,49 @@ fn benchmark_string_split(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, benchmark_string_concat, benchmark_string_split);
+/// 1 文字ずつ文字列を作るワークロード（`s[i]` / `charAt` / `fromCharCode`）。
+/// 生成される文字はすべて UTF-8 4 バイト以下なので、インライン短文字列表現の
+/// 有無が直接現れる。
+fn chars_source(loops: usize) -> String {
+    format!(
+        r#"
+        let s = "あa😀éz";
+        let r = "";
+        for (let i = 0; i < {loops}; i++) {{
+            r += s[0] + s[1] + s.charAt(2) + String.fromCharCode(65 + (i % 26));
+        }}
+        r.length
+        "#
+    )
+}
+
+/// 1 反復で「あ(1) + a(1) + 😀(2) + ASCII(1)」= 5 UTF-16 コードユニット追加される。
+fn chars_expected(loops: usize) -> String {
+    (loops * 5).to_string()
+}
+
+fn benchmark_string_chars(c: &mut Criterion) {
+    let mut group = c.benchmark_group("string_chars");
+    for &loops in &[2_000usize, 10_000] {
+        group.throughput(Throughput::Elements((loops * 5) as u64));
+        group.bench_with_input(BenchmarkId::new("per_char", loops), &loops, |b, &loops| {
+            let source = chars_source(loops);
+            let mut engine = JSEngine::new();
+            let chunk = engine.compile(&source).expect("workload must compile");
+            let expected = chars_expected(loops);
+            b.iter(|| {
+                let result = black_box(engine.execute(&chunk)).expect("workload must run");
+                assert_eq!(result.to_string(), expected, "workload result mismatch");
+            });
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    benchmark_string_concat,
+    benchmark_string_split,
+    benchmark_string_chars
+);
 criterion_main!(benches);
