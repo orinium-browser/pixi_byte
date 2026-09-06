@@ -12,6 +12,8 @@
 //!   パターン。タグは bits 48-51（bit 51 は常に 1）、参照型ポインタは bits 0-47
 //!   に載せる。プリミティブ（undefined / null / boolean）は即値としてインライン化し、
 //!   参照型はヒープに置いた `BoxedValue` への `Rc` ポインタを積む。
+//!   さらに、部分文字列のうち UTF-8 で 5 バイト以下のものはタグ `0xC` で
+//!   ペイロードに直接インライン化する（`INLINE_STR_*` 定数を参照）。
 //!   ユーザー空間のポインタは 2^47 未満（bit 47 = 0）なので 48 ビットで欠損なく
 //!   復元できる。
 //!
@@ -34,6 +36,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_BOUND_FUNCTION_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_FUNCTION_ID: AtomicU64 = AtomicU64::new(1);
+
+/// インライン短文字列エンコーディングは payload バイトをビット 0-39 に置き、
+/// デコード時に `self.0` のメモリをそのままバイト列として参照する。
+/// これはリトルエンディアンでのみメモリ順 == バイト順になるため、
+/// ビッグエンディアン環境は非対応とする。
+#[cfg(target_endian = "big")]
+compile_error!(
+    "inline short-string encoding (TAG_INLINE_STR) is little-endian only; \
+     see src/value/jsvalue.rs INLINE_STR_*"
+);
 
 pub(crate) fn next_function_identity() -> u64 {
     NEXT_FUNCTION_ID.fetch_add(1, Ordering::Relaxed)
@@ -74,6 +86,44 @@ const TAG_NULL: u64 = 0x9;
 const TAG_FALSE: u64 = 0xA;
 const TAG_TRUE: u64 = 0xB;
 
+/// インライン短文字列スライスのタグ。
+///
+/// `str_slices*` が生成する部分文字列のうち、UTF-8 で `INLINE_STR_MAX` バイト
+/// 以下のものは `BoxedValue` を確保せず、JSValue のペイロードに直接格納する。
+///
+/// ビットレイアウト（48 ビットペイロード）:
+///
+/// ```text
+/// ┌────────────── 64 bits ──────────────┐
+/// │ NaN/tag │ (unused) │ len │ UTF-8 bytes │
+/// └─────────┴──────────┴─────┴─────────────┘
+///  63..48      47..43    42..40   39..0
+/// ```
+///
+/// - bits 0-39: UTF-8 バイト列（最大 5 バイト、byte i は bits 8i..8i+8）
+/// - bits 40-42: バイト長（0..=5）。**単位は文字数ではなく UTF-8 バイト数**
+/// - bits 43-47: 常に 0（canonical 形）
+/// - bits 48-51: タグ `0xC`、bits 52-63: NaN プレフィックス
+///
+/// 格納バイトは常に「既存の valid UTF-8 文字列の char boundary 間のスライス」
+/// に由来するため、デコード時の UTF-8 検証は不要（`inline_str_as_str` 参照）。
+/// デコードは `self.0` のメモリを直接 `&[u8]` として参照するため、
+/// リトルエンディアン前提（下記 `compile_error!`）。
+const TAG_INLINE_STR: u64 = 0xC;
+
+/// インライン化できる最大バイト数（bits 0-39 の 5 バイト）。
+const INLINE_STR_MAX: usize = 5;
+
+/// 長さフィールドのシフト量（bits 40-42）。
+const INLINE_STR_LEN_SHIFT: u32 = 40;
+
+/// タグ + プレフィックス（bits 48-63）。
+const INLINE_STR_TAG_BITS: u64 = NON_NUMBER_MARK | (TAG_INLINE_STR << TAG_SHIFT);
+
+/// ペイロードのうち「バイト列 + 長さ」（bits 0-42）のマスク。
+/// タグ判定では bits 43-63 が canonical 形と一致することを要求する。
+const INLINE_STR_PAYLOAD_MASK: u64 = (1_u64 << (INLINE_STR_LEN_SHIFT + 3)) - 1;
+
 /// 即値を判定する際に比較対象となる可変ペイロード領域
 /// （ポインタ bits 0-47 + タグ bits 48-51）。
 /// bits 52-63 と bit 51 は `NON_NUMBER_MARK` で保証されるためどちら側もマスクする。
@@ -94,6 +144,51 @@ const fn immediate(tag: u64) -> u64 {
     prefix & !PTR_MASK
 }
 
+/// インライン短文字列を組み立てる。`s.len() <= INLINE_STR_MAX` を要求する。
+///
+/// # 不変条件 (encoding invariant)
+///
+/// `s` は「既存の valid UTF-8 文字列の char boundary 間のスライス」でなければ
+/// ならない。すべての生成経路（`str_slices` / `str_slices_from_shared`）はこの
+/// 条件を満たす `&str` のみを受け取るため、デコード側で UTF-8 検証を省略できる。
+#[inline]
+fn inline_str_encode(s: &str) -> JSValue {
+    debug_assert!(s.len() <= INLINE_STR_MAX);
+    let mut bits = INLINE_STR_TAG_BITS | ((s.len() as u64) << INLINE_STR_LEN_SHIFT);
+    for (i, &b) in s.as_bytes().iter().enumerate() {
+        bits |= (b as u64) << (8 * i);
+    }
+    JSValue(bits)
+}
+
+/// インライン短文字列を `&str` として取り出す。
+///
+/// # 不変条件 (decoding invariant)
+///
+/// `bits` は `inline_str_encode` で作られた canonical 形でなければならない。
+/// 格納バイトは生成時に valid UTF-8 の char boundary 間スライスだったため、
+/// `str::from_utf8_unchecked` での復元は常に安全である。
+///
+/// デコードは `value` のメモリを `to_le_bytes` 相当で参照するため、
+/// リトルエンディアン環境専用（モジュール先頭の `compile_error!` 参照）。
+#[inline]
+fn inline_str_as_str(value: &JSValue) -> &str {
+    debug_assert!(is_inline_str_bits(value.0));
+    let len = ((value.0 >> INLINE_STR_LEN_SHIFT) & 0x7) as usize;
+    // JSValue は #[repr(transparent)] の u64 なので、自身の 8 バイトを LE バイト列
+    // として参照できる（byte i == bits 8i..8i+8）。生存期間は `&value` に紐づく。
+    // ビッグエンディアンはモジュール先頭の `compile_error!` で排除済み。
+    let bytes = unsafe { core::slice::from_raw_parts(value as *const JSValue as *const u8, 8) };
+    // bytes[..len] は encode 時の UTF-8 スライスそのもの（LE 上でバイト順不変）
+    unsafe { core::str::from_utf8_unchecked(&bytes[..len]) }
+}
+
+/// bits がインライン短文字列かどうか（canonical 形: bits 43-63 が完全一致）。
+#[inline(always)]
+fn is_inline_str_bits(bits: u64) -> bool {
+    (bits & !INLINE_STR_PAYLOAD_MASK) == INLINE_STR_TAG_BITS
+}
+
 /// ボックス値（`Rc<BoxedValue>`）を組み立てる。
 fn boxed_value(kind: JsValueKind, payload: BoxedPayload) -> JSValue {
     let boxed = BoxedValue { kind, payload };
@@ -109,7 +204,13 @@ fn is_boxed_bits(bits: u64) -> bool {
     // 負の quiet NaN 領域（NON_NUMBER_MARK）内であることを併せて要求する。
     // タグビットだけを見ると、指数部/mantissa 上位に 0xF を持つ実数
     // （例: 2147483647.0 = 0x41DF_FFFF_FFC0_0000）を誤ってボックス値と判定してしまう。
-    (bits & NON_NUMBER_MARK) == NON_NUMBER_MARK && ((bits >> TAG_SHIFT) & TAG_MASK) == TAG_BOXED
+    let is_boxed = (bits & NON_NUMBER_MARK) == NON_NUMBER_MARK
+        && ((bits >> TAG_SHIFT) & TAG_MASK) == TAG_BOXED;
+    debug_assert!(
+        !is_boxed || !is_inline_str_bits(bits),
+        "inline string bits must never satisfy is_boxed_bits"
+    );
+    is_boxed
 }
 
 /// 値の種類（公開 enum）。
@@ -306,6 +407,13 @@ impl JSValue {
         ranges: impl IntoIterator<Item = Range<usize>>,
     ) -> impl Iterator<Item = JSValue> {
         ranges.into_iter().map(move |range| {
+            let slice = &base[range.clone()];
+            if slice.len() <= INLINE_STR_MAX {
+                // 短いスライスは NaN-box ペイロードに直接格納（確保 0）。
+                // slice は valid UTF-8 base の char boundary 間なので
+                // inline_str_encode の不変条件を満たす。
+                return inline_str_encode(slice);
+            }
             boxed_value(
                 JsValueKind::String,
                 BoxedPayload::StrSlice {
@@ -327,6 +435,9 @@ impl JSValue {
         let bits = self.0;
         if is_number_bits(bits) {
             return JsValueKind::Number;
+        }
+        if is_inline_str_bits(bits) {
+            return JsValueKind::String;
         }
         if is_boxed_bits(bits) {
             // unsafe をこのモジュール内に閉じ込める
@@ -426,6 +537,9 @@ impl JSValue {
 
     /// 文字列を取り出す（存在しなければ `None`）。
     pub fn as_string(&self) -> Option<&str> {
+        if is_inline_str_bits(self.0) {
+            return Some(inline_str_as_str(self));
+        }
         if !is_boxed_bits(self.0) {
             return None;
         }
@@ -448,6 +562,11 @@ impl JSValue {
     /// `Str` は base 全体（オフセット 0、文字列本体のコピー 1 回）、`StrSlice` は
     /// その背後の base をそのまま共有（コピー 0 回）。文字列でなければ `None`。
     pub(crate) fn as_shared_string(&self) -> Option<(Rc<str>, usize)> {
+        // インライン短文字列はベースを持たないため、必要になった時点で
+        // 1 回だけコピーして Rc<str> にする（ボックス化は発生しない）。
+        if is_inline_str_bits(self.0) {
+            return Some((Rc::from(inline_str_as_str(self)), 0));
+        }
         if !is_boxed_bits(self.0) {
             return None;
         }
@@ -867,6 +986,10 @@ impl Clone for JSValue {
 
 impl Drop for JSValue {
     fn drop(&mut self) {
+        debug_assert!(
+            !is_inline_str_bits(self.0),
+            "inline strings are plain bits and must not be Rc-dropped"
+        );
         if is_boxed_bits(self.0) {
             let ptr = (self.0 & PTR_MASK) as *const BoxedValue;
             // from_raw が所有権を引き継ぎ、drop で参照カウントを減らす
@@ -887,6 +1010,97 @@ impl fmt::Display for JSValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_str_roundtrip_ascii_multibyte_and_empty() {
+        // 1..=5 バイトの ASCII、マルチバイト、空文字列をカバー。
+        // "あ"=3B, "é"=2B, "😀"=4B, "あa"=4B, "あいb"=7B(>5 → 不可)
+        for s in [
+            "", "a", "ab", "abc", "abcd", "abcde", "é", "あ", "😀", "あa",
+        ] {
+            let v = inline_str_encode(s);
+            assert!(is_inline_str_bits(v.0), "{s:?}: must be tagged inline");
+            assert_eq!(v.kind(), JsValueKind::String, "{s:?}: kind");
+            assert_eq!(v.as_string(), Some(s), "{s:?}: roundtrip");
+            assert!(!is_boxed_bits(v.0), "{s:?}: must not look boxed");
+        }
+        // 境界: 6 バイトはインライン化できない（serde ではなくフォールバック側で弾く）
+        assert!("abcdef".len() > INLINE_STR_MAX);
+    }
+
+    #[test]
+    fn inline_str_never_confuses_with_other_kinds() {
+        // インライン文字列が number / 即値 / boxed の各判定と衝突しないこと。
+        let probes: Vec<JSValue> = vec![
+            JSValue::undefined(),
+            JSValue::null(),
+            JSValue::from_bool(true),
+            JSValue::from_number(2147483647.0),
+            JSValue::from_number(f64::NAN),
+            JSValue::from_str("hello boxed world"),
+        ];
+        for p in &probes {
+            assert!(!is_inline_str_bits(p.0));
+        }
+        // 0 バイト（空文字列）は payload 全ビット 0 + タグ。
+        let empty = inline_str_encode("");
+        assert_eq!((empty.0 & !INLINE_STR_PAYLOAD_MASK), INLINE_STR_TAG_BITS);
+        assert_eq!(empty.as_string(), Some(""));
+    }
+
+    #[test]
+    fn split_slices_inherit_utf8_boundaries() {
+        // str_slices_from_shared は既存 UTF-8 の char boundary 間スライスのみを
+        // 作る。マルチバイト文字を含む入力でも全要素が元の文字列と一致する。
+        let base: Rc<str> = Rc::from("あa😀éz");
+        // char_indices から byte range を作る（get_iterator と同じ手順）。
+        let ranges: Vec<std::ops::Range<usize>> = base
+            .char_indices()
+            .map(|(i, c)| i..i + c.len_utf8())
+            .collect();
+        let chars: Vec<char> = base.chars().collect();
+        let values: Vec<JSValue> =
+            JSValue::str_slices_from_shared(Rc::clone(&base), ranges).collect();
+        assert_eq!(values.len(), chars.len());
+        for (v, expected) in values.iter().zip(&chars) {
+            let mut buf = [0u8; 4];
+            let expected: &str = expected.encode_utf8(&mut buf);
+            assert_eq!(v.as_string(), Some(expected).as_deref());
+            // すべての char は 4B 以下なので必ずインラインになる
+            assert!(
+                is_inline_str_bits(v.0),
+                "per-char slice must inline: {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn short_slice_and_boxed_slice_agree_on_equality() {
+        // インライン版と boxed 版の比較が一致する。6B 超のスライスは boxed StrSlice。
+        let base: Rc<str> = Rc::from("abcdefgh");
+        let a = JSValue::from_str("abc"); // boxed Str
+        let slices: Vec<JSValue> =
+            JSValue::str_slices_from_shared(Rc::clone(&base), [0..3, 2..8]).collect();
+        let inline_abc = &slices[0];
+        let boxed_cdefgh = &slices[1];
+        assert!(is_inline_str_bits(inline_abc.0));
+        assert!(!is_inline_str_bits(boxed_cdefgh.0) && boxed_cdefgh.as_string() == Some("cdefgh"));
+        assert!(inline_abc.strict_equals(&a)); // "abc" == "abc" をインライン vs boxed で
+        assert!(!inline_abc.strict_equals(boxed_cdefgh));
+    }
+
+    #[test]
+    fn layout_sizes_for_analysis() {
+        use std::mem::size_of;
+        println!("BoxedValue        = {}", size_of::<BoxedValue>());
+        println!("BoxedPayload      = {}", size_of::<BoxedPayload>());
+        println!("  StrSlice var    = {}", size_of::<Option<BoxedPayload>>());
+        println!("FunctionData      = {}", size_of::<FunctionData>());
+        println!(
+            "RcBox total       = {}",
+            size_of::<std::rc::Rc<BoxedValue>>()
+        );
+    }
 
     #[test]
     fn small_integers_are_inline_numbers() {
