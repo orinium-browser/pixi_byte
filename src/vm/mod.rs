@@ -578,23 +578,31 @@ impl VM {
             }
             Opcode::Increment | Opcode::Decrement => {
                 let value = self.pop()?;
-                let value = self.to_primitive(value, PrimitiveHint::Number)?;
                 let increment = matches!(opcode, Opcode::Increment);
-                self.stack.push(match value.kind() {
-                    JsValueKind::BigInt => {
-                        let v = value.as_bigint().unwrap();
-                        JSValue::from_bigint(if increment {
-                            v + BigInt::from(1)
+                // 数値の高速経路: ループカウンタ更新で毎回実行されるため、
+                // to_primitive / kind() の多段判定を経由しない。
+                if value.is_number() {
+                    let n = value.as_number().unwrap();
+                    let result = if increment { n + 1.0 } else { n - 1.0 };
+                    self.stack.push(JSValue::from_number(result));
+                } else {
+                    let value = self.to_primitive(value, PrimitiveHint::Number)?;
+                    self.stack.push(match value.kind() {
+                        JsValueKind::BigInt => {
+                            let v = value.as_bigint().unwrap();
+                            JSValue::from_bigint(if increment {
+                                v + BigInt::from(1)
+                            } else {
+                                v - BigInt::from(1)
+                            })
+                        }
+                        _ => JSValue::from_number(if increment {
+                            value.to_number() + 1.0
                         } else {
-                            v - BigInt::from(1)
-                        })
-                    }
-                    _ => JSValue::from_number(if increment {
-                        value.to_number() + 1.0
-                    } else {
-                        value.to_number() - 1.0
-                    }),
-                });
+                            value.to_number() - 1.0
+                        }),
+                    });
+                }
             }
 
             // 比較演算
@@ -1410,6 +1418,16 @@ impl VM {
             }
             Opcode::JumpIfFalse(offset) => {
                 let condition = self.pop()?;
+                // 数値の高速経路: ループ条件の真偽判定で毎回実行されるため、
+                // to_boolean の多段判定を経由しない（0 と NaN のみ偽）。
+                if condition.is_number() {
+                    let n = condition.as_number().unwrap();
+                    return Ok(if n != 0.0 && !n.is_nan() {
+                        ControlFlow::Continue
+                    } else {
+                        ControlFlow::Jump(*offset)
+                    });
+                }
                 if !condition.to_boolean() {
                     return Ok(ControlFlow::Jump(*offset));
                 } else {
@@ -1469,6 +1487,15 @@ impl VM {
             }
             Opcode::JumpIfTrue(offset) => {
                 let condition = self.pop()?;
+                if condition.is_number() {
+                    // 数値の高速経路（JumpIfFalse と同じ理由）。
+                    let n = condition.as_number().unwrap();
+                    return Ok(if n != 0.0 && !n.is_nan() {
+                        ControlFlow::Jump(*offset)
+                    } else {
+                        ControlFlow::Continue
+                    });
+                }
                 if condition.to_boolean() {
                     return Ok(ControlFlow::Jump(*offset));
                 } else {
@@ -1871,6 +1898,13 @@ impl VM {
     fn add_op(&mut self) -> JSResult<()> {
         let b = self.pop()?;
         let a = self.pop()?;
+        // 数値どうしの高速経路: NaN-boxing では双方とも即値ビット列なので、
+        // 1 回の判定で確定し、to_primitive / kind() / to_number の多段判定を回避する。
+        if a.is_number() && b.is_number() {
+            let result = a.as_number().unwrap() + b.as_number().unwrap();
+            self.stack.push(JSValue::from_number(result));
+            return Ok(());
+        }
         let a = self.to_primitive(a, PrimitiveHint::Default)?;
         let b = self.to_primitive(b, PrimitiveHint::Default)?;
         let result = match (a.kind(), b.kind()) {
@@ -2006,6 +2040,19 @@ impl VM {
     fn binary_arithmetic_op(&mut self, op: ArithmeticOp) -> JSResult<()> {
         let b = self.pop()?;
         let a = self.pop()?;
+        // 数値どうしの高速経路（加算と同じ理由）。
+        if a.is_number() && b.is_number() {
+            let (a, b) = (a.as_number().unwrap(), b.as_number().unwrap());
+            let result = match op {
+                ArithmeticOp::Sub => a - b,
+                ArithmeticOp::Mul => a * b,
+                ArithmeticOp::Div => a / b,
+                ArithmeticOp::Mod => a % b,
+                ArithmeticOp::Power => a.powf(b),
+            };
+            self.stack.push(JSValue::from_number(result));
+            return Ok(());
+        }
         let a = self.to_primitive(a, PrimitiveHint::Number)?;
         let b = self.to_primitive(b, PrimitiveHint::Number)?;
 
@@ -2070,17 +2117,21 @@ impl VM {
     {
         let b = self.pop()?;
         let a = self.pop()?;
-        let a = self.to_primitive(a, PrimitiveHint::Number)?;
-        let b = self.to_primitive(b, PrimitiveHint::Number)?;
-
-        let ordering = match (a.kind(), b.kind()) {
-            (JsValueKind::String, JsValueKind::String) => {
-                Some(a.as_string().unwrap().cmp(b.as_string().unwrap()))
+        // 数値どうしの高速経路（加算と同じ理由）。
+        let ordering = if a.is_number() && b.is_number() {
+            a.as_number().unwrap().partial_cmp(&b.as_number().unwrap())
+        } else {
+            let a = self.to_primitive(a, PrimitiveHint::Number)?;
+            let b = self.to_primitive(b, PrimitiveHint::Number)?;
+            match (a.kind(), b.kind()) {
+                (JsValueKind::String, JsValueKind::String) => {
+                    Some(a.as_string().unwrap().cmp(b.as_string().unwrap()))
+                }
+                (JsValueKind::BigInt, JsValueKind::BigInt) => {
+                    Some(a.as_bigint().unwrap().cmp(b.as_bigint().unwrap()))
+                }
+                _ => a.to_number().partial_cmp(&b.to_number()),
             }
-            (JsValueKind::BigInt, JsValueKind::BigInt) => {
-                Some(a.as_bigint().unwrap().cmp(b.as_bigint().unwrap()))
-            }
-            _ => a.to_number().partial_cmp(&b.to_number()),
         };
         let result = ordering.map(op).unwrap_or(false);
         self.stack.push(JSValue::from_bool(result));
