@@ -719,6 +719,10 @@ impl JSValue {
 
     /// 値を数値に変換します（ToNumber）。
     pub fn to_number(&self) -> f64 {
+        // 数値の高速経路: kind() の多段判定を経由せずビット列から直接復元する。
+        if is_number_bits(self.0) {
+            return f64::from_bits(self.0);
+        }
         match self.kind() {
             JsValueKind::Undefined => f64::NAN,
             JsValueKind::Null => 0.0,
@@ -754,6 +758,11 @@ impl JSValue {
 
     /// 値を真偽値に変換します（ToBoolean）。
     pub fn to_boolean(&self) -> bool {
+        // 数値の高速経路: kind() の多段判定を経由しない（0 と NaN のみ偽）。
+        if is_number_bits(self.0) {
+            let n = f64::from_bits(self.0);
+            return !n.is_nan() && n != 0.0;
+        }
         match self.kind() {
             JsValueKind::Undefined | JsValueKind::Null => false,
             JsValueKind::Boolean => self.as_boolean().unwrap(),
@@ -848,6 +857,11 @@ impl JSValue {
 
     /// 抽象等価比較（==）。
     pub fn abstract_equals(&self, other: &JSValue) -> bool {
+        // 高速パス: 両方 Number なら strict 経路に直行（kind() 2 回の判定を回避）。
+        if self.is_number() && other.is_number() {
+            return self.strict_equals(other);
+        }
+
         // 同じ種類の場合は厳密等価
         if self.kind() == other.kind() {
             return self.strict_equals(other);
@@ -1182,7 +1196,7 @@ mod tests {
 
     #[test]
     fn small_integers_are_inline_numbers() {
-        for v in [0.0, -0.0, 1.0, -1.0, 42.0, 3.14, 1e100] {
+        for v in [0.0, -0.0, 1.0, -1.0, 42.0, 3.5, 1e100] {
             let j = JSValue::from_number(v);
             assert!(j.is_number());
             assert_eq!(j.as_number(), Some(v));

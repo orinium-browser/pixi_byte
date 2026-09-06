@@ -552,29 +552,47 @@ impl VM {
             // 単項演算
             Opcode::Neg => {
                 let value = self.pop()?;
-                let value = self.to_primitive(value, PrimitiveHint::Number)?;
-                self.stack.push(match value.kind() {
-                    JsValueKind::BigInt => {
-                        let v = value.as_bigint().unwrap();
-                        JSValue::from_bigint(-v.clone())
-                    }
-                    _ => JSValue::from_number(-value.to_number()),
-                });
+                // 数値の高速経路（Increment/Decrement と同じ理由）。
+                if value.is_number() {
+                    let result = -value.as_number().unwrap();
+                    self.stack.push(JSValue::from_number(result));
+                } else {
+                    let value = self.to_primitive(value, PrimitiveHint::Number)?;
+                    self.stack.push(match value.kind() {
+                        JsValueKind::BigInt => {
+                            let v = value.as_bigint().unwrap();
+                            JSValue::from_bigint(-v.clone())
+                        }
+                        _ => JSValue::from_number(-value.to_number()),
+                    });
+                }
             }
             Opcode::Not => {
                 let value = self.pop()?;
-                self.stack.push(JSValue::from_bool(!value.to_boolean()));
+                // 数値の高速経路: 0 と NaN のみ偽。
+                if value.is_number() {
+                    let n = value.as_number().unwrap();
+                    self.stack.push(JSValue::from_bool(n == 0.0 && !n.is_nan()));
+                } else {
+                    self.stack.push(JSValue::from_bool(!value.to_boolean()));
+                }
             }
             Opcode::BitNot => {
                 let value = self.pop()?;
-                let value = self.to_primitive(value, PrimitiveHint::Number)?;
-                self.stack.push(match value.kind() {
-                    JsValueKind::BigInt => {
-                        let v = value.as_bigint().unwrap();
-                        JSValue::from_bigint(!v.clone())
-                    }
-                    _ => JSValue::from_number((!to_int32(value.to_number())) as f64),
-                });
+                // 数値の高速経路（Neg と同じ理由）。
+                if value.is_number() {
+                    let result = !to_int32(value.as_number().unwrap());
+                    self.stack.push(JSValue::from_number(result as f64));
+                } else {
+                    let value = self.to_primitive(value, PrimitiveHint::Number)?;
+                    self.stack.push(match value.kind() {
+                        JsValueKind::BigInt => {
+                            let v = value.as_bigint().unwrap();
+                            JSValue::from_bigint(!v.clone())
+                        }
+                        _ => JSValue::from_number((!to_int32(value.to_number())) as f64),
+                    });
+                }
             }
             Opcode::Increment | Opcode::Decrement => {
                 let value = self.pop()?;
@@ -705,8 +723,15 @@ impl VM {
             Opcode::And => {
                 let b = self.pop()?;
                 let a = self.pop()?;
-                // JavaScriptの && は短絡評価で、最初の falsy な値か最後の値を返す
-                if !a.to_boolean() {
+                // JavaScriptの && は短絡評価で、最初の falsy な値か最後の値を返す。
+                // 数値の高速経路: 0 と NaN のみ偽（to_boolean の多段判定を回避）。
+                let a_is_truthy = if a.is_number() {
+                    let n = a.as_number().unwrap();
+                    n != 0.0 && !n.is_nan()
+                } else {
+                    a.to_boolean()
+                };
+                if !a_is_truthy {
                     self.stack.push(a);
                 } else {
                     self.stack.push(b);
@@ -715,8 +740,14 @@ impl VM {
             Opcode::Or => {
                 let b = self.pop()?;
                 let a = self.pop()?;
-                // JavaScriptの || は短絡評価で、最初の truthy な値か最後の値を返す
-                if a.to_boolean() {
+                // JavaScriptの || は短絡評価で、最初の truthy な値か最後の値を返す。
+                let a_is_truthy = if a.is_number() {
+                    let n = a.as_number().unwrap();
+                    n != 0.0 && !n.is_nan()
+                } else {
+                    a.to_boolean()
+                };
+                if a_is_truthy {
                     self.stack.push(a);
                 } else {
                     self.stack.push(b);
@@ -732,6 +763,14 @@ impl VM {
             Opcode::UnsignedRightShift => {
                 let b = self.pop()?;
                 let a = self.pop()?;
+                // 数値どうしの高速経路（bitwise_op と同じ理由）。
+                if a.is_number() && b.is_number() {
+                    let a_u32 = to_uint32(a.as_number().unwrap());
+                    let b_u32 = to_uint32(b.as_number().unwrap());
+                    self.stack
+                        .push(JSValue::from_number((a_u32 >> (b_u32 & 0x1f)) as f64));
+                    return Ok(ControlFlow::Continue);
+                }
                 let a = self.to_primitive(a, PrimitiveHint::Number)?;
                 let b = self.to_primitive(b, PrimitiveHint::Number)?;
                 if a.is_bigint() || b.is_bigint() {
@@ -2142,6 +2181,23 @@ impl VM {
     fn bitwise_op(&mut self, op: BitwiseOp) -> JSResult<()> {
         let b = self.pop()?;
         let a = self.pop()?;
+        // 数値どうしの高速経路: to_primitive / kind() / to_number の多段判定を回避する。
+        // ビット演算は ToInt32 変換のみで定義されるため BigInt 系の分岐に入らない。
+        if a.is_number() && b.is_number() {
+            let (a, b) = (
+                to_int32(a.as_number().unwrap()),
+                to_int32(b.as_number().unwrap()),
+            );
+            let result = match op {
+                BitwiseOp::And => a & b,
+                BitwiseOp::Or => a | b,
+                BitwiseOp::Xor => a ^ b,
+                BitwiseOp::LeftShift => a << (b & 0x1f),
+                BitwiseOp::RightShift => a >> (b & 0x1f),
+            } as f64;
+            self.stack.push(JSValue::from_number(result));
+            return Ok(());
+        }
         let a = self.to_primitive(a, PrimitiveHint::Number)?;
         let b = self.to_primitive(b, PrimitiveHint::Number)?;
         let result = match (a.kind(), b.kind()) {
