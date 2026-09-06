@@ -50,6 +50,15 @@ fn benchmark_array_map(c: &mut Criterion) {
     bench_execution(c, "array map+forEach 100 elems", source, 1);
 }
 
+/// ビット演算・論理演算・単項演算の混合（数値 fast path の効果測定用）
+fn benchmark_bitwise_logic(c: &mut Criterion) {
+    let source = "let s = 0; let a = 0; let b = 0; let c = 0; let d = 0; let m = 0xFF; \
+        for (let i = 0; i < 1000; i++) { \
+            a = (i & m) | (i << 2); b = a ^ m; c = ~b; \
+            d = (a && 1) || (c ? 2 : 3); s = (s + d) & m; } s";
+    bench_execution(c, "bitwise logic loop 1000", source, 1);
+}
+
 criterion_group!(
     benches,
     benchmark_arithmetic,
@@ -57,6 +66,7 @@ criterion_group!(
     benchmark_loop,
     benchmark_function_call,
     benchmark_array_access,
-    benchmark_array_map
+    benchmark_array_map,
+    benchmark_bitwise_logic
 );
 criterion_main!(benches);
