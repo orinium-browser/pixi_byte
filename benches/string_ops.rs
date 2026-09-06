@@ -76,10 +76,7 @@ fn benchmark_string_split(c: &mut Criterion) {
             (concat_loops * SEGMENT_LEN * split_loops) as u64,
         ));
         group.bench_with_input(
-            BenchmarkId::new(
-                "split",
-                format!("{concat_loops}x{split_loops}"),
-            ),
+            BenchmarkId::new("split", format!("{concat_loops}x{split_loops}")),
             &(concat_loops, split_loops),
             |b, &(concat_loops, split_loops)| {
                 let source = split_source(concat_loops, split_loops);

@@ -137,7 +137,8 @@ fn string_allocation_budgets() {
         max_live <= MAX_LIVE_BUDGET,
         "max live bytes {} exceeded budget {}\n\
          メモリ保持量の退行です。意図した変更なら予算を更新してください。",
-        max_live, MAX_LIVE_BUDGET
+        max_live,
+        MAX_LIVE_BUDGET
     );
 
     // --- workload 2: 1 文字大量生成 ---------------------------------------
@@ -161,5 +162,10 @@ fn string_allocation_budgets() {
         "24000",
     );
     let chars_delta = delta(HeapStats::get(), before_chars);
-    assert_budget("per-char", &chars_delta, CHAR_BYTE_BUDGET, CHAR_BLOCK_BUDGET);
+    assert_budget(
+        "per-char",
+        &chars_delta,
+        CHAR_BYTE_BUDGET,
+        CHAR_BLOCK_BUDGET,
+    );
 }
