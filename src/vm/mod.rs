@@ -2141,12 +2141,13 @@ impl VM {
         if JsValueKind::String == value.kind() {
             // 文字ごとに JSValue をボックス化する代わりに、入力文字列を共有する
             // StrSlice の配列を作る（文字列本体のコピーも char ごとのボックス化も発生しない）
-            let string = value.as_string().unwrap();
+            let (base, base_offset) = value.as_shared_string().unwrap();
+            let string = &base[base_offset..];
             let ranges: Vec<_> = string
                 .char_indices()
-                .map(|(index, c)| index..index + c.len_utf8())
+                .map(|(index, c)| base_offset + index..base_offset + index + c.len_utf8())
                 .collect();
-            let source = self.array_from_values(JSValue::str_slices(string, ranges).collect());
+            let source = self.array_from_values(JSValue::str_slices(&base, ranges).collect());
             return Ok(indexed_iterator(source));
         }
         let object = if value.kind() == JsValueKind::Object {

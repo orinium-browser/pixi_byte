@@ -199,27 +199,48 @@ fn replacement_text(
 }
 
 fn string_split(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let input = receiver(&args, "split")?;
+    let this = args
+        .first()
+        .filter(|value| !matches!(value.kind(), JsValueKind::Null | JsValueKind::Undefined))
+        .ok_or_else(|| {
+            JSError::TypeError("String.prototype.split: invalid receiver".to_string())
+        })?;
     let limit = args
         .get(2)
         .filter(|value| value.kind() != JsValueKind::Undefined)
         .map(JSValue::to_number)
         .unwrap_or(u32::MAX as f64) as usize;
 
+    // receiver が共有ベース（Rc<str>）を持つ場合はそれをそのまま使い、入力全体の
+    // コピーを避ける。`StrSlice` が receiver の場合は背後の base とオフセットを得る。
+    let (base, base_offset) = match this.as_shared_string() {
+        Some(shared) => shared,
+        None => (Rc::from(this.to_string()), 0),
+    };
+    let input: &str = &base[base_offset..];
+
     let parts: Vec<JSValue> = match args.get(1) {
-        None => vec![JSValue::from_string(input)],
+        None => JSValue::str_slices(
+            &base,
+            std::iter::once(base_offset..base_offset + input.len()),
+        )
+        .collect(),
         Some(value) => match value.kind() {
-            JsValueKind::Undefined => vec![JSValue::from_string(input)],
+            JsValueKind::Undefined => JSValue::str_slices(
+                &base,
+                std::iter::once(base_offset..base_offset + input.len()),
+            )
+            .collect(),
             JsValueKind::Object if regexp::is_regexp(&value.as_object().unwrap()) => {
                 let ranges: Vec<_> = regexp::compile(&value.as_object().unwrap())?
-                    .split(&input)
+                    .split(input)
                     .take(limit)
                     .map(|part| {
                         let start = part.as_ptr() as usize - input.as_ptr() as usize;
-                        start..start + part.len()
+                        base_offset + start..base_offset + start + part.len()
                     })
                     .collect();
-                JSValue::str_slices(&input, ranges).collect()
+                JSValue::str_slices(&base, ranges).collect()
             }
             _ => {
                 let separator = value.to_string();
@@ -228,19 +249,19 @@ fn string_split(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
                     let ranges: Vec<_> = input
                         .char_indices()
                         .take(limit)
-                        .map(|(index, c)| index..index + c.len_utf8())
+                        .map(|(index, c)| base_offset + index..base_offset + index + c.len_utf8())
                         .collect();
-                    JSValue::str_slices(&input, ranges).collect()
+                    JSValue::str_slices(&base, ranges).collect()
                 } else {
                     let ranges: Vec<_> = input
                         .split(&separator)
                         .take(limit)
                         .map(|part| {
                             let start = part.as_ptr() as usize - input.as_ptr() as usize;
-                            start..start + part.len()
+                            base_offset + start..base_offset + start + part.len()
                         })
                         .collect();
-                    JSValue::str_slices(&input, ranges).collect()
+                    JSValue::str_slices(&base, ranges).collect()
                 }
             }
         },

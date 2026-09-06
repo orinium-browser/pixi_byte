@@ -139,10 +139,11 @@ struct BoxedValue {
 
 /// ボックス値の実データ。
 enum BoxedPayload {
-    Str(Box<str>),
+    /// 共有可能な文字列本体。`Rc` により複数の `StrSlice` が参照カウントを共有できる。
+    Str(Rc<str>),
     /// 共有された文字列の部分スライス。`base[offset..offset + len]` が文字列本体。
     StrSlice {
-        base: Rc<Box<str>>,
+        base: Rc<str>,
         offset: usize,
         len: usize,
     },
@@ -243,18 +244,18 @@ impl JSValue {
     }
 
     pub fn from_string(s: String) -> Self {
-        boxed_value(JsValueKind::String, BoxedPayload::Str(s.into_boxed_str()))
+        boxed_value(JsValueKind::String, BoxedPayload::Str(Rc::from(s)))
     }
 
     pub fn from_str(s: &str) -> Self {
-        boxed_value(JsValueKind::String, BoxedPayload::Str(s.into()))
+        boxed_value(JsValueKind::String, BoxedPayload::Str(Rc::from(s)))
     }
 
     pub fn from_char(c: char) -> Self {
         let mut buffer = [0u8; char::MAX.len_utf8()];
         let s = c.encode_utf8(&mut buffer);
 
-        boxed_value(JsValueKind::String, BoxedPayload::Str(s.into()))
+        boxed_value(JsValueKind::String, BoxedPayload::Str(Rc::from(s)))
     }
 
     pub fn from_object(o: Rc<RefCell<JSObject>>) -> Self {
@@ -283,18 +284,17 @@ impl JSValue {
         )
     }
 
-    /// 共有された部分文字列を表すジェネレータを返す。各要素は `input` を共有する
+    /// 共有された部分文字列を表すジェネレータを返す。各要素は `base` を共有する
     /// `StrSlice` として保持され、追加の文字列コピーは発生しない。
     pub fn str_slices<'a>(
-        input: &'a str,
+        base: &'a Rc<str>,
         ranges: impl IntoIterator<Item = Range<usize>> + 'a,
     ) -> impl Iterator<Item = JSValue> + 'a {
-        let base: Rc<Box<str>> = Rc::new(input.into());
         ranges.into_iter().map(move |range| {
             boxed_value(
                 JsValueKind::String,
                 BoxedPayload::StrSlice {
-                    base: Rc::clone(&base),
+                    base: Rc::clone(base),
                     offset: range.start,
                     len: range.end - range.start,
                 },
@@ -426,6 +426,21 @@ impl JSValue {
     /// 文字列を所有値として取り出す。
     pub fn as_string_owned(&self) -> Option<String> {
         self.as_string().map(str::to_string)
+    }
+
+    /// 文字列の共有ベース（`Rc<str>`）と、この値の文字列が始まる base 内オフセットを返す。
+    ///
+    /// `Str` は base 全体（オフセット 0）、`StrSlice` はその背後の base の部分スライスを
+    /// 共有する。文字列でなければ `None`。文字列本体はコピーされない。
+    pub(crate) fn as_shared_string(&self) -> Option<(Rc<str>, usize)> {
+        if !is_boxed_bits(self.0) {
+            return None;
+        }
+        match &self.boxed().payload {
+            BoxedPayload::Str(s) => Some((Rc::clone(s), 0)),
+            BoxedPayload::StrSlice { base, offset, .. } => Some((Rc::clone(base), *offset)),
+            _ => None,
+        }
     }
 
     pub fn as_bigint(&self) -> Option<&BigInt> {
