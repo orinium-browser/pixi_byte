@@ -38,11 +38,25 @@ fn benchmark_function_call(c: &mut Criterion) {
     bench_execution(c, "function call loop 100", source, 1);
 }
 
+/// 実際のワークロード: 配列要素の読み書き（プロパティキー生成がホット）
+fn benchmark_array_access(c: &mut Criterion) {
+    let source = "let a = []; for (let i = 0; i < 1000; i++) { a[i] = i * 2; } let s = 0; for (let i = 0; i < 1000; i++) { s += a[i]; } s";
+    bench_execution(c, "array element access 2000 ops", source, 1);
+}
+
+/// 実際のワークロード: 配列メソッドの要素走査（get_index がホット）
+fn benchmark_array_map(c: &mut Criterion) {
+    let source = "let a = []; for (let i = 0; i < 100; i++) { a.push(i); } let s = 0; a.map(x => x * 2).forEach(x => { s += x; }); s";
+    bench_execution(c, "array map+forEach 100 elems", source, 1);
+}
+
 criterion_group!(
     benches,
     benchmark_arithmetic,
     benchmark_variables,
     benchmark_loop,
-    benchmark_function_call
+    benchmark_function_call,
+    benchmark_array_access,
+    benchmark_array_map
 );
 criterion_main!(benches);
