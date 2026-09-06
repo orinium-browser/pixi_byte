@@ -86,10 +86,12 @@ const TAG_NULL: u64 = 0x9;
 const TAG_FALSE: u64 = 0xA;
 const TAG_TRUE: u64 = 0xB;
 
-/// インライン短文字列スライスのタグ。
+/// インライン短文字列のタグ。
 ///
-/// `str_slices*` が生成する部分文字列のうち、UTF-8 で `INLINE_STR_MAX` バイト
-/// 以下のものは `BoxedValue` を確保せず、JSValue のペイロードに直接格納する。
+/// UTF-8 で `INLINE_STR_MAX` バイト以下の文字列は `BoxedValue` を確保せず、
+/// JSValue のペイロードに直接格納する。生成経路は所有文字列 `from_str` /
+/// `from_string`（および `From<&str>` / `From<char>`）、1 文字 `from_char`、
+/// そして `str_slices*` が生成する部分文字列のすべて。
 ///
 /// ビットレイアウト（48 ビットペイロード）:
 ///
@@ -148,9 +150,10 @@ const fn immediate(tag: u64) -> u64 {
 ///
 /// # 不変条件 (encoding invariant)
 ///
-/// `s` は「既存の valid UTF-8 文字列の char boundary 間のスライス」でなければ
-/// ならない。すべての生成経路（`str_slices` / `str_slices_from_shared`）はこの
-/// 条件を満たす `&str` のみを受け取るため、デコード側で UTF-8 検証を省略できる。
+/// `s` は「既存の valid UTF-8 文字列そのもの、またはその char boundary 間の
+/// スライス」でなければならない。すべての生成経路（`from_str` / `from_string` /
+/// `from_char` / `str_slices*`）はこの条件を満たす `&str` のみを受け取るため、
+/// デコード側で UTF-8 検証を省略できる。
 #[inline]
 fn inline_str_encode(s: &str) -> JSValue {
     debug_assert!(s.len() <= INLINE_STR_MAX);
@@ -346,18 +349,26 @@ impl JSValue {
     }
 
     pub fn from_string(s: String) -> Self {
+        if s.len() <= INLINE_STR_MAX {
+            // 短い文字列は NaN-box ペイロードに直接格納（確保 0）。
+            return inline_str_encode(&s);
+        }
         boxed_value(JsValueKind::String, BoxedPayload::Str(s.into_boxed_str()))
     }
 
     pub fn from_str(s: &str) -> Self {
+        if s.len() <= INLINE_STR_MAX {
+            // 短い文字列は NaN-box ペイロードに直接格納（確保 0）。
+            return inline_str_encode(s);
+        }
         boxed_value(JsValueKind::String, BoxedPayload::Str(s.into()))
     }
 
     pub fn from_char(c: char) -> Self {
+        // char は最大 4 バイトなので必ずインライン表現に収まる（確保 0）。
         let mut buffer = [0u8; char::MAX.len_utf8()];
         let s = c.encode_utf8(&mut buffer);
-
-        boxed_value(JsValueKind::String, BoxedPayload::Str(s.into()))
+        inline_str_encode(s)
     }
 
     pub fn from_object(o: Rc<RefCell<JSObject>>) -> Self {
@@ -936,6 +947,12 @@ impl From<&str> for JSValue {
     }
 }
 
+impl From<char> for JSValue {
+    fn from(c: char) -> Self {
+        JSValue::from_char(c)
+    }
+}
+
 impl From<BigInt> for JSValue {
     fn from(v: BigInt) -> Self {
         JSValue::from_bigint(v)
@@ -1022,6 +1039,71 @@ mod tests {
         }
         // 境界: 6 バイトはインライン化できない（serde ではなくフォールバック側で弾く）
         assert!("abcdef".len() > INLINE_STR_MAX);
+    }
+
+    #[test]
+    fn from_char_and_short_from_str_are_inline() {
+        // from_char: char は最大 4 バイトなので常にインライン。
+        for c in ['a', 'é', 'あ', '😀', '\u{0}', '\n'] {
+            let v = JSValue::from_char(c);
+            assert!(is_inline_str_bits(v.0), "{c:?}: from_char must be inline");
+            assert_eq!(v.kind(), JsValueKind::String);
+            let mut buf = [0u8; 4];
+            assert_eq!(v.as_string(), Some(c.encode_utf8(&mut buf) as &str));
+            assert!(!is_boxed_bits(v.0), "{c:?}: must not look boxed");
+        }
+        // from_str / from_string: INLINE_STR_MAX 以下ならインライン。
+        for s in ["", "a", "ab", "abc", "abcd", "abcde", "é", "あ", "😀"] {
+            let v = JSValue::from_str(s);
+            assert!(is_inline_str_bits(v.0), "{s:?}: from_str must be inline");
+            assert_eq!(v.as_string(), Some(s), "{s:?}: roundtrip");
+            let v = JSValue::from_string(s.to_string());
+            assert!(is_inline_str_bits(v.0), "{s:?}: from_string must be inline");
+            assert_eq!(v.as_string(), Some(s), "{s:?}: roundtrip");
+        }
+        // INLINE_STR_MAX を超える文字列は従来どおり boxed Str。
+        for s in ["abcdef", "hello boxed world", "あいうえおか"] {
+            let v = JSValue::from_str(s);
+            assert!(!is_inline_str_bits(v.0), "{s:?}: long string must be boxed");
+            assert!(is_boxed_bits(v.0));
+            assert_eq!(v.as_string(), Some(s), "{s:?}: roundtrip");
+        }
+    }
+
+    #[test]
+    fn inline_and_boxed_strings_compare_by_content() {
+        // 短い文字列はすべての生成経路（from_char / from_str / from_string /
+        // str_slices_from_shared）で inline になり、内容で一致する。
+        let via_char = JSValue::from_char('a');
+        let via_str = JSValue::from_str("a");
+        let via_string = JSValue::from_string("a".to_string());
+        let short_range: std::ops::Range<usize> = 0..1;
+        let short_slice =
+            JSValue::str_slices_from_shared(Rc::from("a-long-base"), std::iter::once(short_range))
+                .next()
+                .unwrap();
+        assert!(is_inline_str_bits(via_char.0));
+        assert!(is_inline_str_bits(via_str.0));
+        assert!(is_inline_str_bits(via_string.0));
+        assert!(is_inline_str_bits(short_slice.0));
+        assert!(via_char.strict_equals(&via_str));
+        assert!(via_char.strict_equals(&via_string));
+        assert!(via_char.strict_equals(&short_slice));
+        // 長い文字列は boxed Str と boxed StrSlice で内容一致。
+        let boxed_str = JSValue::from_string("a-long-base".to_string());
+        let boxed_range: std::ops::Range<usize> = 0..11;
+        let boxed_slice =
+            JSValue::str_slices_from_shared(Rc::from("a-long-base"), std::iter::once(boxed_range))
+                .next()
+                .unwrap();
+        assert!(is_boxed_bits(boxed_str.0));
+        assert!(is_boxed_bits(boxed_slice.0));
+        assert!(boxed_str.strict_equals(&boxed_slice));
+        // 内容が違えば inline vs boxed は不一致。
+        assert!(!via_char.strict_equals(&boxed_str));
+        // From<char> 経路も同一。
+        let via_from: JSValue = 'あ'.into();
+        assert!(via_from.strict_equals(&JSValue::from_char('あ')));
     }
 
     #[test]

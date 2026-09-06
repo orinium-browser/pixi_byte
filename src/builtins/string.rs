@@ -373,13 +373,12 @@ fn string_to_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 fn string_char_at(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = receiver(&args, "charAt")?;
     let index = args.get(1).map(JSValue::to_number).unwrap_or(0.0) as usize;
-    Ok(JSValue::from_string(
-        input
-            .chars()
-            .nth(index)
-            .map(|value| value.to_string())
-            .unwrap_or_default(),
-    ))
+    // 1 文字（最大 4 バイト）は必ずインライン表現に収まる（確保 0）。
+    // 範囲外は仕様どおり空文字列。
+    match input.chars().nth(index) {
+        Some(c) => Ok(JSValue::from_char(c)),
+        None => Ok(JSValue::from_str("")),
+    }
 }
 
 fn string_char_code_at(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
