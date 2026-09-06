@@ -986,10 +986,6 @@ impl Clone for JSValue {
 
 impl Drop for JSValue {
     fn drop(&mut self) {
-        debug_assert!(
-            !is_inline_str_bits(self.0),
-            "inline strings are plain bits and must not be Rc-dropped"
-        );
         if is_boxed_bits(self.0) {
             let ptr = (self.0 & PTR_MASK) as *const BoxedValue;
             // from_raw が所有権を引き継ぎ、drop で参照カウントを減らす
