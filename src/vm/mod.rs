@@ -7,7 +7,7 @@
 use crate::compiler::{BytecodeChunk, Opcode};
 use crate::error::{JSError, JSResult};
 use crate::intern::{FunctionParam, NameId};
-use crate::runtime::{CallFrame, Environment};
+use crate::runtime::{CallFrame, Environment, FunctionName};
 use crate::value::jsobject::{JSObject, Property};
 use crate::value::jsvalue::{ArrowFunctionData, FunctionData, JSValue, JsValueKind};
 use num_bigint::BigInt;
@@ -295,12 +295,15 @@ impl VM {
         let mut pc = 0; // プログラムカウンタ
         let mut handlers = Vec::new();
         let mut pending_finally = Vec::new();
+        // プロパティキー文字列のスクラッチバッファ。文字列キー（定数プール由来）は
+        // as_string() で借用できるため、ループ内で毎回 String を確保せずに済む。
+        let mut key_scratch = String::new();
 
         while pc < chunk.code.len() {
             let opcode = &chunk.code[pc];
             pc += 1;
 
-            let control = match self.execute_opcode(opcode, chunk) {
+            let control = match self.execute_opcode(opcode, chunk, &mut key_scratch) {
                 Ok(control) => control,
                 Err(error) => {
                     pending_finally.pop();
@@ -409,7 +412,12 @@ impl VM {
     }
 
     /// バイトコードを実行（トップレベルはグローバル環境を使用）
-    fn execute_opcode(&mut self, opcode: &Opcode, chunk: &BytecodeChunk) -> JSResult<ControlFlow> {
+    fn execute_opcode(
+        &mut self,
+        opcode: &Opcode,
+        chunk: &BytecodeChunk,
+        key_scratch: &mut String,
+    ) -> JSResult<ControlFlow> {
         match opcode {
             Opcode::LoadConst(idx) => {
                 let value = chunk.constants[*idx].clone();
@@ -600,7 +608,8 @@ impl VM {
             Opcode::GtEq => self.numeric_comparison_op(|o| o.is_ge())?,
             Opcode::In => {
                 let object = self.pop()?;
-                let key = self.pop()?.to_string();
+                let key_value = self.pop()?;
+                let key = key_str(&key_value, key_scratch);
                 let object = match &object.kind() {
                     JsValueKind::Object => Some(Rc::clone(&object.as_object().unwrap())),
                     JsValueKind::Function
@@ -613,7 +622,7 @@ impl VM {
                         "right-hand side of 'in' is not an object".to_string(),
                     ));
                 };
-                let contains = object.borrow().has_property(&key);
+                let contains = object.borrow().has_property(key);
                 self.stack.push(JSValue::from_bool(contains));
             }
             Opcode::Instanceof => {
@@ -661,7 +670,7 @@ impl VM {
                     let stack = self
                         .frames
                         .iter()
-                        .filter_map(|frame| frame.function_name.as_deref())
+                        .filter_map(|frame| frame.function_name.as_ref().map(FunctionName::as_str))
                         .collect::<Vec<_>>()
                         .join(" -> ");
                     return Err(JSError::TypeError(format!(
@@ -751,9 +760,10 @@ impl VM {
                 match &obj.kind() {
                     JsValueKind::Object => {
                         let obj_ref = obj.as_object().unwrap();
-                        let key_str = key.to_string();
+                        // 文字列キーは as_string() で借用し、スクラッチバッファを汚さない
+                        let key_str = key_str(&key, key_scratch);
 
-                        let maybe_prop = { obj_ref.borrow().get_property_descriptor(&key_str) };
+                        let maybe_prop = { obj_ref.borrow().get_property_descriptor(key_str) };
 
                         if let Some(prop) = maybe_prop {
                             if let Some(getter) = prop.getter.clone() {
@@ -768,7 +778,7 @@ impl VM {
                             return Ok(ControlFlow::Continue);
                         }
 
-                        if let Some(prop) = inherited_property_descriptor(&obj_ref, &key_str) {
+                        if let Some(prop) = inherited_property_descriptor(&obj_ref, key_str) {
                             if let Some(getter) = prop.getter {
                                 let result = self.call(getter, obj.clone(), vec![])?;
                                 self.stack.push(result);
@@ -793,41 +803,41 @@ impl VM {
 
                         let value = {
                             let object = obj_ref.borrow();
-                            if object.has_property(&key_str) {
-                                object.get(&key_str)
+                            if object.has_property(key_str) {
+                                object.get(key_str)
                             } else {
                                 drop(object);
-                                self.object_fallback_property(&obj_ref, &key_str)
+                                self.object_fallback_property(&obj_ref, key_str)
                             }
                         };
 
                         self.stack.push(value);
                     }
                     JsValueKind::Function | JsValueKind::ArrowFunction => {
-                        let key_str = key.to_string();
+                        let key_str = key_str(&key, key_scratch);
                         let object = self.user_function_object(&obj);
                         if let Some(object) = object {
-                            let descriptor = object.borrow().get_property_descriptor(&key_str);
+                            let descriptor = object.borrow().get_property_descriptor(key_str);
                             if let Some(getter) = descriptor.and_then(|property| property.getter) {
                                 let value = self.call(getter, obj.clone(), Vec::new())?;
                                 self.stack.push(value);
                             } else {
-                                let value = object.borrow().get(&key_str);
+                                let value = object.borrow().get(key_str);
                                 self.stack.push(value);
                             }
                         } else {
-                            let value = self.function_prototype.borrow().get(&key_str);
+                            let value = self.function_prototype.borrow().get(key_str);
                             self.stack.push(value);
                         }
                     }
                     JsValueKind::NativeFunction => {
-                        let key_str = key.to_string();
-                        let value = self.function_prototype.borrow().get(&key_str);
+                        let key_str = key_str(&key, key_scratch);
+                        let value = self.function_prototype.borrow().get(key_str);
                         self.stack.push(value);
                     }
                     JsValueKind::String => {
                         let string = obj.as_string().unwrap();
-                        let key = key.to_string();
+                        let key = key_str(&key, key_scratch);
                         if key == "length" {
                             self.stack
                                 .push(JSValue::from_number(string.encode_utf16().count() as f64));
@@ -839,13 +849,13 @@ impl VM {
                                 .unwrap_or(JSValue::undefined());
                             self.stack.push(value);
                         } else {
-                            let value = self.string_prototype.borrow().get(&key);
+                            let value = self.string_prototype.borrow().get(key);
                             self.stack.push(value);
                         }
                     }
                     JsValueKind::Number => {
-                        let key = key.to_string();
-                        let value = self.number_prototype.borrow().get(&key);
+                        let key = key_str(&key, key_scratch);
+                        let value = self.number_prototype.borrow().get(key);
                         self.stack.push(value);
                     }
                     _ => {
@@ -857,7 +867,7 @@ impl VM {
                 let value = self.pop()?;
                 let key = self.pop()?;
                 let obj = self.pop()?;
-                self.set_object_property(&obj, key, value.clone())?;
+                self.set_object_property(&obj, key, value.clone(), key_scratch)?;
                 self.stack.push(value);
             }
             Opcode::SetPropertyKeepOld => {
@@ -865,11 +875,12 @@ impl VM {
                 let old_value = self.pop()?;
                 let key = self.pop()?;
                 let obj = self.pop()?;
-                self.set_object_property(&obj, key, value)?;
+                self.set_object_property(&obj, key, value, key_scratch)?;
                 self.stack.push(old_value);
             }
             Opcode::DeleteProperty => {
-                let key = self.pop()?.to_string();
+                let key_value = self.pop()?;
+                let key = key_str(&key_value, key_scratch);
                 let object = self.pop()?;
                 let object = match &object.kind() {
                     JsValueKind::Object => Some(object.as_object().unwrap()),
@@ -883,7 +894,7 @@ impl VM {
                         "Cannot delete property on non-object".to_string(),
                     ));
                 };
-                let deleted = object.borrow_mut().delete(&key);
+                let deleted = object.borrow_mut().delete(key);
                 self.stack.push(JSValue::from_bool(deleted));
             }
             Opcode::ArrayPush => {
@@ -897,8 +908,7 @@ impl VM {
                 {
                     let obj_ref = value.as_object().unwrap();
                     let idx_num = index.to_number() as usize;
-                    let key_str = idx_num.to_string();
-                    obj_ref.borrow_mut().set(key_str, value);
+                    obj_ref.borrow_mut().set_index(idx_num, value);
                     // Update length if index >= current length
                     let current_len = obj_ref.borrow().get("length").to_number() as usize;
                     if idx_num >= current_len {
@@ -919,7 +929,7 @@ impl VM {
                 };
                 let array_ref = array.as_object().unwrap();
                 let index = array_ref.borrow().get("length").to_number() as usize;
-                array_ref.borrow_mut().set(index.to_string(), value);
+                array_ref.borrow_mut().set_index(index, value);
                 array_ref.borrow_mut().set(
                     "length".to_string(),
                     JSValue::from_number((index + 1) as f64),
@@ -934,14 +944,14 @@ impl VM {
                     return Err(JSError::TypeError("ArrayExtend: not an array".to_string()));
                 };
                 let array_ref = array.as_object().unwrap();
+                let mut index = array_ref.borrow().get("length").to_number() as usize;
                 for value in values {
-                    let index = array_ref.borrow().get("length").to_number() as usize;
-                    array_ref.borrow_mut().set(index.to_string(), value);
-                    array_ref.borrow_mut().set(
-                        "length".to_string(),
-                        JSValue::from_number((index + 1) as f64),
-                    );
+                    array_ref.borrow_mut().set_index(index, value);
+                    index += 1;
                 }
+                array_ref
+                    .borrow_mut()
+                    .set("length".to_string(), JSValue::from_number(index as f64));
                 self.stack.push(array);
             }
             Opcode::ObjectSetProperty => {
@@ -954,8 +964,8 @@ impl VM {
                     && JsValueKind::Object == v.kind()
                 {
                     let obj_ref = v.as_object().unwrap();
-                    let key_str = key.to_string();
-                    obj_ref.borrow_mut().set(key_str, value);
+                    let key_str = key_str(&key, key_scratch);
+                    obj_ref.borrow_mut().set(key_str.to_string(), value);
                 } else {
                     return Err(JSError::TypeError(
                         "ObjectSetProperty: not an object".to_string(),
@@ -995,7 +1005,8 @@ impl VM {
                     .push(JSValue::from_object(Rc::new(RefCell::new(result))));
             }
             Opcode::ObjectDefineGetter | Opcode::ObjectDefineSetter => {
-                let key = self.pop()?.to_string();
+                let key_value = self.pop()?;
+                let key = key_str(&key_value, key_scratch);
                 let accessor = self.pop()?;
                 let target = self.stack.last().cloned().ok_or_else(|| {
                     JSError::TypeError("Object accessor target is missing".to_string())
@@ -1013,7 +1024,7 @@ impl VM {
                     ));
                 };
                 let is_getter = matches!(opcode, Opcode::ObjectDefineGetter);
-                let existing = object.borrow().get_property_descriptor(&key);
+                let existing = object.borrow().get_property_descriptor(key);
                 object.borrow_mut().define_property(
                     key.to_string(),
                     crate::value::jsobject::Property {
@@ -1063,7 +1074,7 @@ impl VM {
                             chunk: Rc::clone(&arrow_data.chunk),
                             params: arrow_data.params.clone(),
                             env: Some(self.current_env()),
-                            lexical_this: Some(Box::new(self.current_frame().this.clone())),
+                            lexical_this: Some(self.current_frame().this.clone()),
                             identity: crate::value::jsvalue::next_function_identity(),
                         });
                         self.register_user_function(&func, false, length, None);
@@ -1079,7 +1090,7 @@ impl VM {
             }
             Opcode::CallFunction(arg_count) => {
                 // スタック: [..., arg1, arg2, ..., func]
-                let mut args = Vec::new();
+                let mut args = Vec::with_capacity(*arg_count);
                 for _ in 0..*arg_count {
                     args.push(self.pop()?);
                 }
@@ -1094,7 +1105,7 @@ impl VM {
                 self.stack.push(result);
             }
             Opcode::CallFunctionNamed(arg_count, name) => {
-                let mut args = Vec::new();
+                let mut args = Vec::with_capacity(*arg_count);
                 for _ in 0..*arg_count {
                     args.push(self.pop()?);
                 }
@@ -1119,7 +1130,7 @@ impl VM {
                 };
                 let length = arguments.borrow().get("length").to_number() as usize;
                 let args = (0..length)
-                    .map(|index| arguments.borrow().get(&index.to_string()))
+                    .map(|index| arguments.borrow().get_index(index))
                     .collect();
                 let func = self.pop()?;
                 if func.is_undefined() || func.is_null() {
@@ -1133,7 +1144,7 @@ impl VM {
                 self.stack.push(result);
             }
             Opcode::CallFunctionOptional(arg_count) => {
-                let mut args = Vec::new();
+                let mut args = Vec::with_capacity(*arg_count);
                 for _ in 0..*arg_count {
                     args.push(self.pop()?);
                 }
@@ -1148,7 +1159,7 @@ impl VM {
                 }
             }
             Opcode::CallMethodOptional(arg_count) => {
-                let mut args = Vec::new();
+                let mut args = Vec::with_capacity(*arg_count);
                 for _ in 0..*arg_count {
                     args.push(self.pop()?);
                 }
@@ -1158,8 +1169,8 @@ impl VM {
                 if object.is_null() || object.is_undefined() {
                     self.stack.push(JSValue::undefined());
                 } else {
-                    let key = property.to_string();
-                    let method = self.resolve_method_property(&object, &key)?;
+                    let key = key_str(&property, key_scratch);
+                    let method = self.resolve_method_property(&object, key)?;
                     if method.is_null() || method.is_undefined() {
                         self.stack.push(JSValue::undefined());
                     } else {
@@ -1177,12 +1188,12 @@ impl VM {
                 };
                 let length = arguments.borrow().get("length").to_number() as usize;
                 let args = (0..length)
-                    .map(|index| arguments.borrow().get(&index.to_string()))
+                    .map(|index| arguments.borrow().get_index(index))
                     .collect();
                 let property = self.pop()?;
                 let object = self.pop()?;
-                let key = property.to_string();
-                let method = self.resolve_method_property(&object, &key)?;
+                let key = key_str(&property, key_scratch);
+                let method = self.resolve_method_property(&object, key)?;
                 if method.is_undefined() || method.is_null() {
                     return Err(JSError::TypeError(format!(
                         "spread call property '{key}' is not callable (found {})",
@@ -1195,7 +1206,7 @@ impl VM {
             Opcode::CallMethod(arg_count) => {
                 // スタック: ..., object, property, arg1, arg2, ..., argN
                 // まず引数を取り出す
-                let mut args = Vec::new();
+                let mut args = Vec::with_capacity(*arg_count);
 
                 for _ in 0..*arg_count {
                     args.push(self.pop()?);
@@ -1207,19 +1218,19 @@ impl VM {
                 let property = self.pop()?;
                 let object = self.pop()?;
 
-                let key = property.to_string();
+                let key = key_str(&property, key_scratch);
 
                 let method = match object.kind() {
                     JsValueKind::Object => {
                         let obj_ref = object.as_object().unwrap();
-                        let own_property = obj_ref.borrow().get_property_descriptor(&key);
+                        let own_property = obj_ref.borrow().get_property_descriptor(key);
                         if let Some(property) = own_property {
                             if let Some(getter) = property.getter {
                                 self.call(getter, object.clone(), Vec::new())?
                             } else {
                                 property.value
                             }
-                        } else if let Some(property) = inherited_property_descriptor(&obj_ref, &key)
+                        } else if let Some(property) = inherited_property_descriptor(&obj_ref, key)
                         {
                             if let Some(getter) = property.getter {
                                 self.call(getter, object.clone(), Vec::new())?
@@ -1234,10 +1245,10 @@ impl VM {
                                 self.call(
                                     host_getter,
                                     object.clone(),
-                                    vec![JSValue::from_string(key.clone())],
+                                    vec![JSValue::from_string(key.to_string())],
                                 )?
                             } else {
-                                self.object_fallback_property(&obj_ref, &key)
+                                self.object_fallback_property(&obj_ref, key)
                             }
                         }
                     }
@@ -1245,16 +1256,18 @@ impl VM {
                     | JsValueKind::ArrowFunction
                     | JsValueKind::BoundFunction => self
                         .user_function_object(&object)
-                        .map(|properties| properties.borrow().get(&key))
-                        .unwrap_or_else(|| self.function_prototype.borrow().get(&key)),
-                    JsValueKind::NativeFunction => self.function_prototype.borrow().get(&key),
-                    JsValueKind::String => self.string_prototype.borrow().get(&key),
-                    JsValueKind::Number => self.number_prototype.borrow().get(&key),
+                        .map(|properties| properties.borrow().get(key))
+                        .unwrap_or_else(|| self.function_prototype.borrow().get(key)),
+                    JsValueKind::NativeFunction => self.function_prototype.borrow().get(key),
+                    JsValueKind::String => self.string_prototype.borrow().get(key),
+                    JsValueKind::Number => self.number_prototype.borrow().get(key),
                     _ => {
                         let stack = self
                             .frames
                             .iter()
-                            .filter_map(|frame| frame.function_name.as_deref())
+                            .filter_map(|frame| {
+                                frame.function_name.as_ref().map(FunctionName::as_str)
+                            })
                             .collect::<Vec<_>>()
                             .join(" -> ");
                         let stack = if stack.is_empty() {
@@ -1273,7 +1286,7 @@ impl VM {
                     let stack = self
                         .frames
                         .iter()
-                        .filter_map(|frame| frame.function_name.as_deref())
+                        .filter_map(|frame| frame.function_name.as_ref().map(FunctionName::as_str))
                         .collect::<Vec<_>>()
                         .join(" -> ");
                     return Err(JSError::TypeError(format!(
@@ -1287,7 +1300,7 @@ impl VM {
                 self.stack.push(result);
             }
             Opcode::Construct(arg_count, constructor_name) => {
-                let mut args = Vec::new();
+                let mut args = Vec::with_capacity(*arg_count);
                 for _ in 0..*arg_count {
                     args.push(self.pop()?);
                 }
@@ -1384,8 +1397,7 @@ impl VM {
             // その他
             Opcode::Typeof => {
                 let value = self.pop()?;
-                self.stack
-                    .push(JSValue::from_string(value.type_of().to_string()));
+                self.stack.push(JSValue::from_str(value.type_of()));
             }
             Opcode::Void => {
                 self.pop()?;
@@ -1498,7 +1510,7 @@ impl VM {
         env: Environment,
         this: JSValue,
         func: Rc<BytecodeChunk>,
-        function_name: Option<String>,
+        function_name: Option<FunctionName>,
     ) -> JSResult<JSValue> {
         let old_stack = std::mem::take(&mut self.stack);
         self.frames.push(CallFrame::new(env, this, function_name));
@@ -1527,7 +1539,7 @@ impl VM {
     pub(crate) fn formatted_js_stack(&self) -> String {
         self.frames
             .iter()
-            .filter_map(|frame| frame.function_name.as_deref())
+            .filter_map(|frame| frame.function_name.as_ref().map(FunctionName::as_str))
             .collect::<Vec<_>>()
             .join(" -> ")
     }
@@ -1544,8 +1556,10 @@ impl VM {
         object: &JSValue,
         key: JSValue,
         value: JSValue,
+        key_scratch: &mut String,
     ) -> JSResult<()> {
-        let key_string = key.to_string();
+        let key_string = key_str(&key, key_scratch);
+        let key_index = crate::value::jsobject::canonical_array_index(key_string);
         let object_ref = match object.kind() {
             JsValueKind::Object => Some(object.as_object().unwrap()),
             JsValueKind::Function | JsValueKind::ArrowFunction | JsValueKind::BoundFunction => {
@@ -1557,7 +1571,7 @@ impl VM {
             let stack = self
                 .frames
                 .iter()
-                .filter_map(|frame| frame.function_name.as_deref())
+                .filter_map(|frame| frame.function_name.as_ref().map(FunctionName::as_str))
                 .collect::<Vec<_>>()
                 .join(" -> ");
             let stack = if stack.is_empty() {
@@ -1570,7 +1584,7 @@ impl VM {
                 object.type_of()
             )));
         };
-        let property = object_ref.borrow().get_property_descriptor(&key_string);
+        let property = object_ref.borrow().get_property_descriptor(key_string);
         if let Some(property) = property {
             if let Some(setter) = property.setter {
                 self.call(setter, object.clone(), vec![value])?;
@@ -1579,12 +1593,12 @@ impl VM {
             if property.getter.is_some() || !property.writable {
                 return Ok(());
             }
-            object_ref.borrow_mut().set(key_string.clone(), value);
-            update_array_length_after_index_write(&object_ref, &key_string);
+            object_ref.borrow_mut().set(key_string.to_string(), value);
+            update_array_length_after_index_write(&object_ref, key_index);
             return Ok(());
         }
 
-        if let Some(property) = inherited_property_descriptor(&object_ref, &key_string) {
+        if let Some(property) = inherited_property_descriptor(&object_ref, key_string) {
             if let Some(setter) = property.setter {
                 self.call(setter, object.clone(), vec![value])?;
                 return Ok(());
@@ -1602,8 +1616,8 @@ impl VM {
             return Ok(());
         }
 
-        object_ref.borrow_mut().set(key_string.clone(), value);
-        update_array_length_after_index_write(&object_ref, &key_string);
+        object_ref.borrow_mut().set(key_string.to_string(), value);
+        update_array_length_after_index_write(&object_ref, key_index);
         Ok(())
     }
 
@@ -1696,7 +1710,13 @@ impl VM {
                 .rev()
                 .take(32)
                 .rev()
-                .map(|frame| frame.function_name.as_deref().unwrap_or("<anonymous>"))
+                .map(|frame| {
+                    frame
+                        .function_name
+                        .as_ref()
+                        .map(FunctionName::as_str)
+                        .unwrap_or_else(|| "<anonymous>".to_string())
+                })
                 .collect::<Vec<_>>()
                 .join(" -> ");
             return Err(JSError::RangeError(format!(
@@ -1731,7 +1751,9 @@ impl VM {
                     name,
                     identity: _,
                 } = callee.as_function().unwrap();
-                let func_name_str = name.map(|id| chunk.intern.borrow().name(id).to_string());
+                // 関数名は String 化せず、インターニングテーブル + ID のまま保持し
+                // スタックトレース整形時にのみ解決する（呼び出しごとのアロケーションを排除）
+                let func_name = name.map(|id| FunctionName::new(Rc::clone(&chunk.intern), id));
                 let env = self.create_function_env(
                     chunk,
                     callee_clone,
@@ -1742,7 +1764,7 @@ impl VM {
                     chunk.uses_arguments,
                 )?;
 
-                self.with_call_frame(env, this, chunk.clone(), func_name_str)
+                self.with_call_frame(env, this, chunk.clone(), func_name)
             }
 
             JsValueKind::ArrowFunction => {
@@ -1762,7 +1784,7 @@ impl VM {
                     None,
                     false,
                 )?;
-                let this = lexical_this.as_deref().cloned().unwrap_or(this);
+                let this = lexical_this.clone().unwrap_or(this);
                 self.with_call_frame(env, this, chunk.clone(), None)
             }
 
@@ -1773,7 +1795,7 @@ impl VM {
                     let stack = self
                         .frames
                         .iter()
-                        .filter_map(|frame| frame.function_name.as_deref())
+                        .filter_map(|frame| frame.function_name.as_ref().map(FunctionName::as_str))
                         .collect::<Vec<_>>()
                         .join(" -> ");
                     let prototype_keys = object
@@ -1793,7 +1815,7 @@ impl VM {
                 let stack = self
                     .frames
                     .iter()
-                    .filter_map(|frame| frame.function_name.as_deref())
+                    .filter_map(|frame| frame.function_name.as_ref().map(FunctionName::as_str))
                     .collect::<Vec<_>>()
                     .join(" -> ");
                 Err(JSError::TypeError(format!(
@@ -1811,7 +1833,7 @@ impl VM {
         func: JSValue,
         captured_env: Option<Rc<RefCell<Environment>>>,
         params: &[FunctionParam],
-        args: Vec<JSValue>,
+        mut args: Vec<JSValue>,
         name: Option<NameId>,
         bind_arguments: bool,
     ) -> JSResult<Environment> {
@@ -1831,10 +1853,10 @@ impl VM {
         for (index, parameter) in params.iter().enumerate() {
             match *parameter {
                 FunctionParam::Rest(id) => {
-                    env.define(
-                        id,
-                        self.array_from_values(args.get(index..).unwrap_or_default().to_vec()),
-                    );
+                    // Rest は常に最後のパラメータ（パーサが保証）なので、
+                    // 末尾をコピーせず split_off で移動する
+                    let rest = args.split_off(index);
+                    env.define(id, self.array_from_values(rest));
                     break;
                 }
                 FunctionParam::Positional(id) => {
@@ -1854,11 +1876,31 @@ impl VM {
         let result = match (a.kind(), b.kind()) {
             (JsValueKind::String, _) => {
                 let a = a.as_string().unwrap();
-                JSValue::from_string(format!("{a}{}", b.to_console_string()))
+                if let Some(b) = b.as_string() {
+                    // 両辺とも文字列: ちょうど良い容量で 1 回のアロケーション
+                    let mut output = String::with_capacity(a.len() + b.len());
+                    output.push_str(a);
+                    output.push_str(b);
+                    JSValue::from_string(output)
+                } else {
+                    // b の文字列化は 1 回だけ行い、a を先頭へ挿入（format! の二重確保を回避）
+                    let mut output = b.to_console_string();
+                    output.insert_str(0, a);
+                    JSValue::from_string(output)
+                }
             }
             (_, JsValueKind::String) => {
                 let b = b.as_string().unwrap();
-                JSValue::from_string(format!("{}{b}", a.to_console_string()))
+                if let Some(a) = a.as_string() {
+                    let mut output = String::with_capacity(a.len() + b.len());
+                    output.push_str(a);
+                    output.push_str(b);
+                    JSValue::from_string(output)
+                } else {
+                    let mut output = a.to_console_string();
+                    output.push_str(b);
+                    JSValue::from_string(output)
+                }
             }
             (JsValueKind::BigInt, JsValueKind::BigInt) => {
                 let a = a.as_bigint().unwrap();
@@ -2097,8 +2139,14 @@ impl VM {
 
     fn get_iterator(&mut self, value: JSValue) -> JSResult<JSValue> {
         if JsValueKind::String == value.kind() {
+            // 文字ごとに JSValue をボックス化する代わりに、入力文字列を共有する
+            // StrSlice の配列を作る（文字列本体のコピーも char ごとのボックス化も発生しない）
             let string = value.as_string().unwrap();
-            let source = self.array_from_values(string.chars().map(JSValue::from_char).collect());
+            let ranges: Vec<_> = string
+                .char_indices()
+                .map(|(index, c)| index..index + c.len_utf8())
+                .collect();
+            let source = self.array_from_values(JSValue::str_slices(string, ranges).collect());
             return Ok(indexed_iterator(source));
         }
         let object = if value.kind() == JsValueKind::Object {
@@ -2260,7 +2308,7 @@ fn indexed_iterator_step(iterator: &Rc<RefCell<JSObject>>) -> JSResult<Option<Op
         INDEXED_ITERATOR_INDEX.to_string(),
         JSValue::from_number((index + 1) as f64),
     );
-    Ok(Some(Some(source.borrow().get(&index.to_string()))))
+    Ok(Some(Some(source.borrow().get_index(index))))
 }
 
 impl Default for VM {
@@ -2270,16 +2318,24 @@ impl Default for VM {
     }
 }
 
-fn update_array_length_after_index_write(object: &Rc<RefCell<JSObject>>, key: &str) {
+/// プロパティキーを `&str` として取り出す。文字列値なら借用（アロケーションなし）、
+/// それ以外（数値キー等）はスクラッチバッファへ書き出して借用を返す。
+fn key_str<'a>(key: &'a JSValue, scratch: &'a mut String) -> &'a str {
+    if let Some(string) = key.as_string() {
+        string
+    } else {
+        *scratch = key.to_console_string();
+        scratch
+    }
+}
+
+fn update_array_length_after_index_write(object: &Rc<RefCell<JSObject>>, index: Option<usize>) {
     if !object.borrow().has_own_property("__pixi_array__") {
         return;
     }
-    let Ok(index) = key.parse::<u32>() else {
+    let Some(index) = index else {
         return;
     };
-    if index == u32::MAX || key != index.to_string() {
-        return;
-    }
     let required_length = index as u64 + 1;
     let current_length = object.borrow().get("length").to_number();
     if !current_length.is_finite() || current_length < required_length as f64 {
