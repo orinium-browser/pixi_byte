@@ -72,7 +72,7 @@ fn string_raw(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let length = raw.borrow().get("length").to_number().max(0.0) as usize;
     let mut output = String::new();
     for index in 0..length {
-        output.push_str(&raw.borrow().get(&index.to_string()).to_string());
+        output.push_str(&raw.borrow().get_index(index).to_string());
         if index + 1 < length {
             output.push_str(
                 &args

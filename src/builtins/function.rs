@@ -73,7 +73,7 @@ fn function_apply(
             }
             let mut idx = 0usize;
             while (idx as f64) < len {
-                let v = arr_ref.borrow().get(&idx.to_string());
+                let v = arr_ref.borrow().get_index(idx);
                 call_args_vec.push(v);
                 idx += 1;
             }

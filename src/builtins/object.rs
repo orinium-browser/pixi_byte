@@ -749,7 +749,7 @@ fn object_from_entries(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<J
     let length = entries.borrow().get("length").to_number() as usize;
     let target = Rc::new(RefCell::new(JSObject::new()));
     for index in 0..length {
-        let Some(entry) = entries.borrow().get(&index.to_string()).as_object() else {
+        let Some(entry) = entries.borrow().get_index(index).as_object() else {
             return Err(JSError::TypeError(
                 "Object.fromEntries iterator value must be an object".to_string(),
             ));

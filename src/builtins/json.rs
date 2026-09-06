@@ -20,7 +20,13 @@ fn quote(value: &str) -> String {
             '\r' => result.push_str("\\r"),
             '\t' => result.push_str("\\t"),
             character if character <= '\u{1f}' => {
-                result.push_str(&format!("\\u{:04x}", character as u32));
+                // 文字ごとに format! で String を確保せず、直接書き込む
+                result.push_str("\\u");
+                let code = character as u32;
+                for shift in [12, 8, 4, 0] {
+                    let digit = ((code >> shift) & 0xf) as u8;
+                    result.push(char::from_digit(digit as u32, 16).unwrap());
+                }
             }
             character => result.push(character),
         }
@@ -69,7 +75,7 @@ fn serialize(
                 if is_array {
                     let length = object.get("length").to_number().max(0.0) as usize;
                     let entries = (0..length)
-                        .map(|index| (String::new(), object.get(&index.to_string())))
+                        .map(|index| (String::new(), object.get_index(index)))
                         .collect();
                     (true, entries)
                 } else {

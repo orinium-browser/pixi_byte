@@ -110,7 +110,7 @@ fn iterable_values(vm: &mut VM, value: &JSValue) -> JSResult<Vec<JSValue>> {
     let length = object.borrow().get("length").to_number();
     if length.is_finite() && length >= 0.0 {
         return Ok((0..length.floor() as usize)
-            .map(|index| object.borrow().get(&index.to_string()))
+            .map(|index| object.borrow().get_index(index))
             .collect());
     }
     let iterator_method = object.borrow().get("@@iterator");

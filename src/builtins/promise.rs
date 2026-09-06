@@ -132,7 +132,7 @@ fn promise_all(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let tracker = Rc::new(RefCell::new(tracker));
 
     for index in 0..length {
-        let value = values.borrow().get(&index.to_string());
+        let value = values.borrow().get_index(index);
         let promise = promise_resolve_static(vm, vec![JSValue::undefined(), value])?;
         let on_fulfilled = JSValue::from_bound_function(BoundFunctionData::new(
             JSValue::from_native_function(promise_all_fulfill),
@@ -155,7 +155,7 @@ fn promise_all_fulfill(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let value = args.get(2).cloned().unwrap_or(JSValue::undefined());
     let values = tracker.borrow().get("values");
     if let Some(values_object) = values.as_object() {
-        values_object.borrow_mut().set(index.to_string(), value);
+        values_object.borrow_mut().set_index(index, value);
     }
 
     let remaining = tracker.borrow().get("remaining").to_number() as usize - 1;

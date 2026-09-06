@@ -135,9 +135,9 @@ fn array_iterator_next(
             "key" => JSValue::from_number(index as f64),
             "entry" => vm.array_from_values(vec![
                 JSValue::from_number(index as f64),
-                source.borrow().get(&index.to_string()),
+                source.borrow().get_index(index),
             ]),
-            _ => source.borrow().get(&index.to_string()),
+            _ => source.borrow().get_index(index),
         }
     };
     let mut result = JSObject::new();
@@ -178,7 +178,7 @@ fn array_push(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::
         let mut idx = len as usize;
         // push all remaining args
         for v in args.into_iter() {
-            obj_ref.borrow_mut().set(idx.to_string(), v);
+            obj_ref.borrow_mut().set_index(idx, v);
             idx += 1;
         }
         // update length
@@ -216,9 +216,9 @@ fn array_pop(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> crate::error::J
             return Ok(JSValue::undefined());
         }
         let idx = (len as usize).saturating_sub(1);
-        let element = obj_ref.borrow().get(&idx.to_string());
+        let element = obj_ref.borrow().get_index(idx);
         // delete property
-        obj_ref.borrow_mut().delete(&idx.to_string());
+        obj_ref.borrow_mut().delete_index(idx);
         // update length
         obj_ref
             .borrow_mut()
@@ -240,10 +240,10 @@ fn array_shift(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
     }
     let first = object.borrow().get("0");
     for index in 1..length {
-        let value = object.borrow().get(&index.to_string());
-        object.borrow_mut().set((index - 1).to_string(), value);
+        let value = object.borrow().get_index(index);
+        object.borrow_mut().set_index(index - 1, value);
     }
-    object.borrow_mut().delete(&(length - 1).to_string());
+    object.borrow_mut().delete_index(length - 1);
     set_length(&object, length - 1);
     Ok(first)
 }
@@ -253,13 +253,11 @@ fn array_unshift(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::J
     let length = length(&object);
     let additions = args.len().saturating_sub(1);
     for index in (0..length).rev() {
-        let value = object.borrow().get(&index.to_string());
-        object
-            .borrow_mut()
-            .set((index + additions).to_string(), value);
+        let value = object.borrow().get_index(index);
+        object.borrow_mut().set_index(index + additions, value);
     }
     for (index, value) in args.into_iter().skip(1).enumerate() {
-        object.borrow_mut().set(index.to_string(), value);
+        object.borrow_mut().set_index(index, value);
     }
     let new_length = length + additions;
     set_length(&object, new_length);
@@ -272,7 +270,7 @@ fn array_slice(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRe
     let start = normalized_index(args.get(1), length, 0);
     let end = normalized_index(args.get(2), length, length as isize).max(start);
     let values = (start..end)
-        .map(|index| object.borrow().get(&index.to_string()))
+        .map(|index| object.borrow().get_index(index))
         .collect();
     Ok(vm.array_from_values(values))
 }
@@ -288,16 +286,16 @@ fn array_splice(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
         .max(0.0) as usize;
     let delete_count = delete_count.min(old_length - start);
     let mut values: Vec<_> = (0..old_length)
-        .map(|index| object.borrow().get(&index.to_string()))
+        .map(|index| object.borrow().get_index(index))
         .collect();
     let removed: Vec<_> = values
         .splice(start..start + delete_count, args.into_iter().skip(3))
         .collect();
     for (index, value) in values.iter().cloned().enumerate() {
-        object.borrow_mut().set(index.to_string(), value);
+        object.borrow_mut().set_index(index, value);
     }
     for index in values.len()..old_length {
-        object.borrow_mut().delete(&index.to_string());
+        object.borrow_mut().delete_index(index);
     }
     set_length(&object, values.len());
     Ok(vm.array_from_values(removed))
@@ -306,14 +304,14 @@ fn array_splice(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
 fn array_concat(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
     let object = receiver(&args, "concat")?;
     let mut values: Vec<_> = (0..length(&object))
-        .map(|index| object.borrow().get(&index.to_string()))
+        .map(|index| object.borrow().get_index(index))
         .collect();
     for value in args.into_iter().skip(1) {
         if value.is_object() {
             let array = value.as_object().unwrap();
             if array.borrow().has_own_property("__pixi_array__") {
                 for index in 0..length(&array) {
-                    values.push(array.borrow().get(&index.to_string()));
+                    values.push(array.borrow().get_index(index));
                 }
             } else {
                 values.push(value);
@@ -332,10 +330,10 @@ fn array_for_each(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::J
     let this_arg = args.get(2).cloned().unwrap_or(JSValue::undefined());
     let array = JSValue::from_object(Rc::clone(&object));
     for index in 0..length(&object) {
-        if !object.borrow().has_property(&index.to_string()) {
+        if !object.borrow().has_index(index) {
             continue;
         }
-        let value = object.borrow().get(&index.to_string());
+        let value = object.borrow().get_index(index);
         vm.call(
             callback.clone(),
             this_arg.clone(),
@@ -354,8 +352,8 @@ fn array_map(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResu
     let length = length(&object);
     let mut values = Vec::with_capacity(length);
     for index in 0..length {
-        if object.borrow().has_property(&index.to_string()) {
-            let value = object.borrow().get(&index.to_string());
+        if object.borrow().has_index(index) {
+            let value = object.borrow().get_index(index);
             values.push(vm.call(
                 callback.clone(),
                 this_arg.clone(),
@@ -376,10 +374,10 @@ fn array_filter(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
     let array = JSValue::from_object(Rc::clone(&object));
     let mut values = Vec::new();
     for index in 0..length(&object) {
-        if !object.borrow().has_property(&index.to_string()) {
+        if !object.borrow().has_index(index) {
             continue;
         }
-        let value = object.borrow().get(&index.to_string());
+        let value = object.borrow().get_index(index);
         if vm
             .call(
                 callback.clone(),
@@ -405,10 +403,10 @@ fn array_some(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRes
     let this_arg = args.get(2).cloned().unwrap_or(JSValue::undefined());
     let array = JSValue::from_object(Rc::clone(&object));
     for index in 0..length(&object) {
-        if !object.borrow().has_property(&index.to_string()) {
+        if !object.borrow().has_index(index) {
             continue;
         }
-        let value = object.borrow().get(&index.to_string());
+        let value = object.borrow().get_index(index);
         if vm
             .call(
                 callback.clone(),
@@ -430,10 +428,10 @@ fn array_every(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRe
     let this_arg = args.get(2).cloned().unwrap_or(JSValue::undefined());
     let array = JSValue::from_object(Rc::clone(&object));
     for index in 0..length(&object) {
-        if !object.borrow().has_property(&index.to_string()) {
+        if !object.borrow().has_index(index) {
             continue;
         }
-        let value = object.borrow().get(&index.to_string());
+        let value = object.borrow().get_index(index);
         if !vm
             .call(
                 callback.clone(),
@@ -464,8 +462,8 @@ fn array_reduce(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
                     "Reduce of empty array with no initial value".to_string(),
                 ));
             }
-            if object.borrow().has_property(&index.to_string()) {
-                let value = object.borrow().get(&index.to_string());
+            if object.borrow().has_index(index) {
+                let value = object.borrow().get_index(index);
                 index += 1;
                 break value;
             }
@@ -473,8 +471,8 @@ fn array_reduce(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
         }
     };
     while index < length {
-        if object.borrow().has_property(&index.to_string()) {
-            let value = object.borrow().get(&index.to_string());
+        if object.borrow().has_index(index) {
+            let value = object.borrow().get_index(index);
             accumulator = vm.call(
                 callback.clone(),
                 JSValue::undefined(),
@@ -509,8 +507,8 @@ fn array_reduce_right(
                     "Reduce of empty array with no initial value".to_string(),
                 ));
             }
-            if object.borrow().has_property(&index.to_string()) {
-                let value = object.borrow().get(&index.to_string());
+            if object.borrow().has_index(index as usize) {
+                let value = object.borrow().get_index(index as usize);
                 index -= 1;
                 break value;
             }
@@ -518,8 +516,8 @@ fn array_reduce_right(
         }
     };
     while index >= 0 {
-        if object.borrow().has_property(&index.to_string()) {
-            let value = object.borrow().get(&index.to_string());
+        if object.borrow().has_index(index as usize) {
+            let value = object.borrow().get_index(index as usize);
             accumulator = vm.call(
                 callback.clone(),
                 JSValue::undefined(),
@@ -553,11 +551,7 @@ fn array_index_of(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::
     let needle = args.get(1).cloned().unwrap_or(JSValue::undefined());
     let start = normalized_index(args.get(2), length(&object), 0);
     for index in start..length(&object) {
-        if object
-            .borrow()
-            .get(&index.to_string())
-            .strict_equals(&needle)
-        {
+        if object.borrow().get_index(index).strict_equals(&needle) {
             return Ok(JSValue::from_number(index as f64));
         }
     }
@@ -569,7 +563,7 @@ fn array_includes(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::
     let needle = args.get(1).cloned().unwrap_or(JSValue::undefined());
     let start = normalized_index(args.get(2), length(&object), 0);
     for index in start..length(&object) {
-        let value = object.borrow().get(&index.to_string());
+        let value = object.borrow().get_index(index);
         let both_nan = value.clone().as_number().is_some_and(|a| {
             needle
                 .clone()
@@ -593,7 +587,7 @@ fn array_join(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRes
     };
     let mut parts = Vec::with_capacity(length(&object));
     for index in 0..length(&object) {
-        let value = object.borrow().get(&index.to_string());
+        let value = object.borrow().get_index(index);
         parts.push(match value.clone().kind() {
             JsValueKind::Null | JsValueKind::Undefined => String::new(),
             _ => vm.to_string_value(value)?,
@@ -620,7 +614,7 @@ fn array_sort(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRes
         kind != JsValueKind::Undefined && kind != JsValueKind::Null
     });
     let mut values = (0..length(&array))
-        .map(|index| array.borrow().get(&index.to_string()))
+        .map(|index| array.borrow().get_index(index))
         .collect::<Vec<_>>();
     let mut merged = vec![JSValue::undefined(); values.len()];
     let mut width = 1;
@@ -653,7 +647,7 @@ fn array_sort(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRes
         width = width.saturating_mul(2);
     }
     for (index, value) in values.into_iter().enumerate() {
-        array.borrow_mut().set(index.to_string(), value);
+        array.borrow_mut().set_index(index, value);
     }
     Ok(JSValue::from_object(array))
 }
@@ -702,7 +696,7 @@ fn array_find(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRes
     let callback = args.get(1).cloned().unwrap_or(JSValue::undefined());
     let array_value = JSValue::from_object(Rc::clone(&array));
     for index in 0..length(&array) {
-        let value = array.borrow().get(&index.to_string());
+        let value = array.borrow().get_index(index);
         if vm
             .call(
                 callback.clone(),
@@ -726,7 +720,7 @@ fn array_find_index(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error:
     let callback = args.get(1).cloned().unwrap_or(JSValue::undefined());
     let array_value = JSValue::from_object(Rc::clone(&array));
     for index in 0..length(&array) {
-        let value = array.borrow().get(&index.to_string());
+        let value = array.borrow().get_index(index);
         if vm
             .call(
                 callback.clone(),
@@ -750,7 +744,7 @@ fn flatten_values(value: JSValue, depth: usize, output: &mut Vec<JSValue>) {
         let object = value.as_object().unwrap();
         if object.borrow().has_own_property("__pixi_array__") {
             for index in 0..length(&object) {
-                flatten_values(object.borrow().get(&index.to_string()), depth - 1, output);
+                flatten_values(object.borrow().get_index(index), depth - 1, output);
             }
             return;
         }
@@ -763,7 +757,7 @@ fn array_flat(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRes
     let depth = args.get(1).map(JSValue::to_number).unwrap_or(1.0).max(0.0) as usize;
     let mut values = Vec::new();
     for index in 0..length(&array) {
-        flatten_values(array.borrow().get(&index.to_string()), depth, &mut values);
+        flatten_values(array.borrow().get_index(index), depth, &mut values);
     }
     Ok(vm.array_from_values(values))
 }
@@ -775,7 +769,7 @@ fn array_flat_map(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::J
     let array_value = JSValue::from_object(Rc::clone(&array));
     let mut values = Vec::new();
     for index in 0..length(&array) {
-        let value = array.borrow().get(&index.to_string());
+        let value = array.borrow().get_index(index);
         let mapped = vm.call(
             callback.clone(),
             this_arg.clone(),
@@ -795,10 +789,10 @@ fn array_reverse(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::J
     let length = length(&array);
     for index in 0..length / 2 {
         let opposite = length - index - 1;
-        let left = array.borrow().get(&index.to_string());
-        let right = array.borrow().get(&opposite.to_string());
-        array.borrow_mut().set(index.to_string(), right);
-        array.borrow_mut().set(opposite.to_string(), left);
+        let left = array.borrow().get_index(index);
+        let right = array.borrow().get_index(opposite);
+        array.borrow_mut().set_index(index, right);
+        array.borrow_mut().set_index(opposite, left);
     }
     Ok(JSValue::from_object(array))
 }
@@ -815,7 +809,7 @@ fn array_at(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResu
     if index < 0 || index >= length {
         Ok(JSValue::undefined())
     } else {
-        Ok(array.borrow().get(&index.to_string()))
+        Ok(array.borrow().get_index(index as usize))
     }
 }
 
@@ -857,7 +851,7 @@ fn array_from(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSRes
         let length = object.borrow().get("length").to_number();
         if length.is_finite() && length >= 0.0 {
             (0..length.floor() as usize)
-                .map(|index| object.borrow().get(&index.to_string()))
+                .map(|index| object.borrow().get_index(index))
                 .collect()
         } else {
             let iterator_method = object.borrow().get("@@iterator");
