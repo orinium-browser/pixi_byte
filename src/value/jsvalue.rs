@@ -176,7 +176,7 @@ pub struct ArrowFunctionData {
     pub params: Vec<FunctionParam>,
     pub env: Option<Rc<RefCell<Environment>>>,
     /// キャプチャされたレキシカル `this`。
-    pub lexical_this: Option<Box<JSValue>>,
+    pub lexical_this: Option<JSValue>,
     pub identity: u64,
 }
 
