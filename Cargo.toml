@@ -11,16 +11,39 @@ repository = "https://github.com/oriniumbrowser/pixi_byte"
 harness = false
 name = "vm_bench"
 
+[[bench]]
+harness = false
+name = "string_ops"
+
 [dependencies]
 num-bigint = "0.4"
 num-traits = "0.2"
 regex = "1.12"
 rustc-hash = "2.1"
 
+# Profiling: `--features dhat-heap --profile dhat` でヒープ計測を有効化する。
+# 利用例: examples/profiling.rs, tests/string_alloc_regression.rs を参照。
+# tests/string_alloc_regression.rs は文字列操作の allocation 回帰を検知する
+# 予算テストで、CI の `cargo test --release` で実行される。
+dhat = { version = "0.3", optional = true }
+
+[features]
+default = []
+dhat-heap = ["dep:dhat"]
+
 [dev-dependencies]
 criterion = "0.8"
+dhat = "0.3"
 
 [profile.release]
 lto = true
 codegen-units = 1
 panic = "abort"
+
+# dhat 計測用プロファイル。release とほぼ同等だが、allocation の call-site
+# attribution に必要な debug info を有効にし、ビルドを速くするため LTO を無効化する。
+[profile.dhat]
+inherits = "release"
+debug = true
+lto = false
+codegen-units = 16
