@@ -139,9 +139,10 @@ struct BoxedValue {
 
 /// ボックス値の実データ。
 enum BoxedPayload {
-    /// 共有可能な文字列本体。`Rc` により複数の `StrSlice` が参照カウントを共有できる。
-    Str(Rc<str>),
+    Str(Box<str>),
     /// 共有された文字列の部分スライス。`base[offset..offset + len]` が文字列本体。
+    /// `base` は所有文字列（`Box<str>`）や別の `StrSlice` のベースとメモリを共有でき、
+    /// スライス生成時に文字列本体のコピーは発生しない。
     StrSlice {
         base: Rc<str>,
         offset: usize,
@@ -244,18 +245,18 @@ impl JSValue {
     }
 
     pub fn from_string(s: String) -> Self {
-        boxed_value(JsValueKind::String, BoxedPayload::Str(Rc::from(s)))
+        boxed_value(JsValueKind::String, BoxedPayload::Str(s.into_boxed_str()))
     }
 
     pub fn from_str(s: &str) -> Self {
-        boxed_value(JsValueKind::String, BoxedPayload::Str(Rc::from(s)))
+        boxed_value(JsValueKind::String, BoxedPayload::Str(s.into()))
     }
 
     pub fn from_char(c: char) -> Self {
         let mut buffer = [0u8; char::MAX.len_utf8()];
         let s = c.encode_utf8(&mut buffer);
 
-        boxed_value(JsValueKind::String, BoxedPayload::Str(Rc::from(s)))
+        boxed_value(JsValueKind::String, BoxedPayload::Str(s.into()))
     }
 
     pub fn from_object(o: Rc<RefCell<JSObject>>) -> Self {
@@ -284,17 +285,31 @@ impl JSValue {
         )
     }
 
-    /// 共有された部分文字列を表すジェネレータを返す。各要素は `base` を共有する
+    /// 共有された部分文字列を表すジェネレータを返す。各要素は `input` を共有する
     /// `StrSlice` として保持され、追加の文字列コピーは発生しない。
+    ///
+    /// 呼び出し側が入力を所有していない場合に使う。入力全体が 1 回コピーされ、
+    /// 全スライスがそのコピー（`Rc<str>`）を共有する。
     pub fn str_slices<'a>(
-        base: &'a Rc<str>,
+        input: &'a str,
         ranges: impl IntoIterator<Item = Range<usize>> + 'a,
     ) -> impl Iterator<Item = JSValue> + 'a {
+        Self::str_slices_from_shared(Rc::from(input), ranges)
+    }
+
+    /// 所有する共有ベース（`Rc<str>`）から `StrSlice` を作るジェネレータを返す。
+    ///
+    /// 呼び出し側がすでに `Rc<str>` を持っている場合（例: `as_shared_string` で
+    /// 取り出したベース）に使い、文字列本体の追加コピーを完全に回避できる。
+    pub fn str_slices_from_shared(
+        base: Rc<str>,
+        ranges: impl IntoIterator<Item = Range<usize>>,
+    ) -> impl Iterator<Item = JSValue> {
         ranges.into_iter().map(move |range| {
             boxed_value(
                 JsValueKind::String,
                 BoxedPayload::StrSlice {
-                    base: Rc::clone(base),
+                    base: Rc::clone(&base),
                     offset: range.start,
                     len: range.end - range.start,
                 },
@@ -430,14 +445,14 @@ impl JSValue {
 
     /// 文字列の共有ベース（`Rc<str>`）と、この値の文字列が始まる base 内オフセットを返す。
     ///
-    /// `Str` は base 全体（オフセット 0）、`StrSlice` はその背後の base の部分スライスを
-    /// 共有する。文字列でなければ `None`。文字列本体はコピーされない。
+    /// `Str` は base 全体（オフセット 0、文字列本体のコピー 1 回）、`StrSlice` は
+    /// その背後の base をそのまま共有（コピー 0 回）。文字列でなければ `None`。
     pub(crate) fn as_shared_string(&self) -> Option<(Rc<str>, usize)> {
         if !is_boxed_bits(self.0) {
             return None;
         }
         match &self.boxed().payload {
-            BoxedPayload::Str(s) => Some((Rc::clone(s), 0)),
+            BoxedPayload::Str(s) => Some((Rc::from(s.as_ref()), 0)),
             BoxedPayload::StrSlice { base, offset, .. } => Some((Rc::clone(base), *offset)),
             _ => None,
         }

@@ -2147,7 +2147,8 @@ impl VM {
                 .char_indices()
                 .map(|(index, c)| base_offset + index..base_offset + index + c.len_utf8())
                 .collect();
-            let source = self.array_from_values(JSValue::str_slices(&base, ranges).collect());
+            let source =
+                self.array_from_values(JSValue::str_slices_from_shared(base, ranges).collect());
             return Ok(indexed_iterator(source));
         }
         let object = if value.kind() == JsValueKind::Object {

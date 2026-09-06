@@ -1,6 +1,7 @@
 //! Minimal String constructor and prototype methods.
 
 use std::cell::RefCell;
+use std::iter::once;
 use std::rc::Rc;
 
 use crate::builtins::regexp;
@@ -212,25 +213,28 @@ fn string_split(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         .unwrap_or(u32::MAX as f64) as usize;
 
     // receiver が共有ベース（Rc<str>）を持つ場合はそれをそのまま使い、入力全体の
-    // コピーを避ける。`StrSlice` が receiver の場合は背後の base とオフセットを得る。
+    // コピーを避ける。`StrSlice` receiver はベースをコピー 0 で共有し、所有文字列
+    // receiver は本体を 1 回だけコピーしてベースにする。
     let (base, base_offset) = match this.as_shared_string() {
         Some(shared) => shared,
-        None => (Rc::from(this.to_string()), 0),
+        None => (
+            // Box<str> から Rc<str> への変換。文字列本体のコピーはここで 1 回だけ発生する
+            Rc::from(this.to_string().as_str()),
+            0,
+        ),
     };
     let input: &str = &base[base_offset..];
 
+    // セパレータ省略時（および undefined 指定時）は入力全体そのものを返す。
+    // 共有ベースが手元にあるので、追加コピーを経由せず1要素の StrSlice を作れる。
+    let full_range = base_offset..base_offset + input.len();
+
     let parts: Vec<JSValue> = match args.get(1) {
-        None => JSValue::str_slices(
-            &base,
-            std::iter::once(base_offset..base_offset + input.len()),
-        )
-        .collect(),
+        None => JSValue::str_slices_from_shared(Rc::clone(&base), once(full_range)).collect(),
         Some(value) => match value.kind() {
-            JsValueKind::Undefined => JSValue::str_slices(
-                &base,
-                std::iter::once(base_offset..base_offset + input.len()),
-            )
-            .collect(),
+            JsValueKind::Undefined => {
+                JSValue::str_slices_from_shared(Rc::clone(&base), once(full_range)).collect()
+            }
             JsValueKind::Object if regexp::is_regexp(&value.as_object().unwrap()) => {
                 let ranges: Vec<_> = regexp::compile(&value.as_object().unwrap())?
                     .split(input)
@@ -240,7 +244,7 @@ fn string_split(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
                         base_offset + start..base_offset + start + part.len()
                     })
                     .collect();
-                JSValue::str_slices(&base, ranges).collect()
+                JSValue::str_slices_from_shared(base, ranges).collect()
             }
             _ => {
                 let separator = value.to_string();
@@ -251,7 +255,7 @@ fn string_split(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
                         .take(limit)
                         .map(|(index, c)| base_offset + index..base_offset + index + c.len_utf8())
                         .collect();
-                    JSValue::str_slices(&base, ranges).collect()
+                    JSValue::str_slices_from_shared(base, ranges).collect()
                 } else {
                     let ranges: Vec<_> = input
                         .split(&separator)
@@ -261,7 +265,7 @@ fn string_split(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
                             base_offset + start..base_offset + start + part.len()
                         })
                         .collect();
-                    JSValue::str_slices(&base, ranges).collect()
+                    JSValue::str_slices_from_shared(base, ranges).collect()
                 }
             }
         },
