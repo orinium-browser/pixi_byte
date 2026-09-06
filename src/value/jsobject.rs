@@ -20,21 +20,57 @@ pub const HOST_SET_PROPERTY: &str = "__host_set_property__";
 /// Property name used by host constructors to implement `instanceof`.
 pub const HOST_HAS_INSTANCE: &str = "__host_has_instance__";
 
-/// 正準な配列インデックス文字列（`"0"` から `"4294967294"` まで・先頭ゼロなし）なら
+/// 正準な配列インデックス（`"0"` から `"4294967294"` まで・先頭ゼロなし）なら
 /// その index を返します。それ以外は `None` を返します。
-fn canonical_array_index(key: &str) -> Option<usize> {
-    if !key.as_bytes().first().is_some_and(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let index: u32 = key.parse().ok()?;
-    if index == u32::MAX {
+///
+/// 旧実装は `key != index.to_string()` の比較で `String` を一時生成していたが、
+/// 配列の get/set で毎回呼ばれるため、比較を 10 進桁の走査に置き換えて
+/// アロケーションを完全に排除した。
+pub(crate) fn canonical_array_index(key: &str) -> Option<usize> {
+    let bytes = key.as_bytes();
+    if bytes.is_empty() || !bytes[0].is_ascii_digit() {
         return None;
     }
     // "01" のような先頭ゼロ付き文字列は配列インデックスとして扱わない
-    if key != index.to_string() {
+    if bytes.len() > 1 && bytes[0] == b'0' {
+        return None;
+    }
+    let mut index: u32 = 0;
+    for &byte in bytes {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        index = index.checked_mul(10)?.checked_add((byte - b'0') as u32)?;
+    }
+    if index == u32::MAX {
         return None;
     }
     Some(index as usize)
+}
+
+/// `index` が正準な配列インデックスとして表現できるなら `Some(u32)`、
+/// それ以外（`u32` 超過・`4294967295`）は `None`。
+fn canonical_index_u32(index: usize) -> Option<u32> {
+    let index = u32::try_from(index).ok()?;
+    (index != u32::MAX).then_some(index)
+}
+
+/// 正準な配列インデックス文字列（先頭ゼロなしの 10 進表記）をスタック上の
+/// バッファへ書き込み、借用として返す。アロケーションは発生しない。
+/// `buffer` は u32::MAX（10 桁）を格納できる大きさが必要。
+fn format_index_key(index: u32, buffer: &mut [u8; 10]) -> &str {
+    let mut end = buffer.len();
+    let mut value = index;
+    loop {
+        end -= 1;
+        buffer[end] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    // バッファ内は常に ASCII 10 進数なので from_utf8 は失敗しない
+    std::str::from_utf8(&buffer[end..]).unwrap()
 }
 
 /// JavaScript オブジェクトの内部表現
@@ -181,6 +217,89 @@ impl JSObject {
         JSValue::undefined()
     }
 
+    /// 配列インデックスで要素を取得します（`get` と同じセマンティクス）。
+    ///
+    /// キー文字列（`index.to_string()`）を作らずに要素ストレージへ直接アクセスするため、
+    /// 配列要素を走査するホットパス（`map` / `forEach` / VM の配列 opcode 等）で
+    /// アロケーションが発生しない。
+    pub fn get_index(&self, index: usize) -> JSValue {
+        // defineProperty 等でプロパティマップに定義された要素キーを優先する
+        if let Some(index32) = canonical_index_u32(index) {
+            let mut buffer = [0u8; 10];
+            let key = format_index_key(index32, &mut buffer);
+            if let Some(prop) = self.properties.borrow().get(key) {
+                return prop.value.clone();
+            }
+        }
+        if let Some(elements) = &self.elements
+            && let Some(Some(value)) = elements.borrow().get(index)
+        {
+            return value.clone();
+        }
+        // プロトタイプチェーンを辿る
+        if let Some(ref proto) = self.prototype {
+            return proto.borrow().get_index(index);
+        }
+        JSValue::undefined()
+    }
+
+    /// 配列インデックスに値を設定します（`set` と同じセマンティクス）。
+    ///
+    /// `set` は `String` キーを要求するため、要素ごとに `index.to_string()` が
+    /// 必要だったが、ここではスタックバッファ + 要素ストレージ直接書き込みで
+    /// アロケーションなしに済ませる。
+    pub fn set_index(&mut self, index: usize, value: JSValue) -> bool {
+        let Some(elements) = &self.elements else {
+            return self.set(index.to_string(), value);
+        };
+        // defineProperty 等でプロパティマップに定義された要素キーは尊重する
+        if let Some(index32) = canonical_index_u32(index) {
+            let mut buffer = [0u8; 10];
+            let key = format_index_key(index32, &mut buffer);
+            if self.properties.borrow().contains_key(key) {
+                return self.set(key.to_string(), value);
+            }
+        } else {
+            return self.set(index.to_string(), value);
+        }
+        let mut elements = elements.borrow_mut();
+        if index < elements.len() {
+            // 既存要素の上書き
+            elements[index] = Some(value);
+            return true;
+        }
+        // 新しい要素: 拡張可能性を尊重
+        if !self.extensible {
+            return false;
+        }
+        elements.resize(index + 1, None);
+        elements[index] = Some(value);
+        true
+    }
+
+    /// 配列インデックスが存在するか（プロトタイプチェーン含む）。
+    pub fn has_index(&self, index: usize) -> bool {
+        if let Some(index32) = canonical_index_u32(index) {
+            let mut buffer = [0u8; 10];
+            let key = format_index_key(index32, &mut buffer);
+            if self.properties.borrow().contains_key(key) {
+                return true;
+            }
+        }
+        if let Some(elements) = &self.elements
+            && elements
+                .borrow()
+                .get(index)
+                .is_some_and(|slot| slot.is_some())
+        {
+            return true;
+        }
+        if let Some(ref proto) = self.prototype {
+            return proto.borrow().has_index(index);
+        }
+        false
+    }
+
     /// 指定したキーに値を設定します。既存のデータプロパティが writable でない場合は false を返します。
     pub fn set(&mut self, key: String, value: JSValue) -> bool {
         // 既存のプロパティを確認（defineProperty 等で上書きされた要素もここで優先される）
@@ -285,6 +404,38 @@ impl JSObject {
         true
     }
 
+    /// 配列インデックスの要素を削除します（`delete` と同じセマンティクス）。
+    pub fn delete_index(&mut self, index: usize) -> bool {
+        if let Some(index32) = canonical_index_u32(index) {
+            let mut buffer = [0u8; 10];
+            let key = format_index_key(index32, &mut buffer);
+            // 借用をスコープで切ってから borrow_mut する（RefCell の二重借用を避ける）
+            let configurable = {
+                let properties = self.properties.borrow();
+                properties.get(key).map(|prop| prop.configurable)
+            };
+            match configurable {
+                Some(false) => return false,
+                Some(true) => {
+                    self.properties.borrow_mut().remove(key);
+                    if let Some(elements) = &self.elements
+                        && let Some(slot) = elements.borrow_mut().get_mut(index)
+                    {
+                        *slot = None;
+                    }
+                    return true;
+                }
+                None => {}
+            }
+        }
+        if let Some(elements) = &self.elements
+            && let Some(slot) = elements.borrow_mut().get_mut(index)
+        {
+            *slot = None;
+        }
+        true
+    }
+
     /// オブジェクトの拡張を禁止する
     pub fn prevent_extensions(&mut self) {
         self.extensible = false;
@@ -324,8 +475,13 @@ impl JSObject {
             let elements = elements.borrow();
             let props = self.properties.borrow();
             for (index, slot) in elements.iter().enumerate() {
-                if slot.is_some() && !props.contains_key(&index.to_string()) {
-                    keys.push(index.to_string());
+                if slot.is_none() {
+                    continue;
+                }
+                // キー文字列は contains_key と push で共通利用（二重アロケーションを回避）
+                let key = index.to_string();
+                if !props.contains_key(&key) {
+                    keys.push(key);
                 }
             }
         }
@@ -339,8 +495,13 @@ impl JSObject {
             let elements = elements.borrow();
             let props = self.properties.borrow();
             for (index, slot) in elements.iter().enumerate() {
-                if slot.is_some() && !props.contains_key(&index.to_string()) {
-                    names.push(index.to_string());
+                if slot.is_none() {
+                    continue;
+                }
+                // キー文字列は contains_key と push で共通利用（二重アロケーションを回避）
+                let key = index.to_string();
+                if !props.contains_key(&key) {
+                    names.push(key);
                 }
             }
         }
