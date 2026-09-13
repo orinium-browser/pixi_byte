@@ -72,6 +72,11 @@ fn global_is_nan(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::from_bool(value.is_nan()))
 }
 
+fn global_is_finite(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = args.get(1).map(JSValue::to_number).unwrap_or(f64::NAN);
+    Ok(JSValue::from_bool(value.is_finite()))
+}
+
 fn parse_int(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = args.get(1).map(JSValue::to_string).unwrap_or_default();
     let mut input = input.trim_start();
@@ -177,6 +182,10 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         global.set(
             "isNaN".to_string(),
             JSValue::from_native_function(global_is_nan),
+        );
+        global.set(
+            "isFinite".to_string(),
+            JSValue::from_native_function(global_is_finite),
         );
         global.set(
             "parseInt".to_string(),

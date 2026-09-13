@@ -80,6 +80,53 @@ fn math_random(_vm: &mut VM, _args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::from_number(value))
 }
 
+macro_rules! unary_math {
+    ($name:ident, $func:expr) => {
+        fn $name(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+            let value = argument(&args, 0);
+            let result = $func(value);
+            Ok(JSValue::from_number(result))
+        }
+    };
+}
+
+unary_math!(math_sqrt, f64::sqrt);
+unary_math!(math_round, |value: f64| value.round());
+unary_math!(math_trunc, f64::trunc);
+unary_math!(math_sin, f64::sin);
+unary_math!(math_cos, f64::cos);
+unary_math!(math_tan, f64::tan);
+unary_math!(math_asin, f64::asin);
+unary_math!(math_acos, f64::acos);
+unary_math!(math_atan, f64::atan);
+unary_math!(math_exp, f64::exp);
+unary_math!(math_expm1, f64::exp_m1);
+unary_math!(math_cbrt, f64::cbrt);
+unary_math!(math_sign, f64::signum);
+unary_math!(math_log2, f64::log2);
+unary_math!(math_log10, f64::log10);
+unary_math!(math_log1p, f64::ln_1p);
+
+fn math_hypot(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = args[1..]
+        .iter()
+        .map(JSValue::to_number)
+        .fold(0.0_f64, |acc, v| acc.hypot(v));
+    Ok(JSValue::from_number(value))
+}
+
+fn math_imul(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let a = args.get(1).map(JSValue::to_number).unwrap_or(f64::NAN);
+    let b = args.get(2).map(JSValue::to_number).unwrap_or(f64::NAN);
+    Ok(JSValue::from_number((a as i32).wrapping_mul(b as i32) as f64))
+}
+
+fn math_atan2(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let y = args.get(1).map(JSValue::to_number).unwrap_or(f64::NAN);
+    let x = args.get(2).map(JSValue::to_number).unwrap_or(f64::NAN);
+    Ok(JSValue::from_number(y.atan2(x)))
+}
+
 /// Installs the Math namespace.
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut math = JSObject::new();
@@ -101,6 +148,31 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         "random".to_string(),
         JSValue::from_native_function(math_random),
     );
+    math.set("sqrt".to_string(), JSValue::from_native_function(math_sqrt));
+    math.set("round".to_string(), JSValue::from_native_function(math_round));
+    math.set("trunc".to_string(), JSValue::from_native_function(math_trunc));
+    math.set("sin".to_string(), JSValue::from_native_function(math_sin));
+    math.set("cos".to_string(), JSValue::from_native_function(math_cos));
+    math.set("tan".to_string(), JSValue::from_native_function(math_tan));
+    math.set("asin".to_string(), JSValue::from_native_function(math_asin));
+    math.set("acos".to_string(), JSValue::from_native_function(math_acos));
+    math.set("atan".to_string(), JSValue::from_native_function(math_atan));
+    math.set(
+        "atan2".to_string(),
+        JSValue::from_native_function(math_atan2),
+    );
+    math.set("exp".to_string(), JSValue::from_native_function(math_exp));
+    math.set("expm1".to_string(), JSValue::from_native_function(math_expm1));
+    math.set("cbrt".to_string(), JSValue::from_native_function(math_cbrt));
+    math.set("sign".to_string(), JSValue::from_native_function(math_sign));
+    math.set("log2".to_string(), JSValue::from_native_function(math_log2));
+    math.set("log10".to_string(), JSValue::from_native_function(math_log10));
+    math.set("log1p".to_string(), JSValue::from_native_function(math_log1p));
+    math.set(
+        "hypot".to_string(),
+        JSValue::from_native_function(math_hypot),
+    );
+    math.set("imul".to_string(), JSValue::from_native_function(math_imul));
     math.define_property(
         "LN2".to_string(),
         Property::read_only(JSValue::from_number(std::f64::consts::LN_2)),
