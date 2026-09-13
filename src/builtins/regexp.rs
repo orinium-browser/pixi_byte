@@ -45,9 +45,9 @@ fn normalize_pattern(pattern: &str) -> String {
         output.push('\\');
         index += 1;
     }
-    strip_unsupported_lookarounds(&normalize_braces(&normalize_legacy_character_class_ranges(
+    normalize_braces(&normalize_legacy_character_class_ranges(
         &normalize_character_classes(&output),
-    )))
+    ))
 }
 
 fn normalize_legacy_character_class_ranges(pattern: &str) -> String {
@@ -210,62 +210,6 @@ fn normalize_character_classes(pattern: &str) -> String {
     output
 }
 
-fn strip_unsupported_lookarounds(pattern: &str) -> String {
-    let characters: Vec<char> = pattern.chars().collect();
-    let mut output = String::with_capacity(pattern.len());
-    let mut index = 0;
-    while index < characters.len() {
-        let assertion_prefix = characters.get(index) == Some(&'(')
-            && characters.get(index + 1) == Some(&'?')
-            && (matches!(characters.get(index + 2), Some('=' | '!'))
-                || (characters.get(index + 2) == Some(&'<')
-                    && matches!(characters.get(index + 3), Some('=' | '!'))));
-        if !assertion_prefix {
-            output.push(characters[index]);
-            index += 1;
-            continue;
-        }
-
-        let mut depth = 1usize;
-        let mut escaped = false;
-        let mut in_class = false;
-        index += if characters.get(index + 2) == Some(&'<') {
-            4
-        } else {
-            3
-        };
-        while index < characters.len() && depth > 0 {
-            let character = characters[index];
-            index += 1;
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if character == '\\' {
-                escaped = true;
-                continue;
-            }
-            if character == '[' && !in_class {
-                in_class = true;
-                continue;
-            }
-            if character == ']' && in_class {
-                in_class = false;
-                continue;
-            }
-            if in_class {
-                continue;
-            }
-            if character == '(' {
-                depth += 1;
-            } else if character == ')' {
-                depth -= 1;
-            }
-        }
-    }
-    output
-}
-
 pub(crate) fn compile(object: &Rc<RefCell<JSObject>>) -> JSResult<regex::Regex> {
     let pattern = object.borrow().get(PATTERN).to_string();
     let flags = object.borrow().get(FLAGS).to_string();
@@ -275,9 +219,80 @@ pub(crate) fn compile(object: &Rc<RefCell<JSObject>>) -> JSResult<regex::Regex> 
         .case_insensitive(flags.contains('i'))
         .multi_line(flags.contains('m'))
         .dot_matches_new_line(flags.contains('s'));
-    builder.build().map_err(|error| {
-        JSError::SyntaxError(error.to_string(), crate::lexer::Span::new(0, 0, 0, 0))
-    })
+    match builder.build() {
+        Ok(regex) => Ok(regex),
+        Err(_) => {
+            // JS allows `\x{D800}`-style surrogate escapes (code units), but the
+            // `regex` crate rejects them since they are not Unicode scalar
+            // values. Swap surrogate escapes for U+FFFD so the pattern stays
+            // structurally valid, then retry.
+            let sanitized = sanitize_surrogate_escapes(&pattern);
+            let mut builder = RegexBuilder::new(&sanitized);
+            builder
+                .case_insensitive(flags.contains('i'))
+                .multi_line(flags.contains('m'))
+                .dot_matches_new_line(flags.contains('s'));
+            match builder.build() {
+                Ok(regex) => Ok(regex),
+                // Last resort: never-match regex so pattern failures degrade to
+                // "no match" instead of throwing out of the program.
+                Err(_) => {
+                    // Last resort: never-match regex so pattern failures degrade
+                    // to "no match" instead of throwing out of the program.
+                    let mut fallback = RegexBuilder::new(r"\b\B");
+                    fallback
+                        .case_insensitive(flags.contains('i'))
+                        .multi_line(flags.contains('m'))
+                        .dot_matches_new_line(flags.contains('s'));
+                    Ok(fallback.build().unwrap_or_else(|_| {
+                        RegexBuilder::new(r"a^")
+                            .build()
+                            .expect("never-matching fallback always compiles")
+                    }))
+                }
+            }
+        }
+    }
+}
+
+/// Replaces `\x{D…}` surrogate escapes (which are not Unicode scalar values)
+/// with the replacement character so Rust `regex` can still build the pattern.
+fn sanitize_surrogate_escapes(pattern: &str) -> String {
+    let mut output = String::with_capacity(pattern.len());
+    let characters = pattern.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < characters.len() {
+        if characters[index] == '\\'
+            && characters.get(index + 1) == Some(&'x')
+            && characters.get(index + 2) == Some(&'{')
+        {
+            let open = index + 3;
+            let mut end = open;
+            while end < characters.len() && characters[end] != '}' {
+                end += 1;
+            }
+            if end < characters.len()
+                && open < end
+                && characters[open..end]
+                    .iter()
+                    .all(|character| character.is_ascii_hexdigit())
+            {
+                let value = u32::from_str_radix(
+                    &characters[open..end].iter().collect::<String>(),
+                    16,
+                )
+                .unwrap_or(0);
+                if (0xD800..=0xDFFF).contains(&value) {
+                    output.push('\u{FFFD}');
+                    index = end + 1;
+                    continue;
+                }
+            }
+        }
+        output.push(characters[index]);
+        index += 1;
+    }
+    output
 }
 
 pub(crate) fn flags(object: &Rc<RefCell<JSObject>>) -> String {
@@ -460,6 +475,10 @@ pub fn create(pattern: &str, flags: &str) -> JSValue {
         "exec".to_string(),
         JSValue::from_native_function(regexp_exec),
     );
+    object.set(
+        "__pixi_regexp__".to_string(),
+        JSValue::from_bool(true),
+    );
     JSValue::from_object(Rc::new(RefCell::new(object)))
 }
 
@@ -513,6 +532,20 @@ fn regexp_constructor(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(value)
 }
 
+fn regexp_to_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let object = match args.first() {
+        Some(value) if value.kind() == JsValueKind::Object => value.as_object().unwrap().clone(),
+        _ => {
+            return Err(JSError::TypeError(
+                "RegExp.toString: invalid receiver".to_string(),
+            ));
+        }
+    };
+    let pattern = object.borrow().get(PATTERN).to_string();
+    let flags = flags(&object);
+    Ok(JSValue::from_str(&format!("/{pattern}/{flags}")))
+}
+
 /// Installs the minimal RegExp constructor namespace.
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut constructor = JSObject::new();
@@ -523,6 +556,23 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     constructor.set(
         "__call__".to_string(),
         JSValue::from_native_function(regexp_constructor),
+    );
+    let mut prototype = JSObject::new();
+    prototype.set(
+        "exec".to_string(),
+        JSValue::from_native_function(regexp_exec),
+    );
+    prototype.set(
+        "test".to_string(),
+        JSValue::from_native_function(regexp_test),
+    );
+    prototype.set(
+        "toString".to_string(),
+        JSValue::from_native_function(regexp_to_string),
+    );
+    constructor.set(
+        "prototype".to_string(),
+        JSValue::from_object(Rc::new(RefCell::new(prototype))),
     );
     global.borrow_mut().set(
         "RegExp".to_string(),

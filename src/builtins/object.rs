@@ -404,6 +404,8 @@ pub(crate) fn object_to_string(
             let object = receiver.as_object().unwrap();
             if object.borrow().has_own_property("__pixi_array__") {
                 Ok(JSValue::from_str("[object Array]"))
+            } else if object.borrow().has_own_property("__pixi_regexp__") {
+                Ok(JSValue::from_str("[object RegExp]"))
             } else {
                 Ok(JSValue::from_str("[object Object]"))
             }
