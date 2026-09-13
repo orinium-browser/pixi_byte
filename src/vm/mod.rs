@@ -335,12 +335,9 @@ impl VM {
                 Ok(control) => control,
                 Err(error) => {
                     pending_finally.pop();
-                    if let Err(terminal) = self.redirect_exception(
-                        error,
-                        &mut handlers,
-                        &mut pending_finally,
-                        &mut pc,
-                    ) {
+                    if let Err(terminal) =
+                        self.redirect_exception(error, &mut handlers, &mut pending_finally, &mut pc)
+                    {
                         if self.last_error_pc.is_none() {
                             self.last_error_pc = Some(pc);
                             // Record the function name of the innermost frame
@@ -1403,10 +1400,7 @@ impl VM {
                         .as_object()
                         .map(|object| {
                             let keys = object.borrow().keys();
-                            keys.into_iter()
-                                .take(24)
-                                .collect::<Vec<_>>()
-                                .join(",")
+                            keys.into_iter().take(24).collect::<Vec<_>>().join(",")
                         })
                         .unwrap_or_default();
                     return Err(JSError::TypeError(format!(
@@ -2089,20 +2083,17 @@ impl VM {
                     // 呼ばれる前の関数にも最低限のオブジェクト表現を用意する
                     self.ensure_callable_object(&value)
                 })
-                .ok_or_else(|| {
-                    JSError::TypeError("cannot convert function to object".to_string())
-                }),
+                .ok_or_else(|| JSError::TypeError("cannot convert function to object".to_string())),
             JsValueKind::NativeFunction | JsValueKind::BoundFunction => {
                 // ネイティブ/バインド関数は Function.prototype を prototype とする空オブジェクト。
                 // 実体を持たないため own property は持たない（getOwnPropertyDescriptor は undefined を返す）。
-                Ok(Rc::new(RefCell::new(
-                    JSObject::with_prototype(Some(Rc::clone(&self.function_prototype))),
-                )))
+                Ok(Rc::new(RefCell::new(JSObject::with_prototype(Some(
+                    Rc::clone(&self.function_prototype),
+                )))))
             }
             JsValueKind::String => {
                 let text = value.to_console_string();
-                let mut object =
-                    JSObject::with_prototype(Some(Rc::clone(&self.string_prototype)));
+                let mut object = JSObject::with_prototype(Some(Rc::clone(&self.string_prototype)));
                 // length とインデックス要素は仕様上 non-writable / non-enumerable / non-configurable
                 let indexed = Property {
                     value: JSValue::undefined(),

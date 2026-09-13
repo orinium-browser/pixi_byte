@@ -86,11 +86,9 @@ fn object_create(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue
             let new_obj = JSObject::with_prototype(Some(obj_ref));
             Rc::new(RefCell::new(new_obj))
         }
-        JsValueKind::NativeFunction | JsValueKind::BoundFunction => {
-            Rc::new(RefCell::new(JSObject::with_prototype(Some(
-                Rc::clone(&vm.function_prototype),
-            ))))
-        }
+        JsValueKind::NativeFunction | JsValueKind::BoundFunction => Rc::new(RefCell::new(
+            JSObject::with_prototype(Some(Rc::clone(&vm.function_prototype))),
+        )),
         JsValueKind::Null => Rc::new(RefCell::new(JSObject::with_prototype(None))),
         _ => {
             let stack = vm

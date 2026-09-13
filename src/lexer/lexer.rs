@@ -697,7 +697,12 @@ impl Lexer {
             self.advance(); // 'u'
             match self.read_unicode_escape() {
                 Some(decoded) => text.push(decoded),
-                None => return Err(JSError::SyntaxError("invalid unicode escape in identifier".to_string(), Span::new(start, self.position, start_line, start_column))),
+                None => {
+                    return Err(JSError::SyntaxError(
+                        "invalid unicode escape in identifier".to_string(),
+                        Span::new(start, self.position, start_line, start_column),
+                    ));
+                }
             }
         }
 

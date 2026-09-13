@@ -118,7 +118,9 @@ fn math_hypot(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 fn math_imul(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let a = args.get(1).map(JSValue::to_number).unwrap_or(f64::NAN);
     let b = args.get(2).map(JSValue::to_number).unwrap_or(f64::NAN);
-    Ok(JSValue::from_number((a as i32).wrapping_mul(b as i32) as f64))
+    Ok(JSValue::from_number(
+        (a as i32).wrapping_mul(b as i32) as f64
+    ))
 }
 
 fn math_atan2(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -149,8 +151,14 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         JSValue::from_native_function(math_random),
     );
     math.set("sqrt".to_string(), JSValue::from_native_function(math_sqrt));
-    math.set("round".to_string(), JSValue::from_native_function(math_round));
-    math.set("trunc".to_string(), JSValue::from_native_function(math_trunc));
+    math.set(
+        "round".to_string(),
+        JSValue::from_native_function(math_round),
+    );
+    math.set(
+        "trunc".to_string(),
+        JSValue::from_native_function(math_trunc),
+    );
     math.set("sin".to_string(), JSValue::from_native_function(math_sin));
     math.set("cos".to_string(), JSValue::from_native_function(math_cos));
     math.set("tan".to_string(), JSValue::from_native_function(math_tan));
@@ -162,12 +170,21 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         JSValue::from_native_function(math_atan2),
     );
     math.set("exp".to_string(), JSValue::from_native_function(math_exp));
-    math.set("expm1".to_string(), JSValue::from_native_function(math_expm1));
+    math.set(
+        "expm1".to_string(),
+        JSValue::from_native_function(math_expm1),
+    );
     math.set("cbrt".to_string(), JSValue::from_native_function(math_cbrt));
     math.set("sign".to_string(), JSValue::from_native_function(math_sign));
     math.set("log2".to_string(), JSValue::from_native_function(math_log2));
-    math.set("log10".to_string(), JSValue::from_native_function(math_log10));
-    math.set("log1p".to_string(), JSValue::from_native_function(math_log1p));
+    math.set(
+        "log10".to_string(),
+        JSValue::from_native_function(math_log10),
+    );
+    math.set(
+        "log1p".to_string(),
+        JSValue::from_native_function(math_log1p),
+    );
     math.set(
         "hypot".to_string(),
         JSValue::from_native_function(math_hypot),

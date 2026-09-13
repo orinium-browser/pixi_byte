@@ -277,11 +277,9 @@ fn sanitize_surrogate_escapes(pattern: &str) -> String {
                     .iter()
                     .all(|character| character.is_ascii_hexdigit())
             {
-                let value = u32::from_str_radix(
-                    &characters[open..end].iter().collect::<String>(),
-                    16,
-                )
-                .unwrap_or(0);
+                let value =
+                    u32::from_str_radix(&characters[open..end].iter().collect::<String>(), 16)
+                        .unwrap_or(0);
                 if (0xD800..=0xDFFF).contains(&value) {
                     output.push('\u{FFFD}');
                     index = end + 1;
@@ -475,10 +473,7 @@ pub fn create(pattern: &str, flags: &str) -> JSValue {
         "exec".to_string(),
         JSValue::from_native_function(regexp_exec),
     );
-    object.set(
-        "__pixi_regexp__".to_string(),
-        JSValue::from_bool(true),
-    );
+    object.set("__pixi_regexp__".to_string(), JSValue::from_bool(true));
     JSValue::from_object(Rc::new(RefCell::new(object)))
 }
 
