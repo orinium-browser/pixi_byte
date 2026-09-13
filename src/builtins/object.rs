@@ -75,11 +75,44 @@ fn object_create(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue
             let new_obj = JSObject::with_prototype(Some(obj_ref.clone()));
             Rc::new(RefCell::new(new_obj))
         }
+        JsValueKind::Function | JsValueKind::ArrowFunction => {
+            // Functions are objects: `Object.create(fn)` inherits from the
+            // function's mirror object.
+            let Some(obj_ref) = vm.user_function_object(&proto) else {
+                return Err(JSError::TypeError(
+                    "Object.create: invalid prototype".to_string(),
+                ));
+            };
+            let new_obj = JSObject::with_prototype(Some(obj_ref));
+            Rc::new(RefCell::new(new_obj))
+        }
+        JsValueKind::NativeFunction | JsValueKind::BoundFunction => {
+            Rc::new(RefCell::new(JSObject::with_prototype(Some(
+                Rc::clone(&vm.function_prototype),
+            ))))
+        }
         JsValueKind::Null => Rc::new(RefCell::new(JSObject::with_prototype(None))),
         _ => {
-            return Err(JSError::TypeError(
-                "Object.create: prototype must be an object or null".to_string(),
-            ));
+            let stack = vm
+                .frames
+                .iter()
+                .filter_map(|frame| {
+                    frame
+                        .function_name
+                        .as_ref()
+                        .map(crate::runtime::FunctionName::as_str)
+                })
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            let stack = if stack.is_empty() {
+                String::new()
+            } else {
+                format!(" (JS stack: {stack})")
+            };
+            return Err(JSError::TypeError(format!(
+                "Object.create: prototype must be an object or null (got {:?}){stack}",
+                proto.kind()
+            )));
         }
     };
 
@@ -178,7 +211,7 @@ fn object_proto_get(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult
 }
 
 /// setter for Object.prototype.__proto__
-fn object_proto_set(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
+fn object_proto_set(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
     if args.is_empty() {
         return Ok(JSValue::undefined());
     }
@@ -189,7 +222,12 @@ fn object_proto_set(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult
         JSValue::undefined()
     };
 
-    if let Some(obj_ref) = receiver.as_object() {
+    // Functions are objects: allow `fn.__proto__ = proto` to mutate the
+    // function's mirror object (static inheritance in the wild).
+    if let Some(obj_ref) = receiver
+        .as_object()
+        .or_else(|| vm.user_function_object(&receiver))
+    {
         if let Some(o) = new_proto.as_object() {
             // Prevent prototype cycles: ensure `obj_ref` is not in the prototype chain of `o`
             let mut current = Some(o.clone());
@@ -208,14 +246,19 @@ fn object_proto_set(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult
             obj_ref.borrow_mut().set_prototype(None);
             Ok(JSValue::undefined())
         } else {
-            Err(JSError::TypeError(
-                "__proto__ setter: value must be an object or null".to_string(),
-            ))
+            // Per spec, `obj.__proto__ = value` with a non-object, non-null
+            // value is a no-op.
+            Ok(JSValue::undefined())
         }
     } else {
-        Err(JSError::TypeError(
-            "__proto__ setter: receiver is not an object".to_string(),
-        ))
+        // Per spec, primitive receivers other than null/undefined are wrapped
+        // via ToObject and the mutation is invisible; only null/undefined throw.
+        match receiver.kind() {
+            JsValueKind::Null | JsValueKind::Undefined => Err(JSError::TypeError(
+                "Set on object called on receiver that is null or undefined".to_string(),
+            )),
+            _ => Ok(JSValue::undefined()),
+        }
     }
 }
 
@@ -401,7 +444,7 @@ fn object_define_property(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResul
     let prop_name = args.remove(0);
     let desc = args.remove(0);
 
-    let key = prop_name.to_string();
+    let key = vm.to_property_key(prop_name)?;
 
     let object = match obj.kind() {
         JsValueKind::Object => Some(obj.as_object().unwrap()),
@@ -523,66 +566,114 @@ fn object_freeze(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue
     }
 }
 
+/// Object.isFrozen(obj)
+fn object_is_frozen(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let mut args = object_static_arguments(vm, args);
+    if args.is_empty() {
+        return Err(JSError::TypeError(
+            "Object.isFrozen: missing object".to_string(),
+        ));
+    }
+    let obj = args.remove(0);
+    if let Some(obj_ref) = obj.as_object() {
+        let props = obj_ref.borrow();
+        if props.is_extensible() {
+            return Ok(JSValue::from_bool(false));
+        }
+        for k in props.keys() {
+            if let Some(p) = props.get_property_descriptor(&k)
+                && p.configurable
+            {
+                return Ok(JSValue::from_bool(false));
+            }
+        }
+        Ok(JSValue::from_bool(true))
+    } else {
+        // Primitive values are always frozen
+        Ok(JSValue::from_bool(true))
+    }
+}
+
+/// Object.isSealed(obj)
+fn object_is_sealed(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let mut args = object_static_arguments(vm, args);
+    if args.is_empty() {
+        return Err(JSError::TypeError(
+            "Object.isSealed: missing object".to_string(),
+        ));
+    }
+    let obj = args.remove(0);
+    if let Some(obj_ref) = obj.as_object() {
+        let props = obj_ref.borrow();
+        if props.is_extensible() {
+            return Ok(JSValue::from_bool(false));
+        }
+        for k in props.keys() {
+            if let Some(p) = props.get_property_descriptor(&k)
+                && p.configurable
+            {
+                return Ok(JSValue::from_bool(false));
+            }
+        }
+        Ok(JSValue::from_bool(true))
+    } else {
+        Ok(JSValue::from_bool(true))
+    }
+}
+
 /// Object.getOwnPropertyDescriptor(obj, prop)
 fn object_get_own_property_descriptor(
     vm: &mut crate::vm::VM,
     args: Vec<JSValue>,
 ) -> JSResult<JSValue> {
-    let mut args = object_static_arguments(vm, args);
-    if args.len() < 2 {
+    let args = object_static_arguments(vm, args);
+    let [obj_val, prop_name] = args.as_slice() else {
         return Err(JSError::TypeError(
             "Object.getOwnPropertyDescriptor: missing arguments".to_string(),
         ));
-    }
-    let obj = args.remove(0);
-    let prop_name = args.remove(0);
-    let key = prop_name.to_string();
-
-    let object = match obj.kind() {
-        JsValueKind::Object => Some(obj.as_object().unwrap()),
-        JsValueKind::Function | JsValueKind::ArrowFunction => vm.user_function_object(&obj),
-        _ => None,
     };
+    let obj_val = obj_val.clone();
+    let prop_name = prop_name.clone();
 
-    match object {
-        Some(obj_ref) => {
-            if let Some(prop) = obj_ref.borrow().get_property_descriptor(&key) {
-                // build descriptor object
-                let mut desc = JSObject::new();
-                // if accessor
-                if prop.getter.is_some() || prop.setter.is_some() {
-                    if let Some(getv) = prop.getter {
-                        desc.set("get".to_string(), getv);
-                    } else {
-                        desc.set("get".to_string(), JSValue::undefined());
-                    }
-                    if let Some(setv) = prop.setter {
-                        desc.set("set".to_string(), setv);
-                    } else {
-                        desc.set("set".to_string(), JSValue::undefined());
-                    }
-                } else {
-                    desc.set("value".to_string(), prop.value.clone());
-                    desc.set("writable".to_string(), JSValue::from_bool(prop.writable));
-                }
-                desc.set(
-                    "enumerable".to_string(),
-                    JSValue::from_bool(prop.enumerable),
-                );
-                desc.set(
-                    "configurable".to_string(),
-                    JSValue::from_bool(prop.configurable),
-                );
+    // ES §19.1.2.8: ToObject(引数は null/undefined なら TypeError)
+    let obj = vm.to_object(obj_val)?;
+    let key = vm.to_property_key(prop_name)?;
 
-                Ok(JSValue::from_object(Rc::new(RefCell::new(desc))))
-            } else {
-                Ok(JSValue::undefined())
-            }
-        }
-        None => Err(JSError::TypeError(
-            "Object.getOwnPropertyDescriptor: first argument must be an object".to_string(),
-        )),
+    // getOwnPropertyDescriptor は own property のみを見る（prototype chain は辿らない）
+    let prop = obj.borrow().get_property_descriptor(&key);
+
+    Ok(match prop {
+        Some(prop) => create_property_descriptor(prop),
+        None => JSValue::undefined(),
+    })
+}
+
+/// `Property` から descriptor object を構築します。
+/// accessor descriptor なら `get`/`set`、data descriptor なら `value`/`writable` を持つ。
+fn create_property_descriptor(prop: crate::value::jsobject::Property) -> JSValue {
+    let mut desc = JSObject::new();
+    if prop.getter.is_some() || prop.setter.is_some() {
+        desc.set(
+            "get".to_string(),
+            prop.getter.unwrap_or_else(JSValue::undefined),
+        );
+        desc.set(
+            "set".to_string(),
+            prop.setter.unwrap_or_else(JSValue::undefined),
+        );
+    } else {
+        desc.set("value".to_string(), prop.value);
+        desc.set("writable".to_string(), JSValue::from_bool(prop.writable));
     }
+    desc.set(
+        "enumerable".to_string(),
+        JSValue::from_bool(prop.enumerable),
+    );
+    desc.set(
+        "configurable".to_string(),
+        JSValue::from_bool(prop.configurable),
+    );
+    JSValue::from_object(Rc::new(RefCell::new(desc)))
 }
 
 /// Object.keys(obj)
@@ -938,6 +1029,14 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     obj.set(
         "freeze".to_string(),
         JSValue::from_native_function(object_freeze),
+    );
+    obj.set(
+        "isFrozen".to_string(),
+        JSValue::from_native_function(object_is_frozen),
+    );
+    obj.set(
+        "isSealed".to_string(),
+        JSValue::from_native_function(object_is_sealed),
     );
 
     // register defineProperty and getOwnPropertyDescriptor
