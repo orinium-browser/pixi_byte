@@ -1,11 +1,17 @@
+use std::rc::Rc;
+
 use super::token::{Span, Token, TokenKind};
 use crate::error::{JSError, JSResult};
 
 /// 字句解析器
 #[derive(Clone)]
 pub struct Lexer {
-    /// ソースコードの文字列
-    source: Vec<char>,
+    /// ソースコードの文字列。
+    ///
+    /// `Rc<[char]>` で共有参照にして clone を O(1) にする。パーサーは
+    /// for 文などでバックトラックのために Lexer ごと clone するため、
+    /// ここが `Vec<char>` のままだと大規模ソースで O(n²) の memcpy が発生する。
+    source: Rc<[char]>,
     /// 現在の位置
     position: usize,
     /// 現在の行番号
@@ -19,8 +25,9 @@ pub struct Lexer {
 impl Lexer {
     /// 新しい字句解析器を作成
     pub fn new(source: &str) -> Self {
+        let chars: Vec<char> = source.chars().collect();
         Self {
-            source: source.chars().collect(),
+            source: Rc::from(chars),
             position: 0,
             line: 1,
             column: 1,
@@ -86,7 +93,14 @@ impl Lexer {
             ',' => TokenKind::Comma,
             '~' => TokenKind::BitNot,
             '?' => {
-                if self.match_char('.') {
+                // `?.` is the optional chain operator, but when it is followed
+                // by a digit it is the ternary `?` plus a leading-dot decimal
+                // literal (e.g. `W === void 0 ? .01 : W`); `?.<digit>` is never
+                // a valid optional chain.
+                if self.peek() == Some('.')
+                    && !self.peek_ahead(1).is_some_and(|c| c.is_ascii_digit())
+                {
+                    self.advance();
                     TokenKind::OptionalChain
                 } else if self.match_char('?') {
                     TokenKind::Nullish
@@ -256,8 +270,11 @@ impl Lexer {
             // 数値リテラル
             '0'..='9' => return self.scan_number(),
 
-            // 識別子・キーワード
+            // 識別子・キーワード（`\uXXXX` エスケープで始まる識別子も含む）
             _ if ch.is_alphabetic() || ch == '_' || ch == '$' => {
+                return self.scan_identifier();
+            }
+            '\\' if self.peek() == Some('u') => {
                 return self.scan_identifier();
             }
 
@@ -668,15 +685,40 @@ impl Lexer {
         let start_line = self.line;
         let start_column = self.column - 1;
 
+        let mut text = String::new();
+        // The character that triggered `scan_identifier` has already been
+        // consumed by `next_token`. For a regular identifier character it
+        // belongs to the identifier text; for a leading `\uXXXX` escape the
+        // guard in `next_token` guaranteed a following `u` to consume.
+        let first = self.source[start];
+        if first != '\\' {
+            text.push(first);
+        } else {
+            self.advance(); // 'u'
+            match self.read_unicode_escape() {
+                Some(decoded) => text.push(decoded),
+                None => return Err(JSError::SyntaxError("invalid unicode escape in identifier".to_string(), Span::new(start, self.position, start_line, start_column))),
+            }
+        }
+
         while let Some(ch) = self.peek() {
             if ch.is_alphanumeric() || ch == '_' || ch == '$' {
                 self.advance();
+                text.push(ch);
+            } else if ch == '\\' {
+                // `\uXXXX` unicode escape inside an identifier (e.g.
+                // `M.id.\u0275prov` from Angular/Closure compilers).
+                if !self.match_char('\\') || !self.match_char('u') {
+                    break;
+                }
+                match self.read_unicode_escape() {
+                    Some(decoded) => text.push(decoded),
+                    None => break,
+                }
             } else {
                 break;
             }
         }
-
-        let text: String = self.source[start..self.position].iter().collect();
         let kind = match text.as_str() {
             "let" => TokenKind::Let,
             "const" => TokenKind::Const,
@@ -810,6 +852,18 @@ impl Lexer {
         } else {
             false
         }
+    }
+
+    /// `u` の直後から4桁の16進数を読み取り、対応する文字を返す。
+    /// 呼び出し側が `\` と `u` を消費済みであることに依存する。
+    fn read_unicode_escape(&mut self) -> Option<char> {
+        let mut code = 0u32;
+        for _ in 0..4 {
+            let h = self.peek()?.to_digit(16)?;
+            self.advance();
+            code = code * 16 + h;
+        }
+        Some(char::from_u32(code).unwrap_or('\u{FFFD}'))
     }
 
     /// ソースコードの終端に達しているか
