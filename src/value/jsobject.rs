@@ -203,10 +203,9 @@ impl JSObject {
         // 配列要素を検索（穴は undefined として扱う）
         if let Some(index) = canonical_array_index(key)
             && let Some(elements) = &self.elements
+            && let Some(element) = elements.borrow().get(index).and_then(Option::as_ref)
         {
-            if let Some(element) = elements.borrow().get(index).and_then(Option::as_ref) {
-                return element.clone();
-            }
+            return element.clone();
         }
 
         // プロトタイプチェーンを辿る
@@ -384,10 +383,9 @@ impl JSObject {
             // delete 後はマップと同じく「穴」として扱う（古い要素の復活を防ぐ）
             if let Some(index) = canonical_array_index(key)
                 && let Some(elements) = &self.elements
+                && let Some(slot) = elements.borrow_mut().get_mut(index)
             {
-                if let Some(slot) = elements.borrow_mut().get_mut(index) {
-                    *slot = None;
-                }
+                *slot = None;
             }
             return true;
         }
@@ -395,10 +393,9 @@ impl JSObject {
         // 配列要素は穴（None）にする
         if let Some(index) = canonical_array_index(key)
             && let Some(elements) = &self.elements
+            && let Some(slot) = elements.borrow_mut().get_mut(index)
         {
-            if let Some(slot) = elements.borrow_mut().get_mut(index) {
-                *slot = None;
-            }
+            *slot = None;
         }
 
         true
