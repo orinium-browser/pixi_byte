@@ -109,6 +109,21 @@ impl JSEngine {
         self.vm.host = Some(host);
     }
 
+    /// Bytecode position of the last terminal error (if any).
+    pub fn last_error_pc(&self) -> Option<usize> {
+        self.vm.last_error_pc()
+    }
+
+    /// Name of the innermost function where the last terminal error originated.
+    pub fn last_error_fn(&self) -> Option<&str> {
+        self.vm.last_error_fn()
+    }
+
+    /// Function-name call stack (innermost first) at the terminal error.
+    pub fn last_error_stack(&self) -> &[String] {
+        self.vm.last_error_stack()
+    }
+
     /// Calls a JS function value from Rust.
     ///
     /// `callee` must be `JSValue::Function`, `JSValue::NativeFunction`, or

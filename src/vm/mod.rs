@@ -76,6 +76,14 @@ pub struct VM {
     pub number_prototype: Rc<RefCell<JSObject>>,
     /// Own properties for user-defined callable values, keyed by function identity.
     callable_objects: HashMap<u64, Rc<RefCell<JSObject>>>,
+    /// Bytecode position (pc) of the most recent terminal error, if any.
+    pub(crate) last_error_pc: Option<usize>,
+    /// pc of the currently-executing opcode.
+    pub(crate) current_pc: usize,
+    /// Name of the innermost function where the terminal error originated.
+    pub(crate) last_error_fn: Option<String>,
+    /// Function-name call stack (innermost first) at the terminal error.
+    pub(crate) last_error_stack: Vec<String>,
     /// Host data slot.
     ///
     /// A shared slot where the host (the embedding app) can store arbitrary state.
@@ -162,6 +170,10 @@ impl VM {
             global_object: global_rc,
             function_prototype,
             object_prototype,
+            last_error_pc: None,
+            current_pc: 0,
+            last_error_fn: None,
+            last_error_stack: Vec::new(),
             string_prototype,
             number_prototype,
             callable_objects: HashMap::new(),
@@ -291,6 +303,21 @@ impl VM {
         Ok(())
     }
 
+    /// Bytecode position of the last terminal error (if any).
+    pub fn last_error_pc(&self) -> Option<usize> {
+        self.last_error_pc
+    }
+
+    /// Name of the innermost function where the last terminal error originated.
+    pub fn last_error_fn(&self) -> Option<&str> {
+        self.last_error_fn.as_deref()
+    }
+
+    /// Function-name call stack (innermost first) at the terminal error.
+    pub fn last_error_stack(&self) -> &[String] {
+        &self.last_error_stack
+    }
+
     pub fn execute(&mut self, chunk: &BytecodeChunk) -> JSResult<JSValue> {
         let mut pc = 0; // プログラムカウンタ
         let mut handlers = Vec::new();
@@ -302,12 +329,41 @@ impl VM {
         while pc < chunk.code.len() {
             let opcode = &chunk.code[pc];
             pc += 1;
+            self.current_pc = pc - 1;
 
             let control = match self.execute_opcode(opcode, chunk, &mut key_scratch) {
                 Ok(control) => control,
                 Err(error) => {
                     pending_finally.pop();
-                    self.redirect_exception(error, &mut handlers, &mut pending_finally, &mut pc)?;
+                    if let Err(terminal) = self.redirect_exception(
+                        error,
+                        &mut handlers,
+                        &mut pending_finally,
+                        &mut pc,
+                    ) {
+                        if self.last_error_pc.is_none() {
+                            self.last_error_pc = Some(pc);
+                            // Record the function name of the innermost frame
+                            // (the actual origin of the error).
+                            self.last_error_fn = self
+                                .frames
+                                .last()
+                                .and_then(|f| f.function_name.as_ref().map(|n| n.as_str()));
+                            self.last_error_stack = self
+                                .frames
+                                .iter()
+                                .rev()
+                                .take(24)
+                                .map(|f| {
+                                    f.function_name
+                                        .as_ref()
+                                        .map(FunctionName::as_str)
+                                        .unwrap_or_else(|| "<anon>".to_string())
+                                })
+                                .collect();
+                        }
+                        return Err(terminal);
+                    }
                     continue;
                 }
             };
@@ -379,7 +435,13 @@ impl VM {
         if let Some(catch_target) = handler.catch_target {
             let value = match &error {
                 JSError::Thrown(value) => value.clone(),
-                _ => JSValue::from_string(error.to_string()),
+                _ => {
+                    if std::env::var_os("PIXI_TRACE_ERRORS").is_some() {
+                        let stack = self.formatted_js_stack();
+                        eprintln!("[EXC] err={error} stack=[{stack}]");
+                    }
+                    JSValue::from_string(error.to_string())
+                }
             };
             self.stack.push(value);
             *pc = catch_target;
@@ -1323,8 +1385,9 @@ impl VM {
                             format!(" (JS stack: {stack})")
                         };
                         return Err(JSError::TypeError(format!(
-                            "cannot call property '{key}' on {} receiver{stack}",
+                            "cannot call property '{key}' on {} receiver{stack} (pc={})",
                             object.type_of(),
+                            self.current_pc,
                         )));
                     }
                 };
@@ -1336,9 +1399,20 @@ impl VM {
                         .filter_map(|frame| frame.function_name.as_ref().map(FunctionName::as_str))
                         .collect::<Vec<_>>()
                         .join(" -> ");
+                    let keys = object
+                        .as_object()
+                        .map(|object| {
+                            let keys = object.borrow().keys();
+                            keys.into_iter()
+                                .take(24)
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        })
+                        .unwrap_or_default();
                     return Err(JSError::TypeError(format!(
-                        "property '{key}' is not callable (found {}, JS stack: {stack})",
+                        "property '{key}' is not callable (found {}, JS stack: {stack}, pc={}, keys=[{keys}])",
                         method.type_of(),
+                        self.current_pc,
                     )));
                 }
 
@@ -1999,6 +2073,89 @@ impl VM {
 
     pub(crate) fn to_number_value(&mut self, value: JSValue) -> JSResult<f64> {
         Ok(self.to_primitive(value, PrimitiveHint::Number)?.to_number())
+    }
+
+    /// ToObject (ES §7.3.2)。
+    ///
+    /// プリミティブは対応するラッパーオブジェクトへ変換する。各ラッパーは
+    /// 正しい組み込み prototype（`String.prototype` など）を持ち、`String` に
+    /// 対しては `length` とインデックスキーの own property も合成する。
+    pub fn to_object(&mut self, value: JSValue) -> JSResult<Rc<RefCell<JSObject>>> {
+        match value.kind() {
+            JsValueKind::Object => Ok(value.as_object().unwrap()),
+            JsValueKind::Function | JsValueKind::ArrowFunction => self
+                .user_function_object(&value)
+                .or_else(|| {
+                    // 呼ばれる前の関数にも最低限のオブジェクト表現を用意する
+                    self.ensure_callable_object(&value)
+                })
+                .ok_or_else(|| {
+                    JSError::TypeError("cannot convert function to object".to_string())
+                }),
+            JsValueKind::NativeFunction | JsValueKind::BoundFunction => {
+                // ネイティブ/バインド関数は Function.prototype を prototype とする空オブジェクト。
+                // 実体を持たないため own property は持たない（getOwnPropertyDescriptor は undefined を返す）。
+                Ok(Rc::new(RefCell::new(
+                    JSObject::with_prototype(Some(Rc::clone(&self.function_prototype))),
+                )))
+            }
+            JsValueKind::String => {
+                let text = value.to_console_string();
+                let mut object =
+                    JSObject::with_prototype(Some(Rc::clone(&self.string_prototype)));
+                // length とインデックス要素は仕様上 non-writable / non-enumerable / non-configurable
+                let indexed = Property {
+                    value: JSValue::undefined(),
+                    enumerable: false,
+                    writable: false,
+                    configurable: false,
+                    getter: None,
+                    setter: None,
+                };
+                let length = Property {
+                    value: JSValue::from_number(text.encode_utf16().count() as f64),
+                    ..indexed.clone()
+                };
+                object.define_property("length".to_string(), length);
+                for (index, unit) in text.encode_utf16().enumerate() {
+                    let character = Property {
+                        value: JSValue::from_string(String::from_utf16_lossy(&[unit])),
+                        ..indexed.clone()
+                    };
+                    object.define_property(index.to_string(), character);
+                }
+                Ok(Rc::new(RefCell::new(object)))
+            }
+            JsValueKind::Number => Ok(Rc::new(RefCell::new(JSObject::with_prototype(Some(
+                Rc::clone(&self.number_prototype),
+            ))))),
+            // Boolean / BigInt / Symbol（文字列表現）: 現状専用 prototype がないため Object.prototype を使う
+            JsValueKind::Boolean | JsValueKind::BigInt => Ok(Rc::new(RefCell::new(
+                JSObject::with_prototype(Some(Rc::clone(&self.object_prototype))),
+            ))),
+            JsValueKind::Null | JsValueKind::Undefined => {
+                let stack = self.formatted_js_stack();
+                let stack = if stack.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (JS stack: {stack})")
+                };
+                Err(JSError::TypeError(format!(
+                    "cannot convert null or undefined to object{stack}"
+                )))
+            }
+        }
+    }
+
+    /// ToPropertyKey (ES §7.1.20)。
+    ///
+    /// エンジン内部では Symbol も `@@...` 接頭辞付き文字列キーで表現されるため、
+    /// プリミティブ化した値をそのまま文字列キーへ変換する。オブジェクトは
+    /// `@@toPrimitive` / `toString` / `valueOf` を経由する。
+    pub(crate) fn to_property_key(&mut self, value: JSValue) -> JSResult<String> {
+        let primitive = self.to_primitive(value, PrimitiveHint::Default)?;
+        // Symbol 値（@@... 文字列）は ToString と同義
+        Ok(primitive.to_console_string())
     }
 
     pub(crate) fn is_callable(&self, value: &JSValue) -> bool {
