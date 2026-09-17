@@ -12,6 +12,45 @@ fn error_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     make_error(vm, args, "Error")
 }
 
+/// Materializes a host-originated `JSError` (e.g. `JSError::TypeError`) as a
+/// real JS Error object chaining to the matching global prototype, so that
+/// `catch (e) { e instanceof TypeError }` behaves like the platform instead of
+/// receiving a raw string.
+pub(crate) fn host_error_to_js_value(
+    vm: &mut VM,
+    name: &str,
+    message: &str,
+) -> JSResult<JSValue> {
+    let args = vec![
+        JSValue::undefined(),
+        JSValue::from_string(message.to_string()),
+    ];
+    make_error(vm, args, name)
+}
+
+/// Converts any host-originated `JSError` into a JS value. `Thrown` values
+/// pass through untouched; typed errors (`TypeError` & co.) become real
+/// `Error` subtypes linked to the matching global prototype so
+/// `catch (e) { e instanceof … }` works. `InternalError` has no user-facing
+/// constructor and falls back to `Error`.
+pub(crate) fn js_value_from_error(vm: &mut VM, error: JSError) -> JSValue {
+    match error {
+        JSError::Thrown(value) => value,
+        other => {
+            let (name, message) = match &other {
+                JSError::SyntaxError(msg, span) => ("SyntaxError", format!("{msg} at {span}")),
+                JSError::ReferenceError(msg) => ("ReferenceError", msg.clone()),
+                JSError::TypeError(msg) => ("TypeError", msg.clone()),
+                JSError::RangeError(msg) => ("RangeError", msg.clone()),
+                JSError::InternalError(msg) => ("Error", msg.clone()),
+                JSError::Thrown(_) => unreachable!(),
+            };
+            host_error_to_js_value(vm, name, &message)
+                .unwrap_or_else(|_| JSValue::from_string(other.to_string()))
+        }
+    }
+}
+
 fn make_error(vm: &mut VM, args: Vec<JSValue>, name: &str) -> JSResult<JSValue> {
     let message = args.get(1).map(JSValue::to_string).unwrap_or_default();
     let prototype = vm

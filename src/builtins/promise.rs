@@ -42,6 +42,10 @@ fn new_promise(vm: &VM) -> Rc<RefCell<JSObject>> {
         "catch".to_string(),
         JSValue::from_native_function(promise_catch),
     );
+    promise.set(
+        "finally".to_string(),
+        JSValue::from_native_function(promise_finally),
+    );
     Rc::new(RefCell::new(promise))
 }
 
@@ -68,7 +72,8 @@ fn promise_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let resolve = bound_settler(promise_resolve, &promise);
     let reject = bound_settler(promise_reject, &promise);
     if let Err(err) = vm.call(executor, JSValue::undefined(), vec![resolve, reject]) {
-        settle_promise(vm, &promise, true, JSValue::from_string(err.to_string()));
+        let reason = crate::builtins::error_object::js_value_from_error(vm, err);
+        settle_promise(vm, &promise, true, reason);
     }
     Ok(JSValue::from_object(promise))
 }
@@ -168,6 +173,335 @@ fn promise_all_fulfill(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         if let Some(result_object) = result.as_object() {
             resolve_promise(vm, &result_object, values);
         }
+    }
+    Ok(JSValue::undefined())
+}
+
+/// `Promise.race(iterable)` — settles the result with whichever input settles
+/// first (fulfilment or rejection).
+fn promise_race(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let values = args
+        .get(1)
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| JSError::TypeError("Promise.race expects an array-like object".to_string()))?;
+    let length = values.borrow().get("length").to_number() as usize;
+    let result = new_promise(vm);
+    if length == 0 {
+        return Ok(JSValue::from_object(result));
+    }
+    let mut tracker = JSObject::new();
+    tracker.set("settled".to_string(), JSValue::from_bool(false));
+    tracker.set(
+        "result".to_string(),
+        JSValue::from_object(Rc::clone(&result)),
+    );
+    let tracker = Rc::new(RefCell::new(tracker));
+
+    for index in 0..length {
+        let value = values.borrow().get_index(index);
+        let promise = promise_resolve_static(vm, vec![JSValue::undefined(), value])?;
+        let on_fulfilled = JSValue::from_bound_function(BoundFunctionData::new(
+            JSValue::from_native_function(promise_race_settle),
+            JSValue::from_object(Rc::clone(&tracker)),
+            vec![JSValue::from_string("fulfilled".to_string())],
+        ));
+        let on_rejected = JSValue::from_bound_function(BoundFunctionData::new(
+            JSValue::from_native_function(promise_race_settle),
+            JSValue::from_object(Rc::clone(&tracker)),
+            vec![JSValue::from_string("rejected".to_string())],
+        ));
+        let _ = promise_then(vm, vec![promise, on_fulfilled, on_rejected])?;
+    }
+    Ok(JSValue::from_object(result))
+}
+
+fn promise_race_settle(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let tracker = args
+        .first()
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| JSError::TypeError("invalid Promise.race tracker".to_string()))?;
+    if tracker.borrow().get("settled").as_boolean() == Some(true) {
+        return Ok(JSValue::undefined());
+    }
+    tracker
+        .borrow_mut()
+        .set("settled".to_string(), JSValue::from_bool(true));
+    let mode = args.get(1).map(JSValue::to_string).unwrap_or_default();
+    let value = args.get(2).cloned().unwrap_or(JSValue::undefined());
+    let result = tracker.borrow().get("result");
+    if let Some(result_object) = result.as_object() {
+        if mode == "rejected" {
+            settle_promise(vm, &result_object, true, value);
+        } else {
+            resolve_promise(vm, &result_object, value);
+        }
+    }
+    Ok(JSValue::undefined())
+}
+
+/// `Promise.allSettled(iterable)` — waits for every input and reports each
+/// outcome as `{ status, value | reason }` without rejecting early.
+fn promise_all_settled(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let values = args
+        .get(1)
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| {
+            JSError::TypeError("Promise.allSettled expects an array-like object".to_string())
+        })?;
+    let length = values.borrow().get("length").to_number() as usize;
+    let result = new_promise(vm);
+    if length == 0 {
+        let values = vm.array_from_values(Vec::new());
+        resolve_promise(vm, &result, values);
+        return Ok(JSValue::from_object(result));
+    }
+    let mut tracker = JSObject::new();
+    tracker.set("remaining".to_string(), JSValue::from_number(length as f64));
+    tracker.set(
+        "result".to_string(),
+        JSValue::from_object(Rc::clone(&result)),
+    );
+    tracker.set(
+        "values".to_string(),
+        vm.array_from_values(vec![JSValue::undefined(); length]),
+    );
+    let tracker = Rc::new(RefCell::new(tracker));
+
+    for index in 0..length {
+        let value = values.borrow().get_index(index);
+        let promise = promise_resolve_static(vm, vec![JSValue::undefined(), value])?;
+        let bind = |mode: &str| {
+            JSValue::from_bound_function(BoundFunctionData::new(
+                JSValue::from_native_function(promise_all_settled_reaction),
+                JSValue::from_object(Rc::clone(&tracker)),
+                vec![
+                    JSValue::from_number(index as f64),
+                    JSValue::from_string(mode.to_string()),
+                ],
+            ))
+        };
+        let on_fulfilled = bind("fulfilled");
+        let on_rejected = bind("rejected");
+        let _ = promise_then(vm, vec![promise, on_fulfilled, on_rejected])?;
+    }
+    Ok(JSValue::from_object(result))
+}
+
+fn promise_all_settled_reaction(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let tracker = args
+        .first()
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| JSError::TypeError("invalid Promise.allSettled tracker".to_string()))?;
+    let index = args.get(1).map(JSValue::to_number).unwrap_or(0.0) as usize;
+    let mode = args.get(2).map(JSValue::to_string).unwrap_or_default();
+    let value = args.get(3).cloned().unwrap_or(JSValue::undefined());
+
+    let mut entry = JSObject::new();
+    entry.define_property(
+        "status".to_string(),
+        Property::read_only(JSValue::from_string(mode.clone())),
+    );
+    if mode == "rejected" {
+        entry.set("reason".to_string(), value);
+    } else {
+        entry.set("value".to_string(), value);
+    }
+
+    let values = tracker.borrow().get("values");
+    if let Some(values_object) = values.as_object() {
+        values_object.borrow_mut().set_index(
+            index,
+            JSValue::from_object(Rc::new(RefCell::new(entry))),
+        );
+    }
+    let remaining = tracker.borrow().get("remaining").to_number() as usize - 1;
+    tracker.borrow_mut().set(
+        "remaining".to_string(),
+        JSValue::from_number(remaining as f64),
+    );
+    if remaining == 0 {
+        let result = tracker.borrow().get("result");
+        if let Some(result_object) = result.as_object() {
+            resolve_promise(vm, &result_object, values);
+        }
+    }
+    Ok(JSValue::undefined())
+}
+
+/// `Promise.any(iterable)` — resolves with the first fulfilled input; rejects
+/// with an `AggregateError` once every input has rejected.
+fn promise_any(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let values = args
+        .get(1)
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| JSError::TypeError("Promise.any expects an array-like object".to_string()))?;
+    let length = values.borrow().get("length").to_number() as usize;
+    let result = new_promise(vm);
+    if length == 0 {
+        let errors = vm.array_from_values(Vec::new());
+        let error = make_aggregate_error(errors);
+        settle_promise(vm, &result, true, error);
+        return Ok(JSValue::from_object(result));
+    }
+    let mut tracker = JSObject::new();
+    tracker.set("remaining".to_string(), JSValue::from_number(length as f64));
+    tracker.set(
+        "result".to_string(),
+        JSValue::from_object(Rc::clone(&result)),
+    );
+    tracker.set(
+        "errors".to_string(),
+        vm.array_from_values(vec![JSValue::undefined(); length]),
+    );
+    let tracker = Rc::new(RefCell::new(tracker));
+
+    for index in 0..length {
+        let value = values.borrow().get_index(index);
+        let promise = promise_resolve_static(vm, vec![JSValue::undefined(), value])?;
+        let on_rejected = JSValue::from_bound_function(BoundFunctionData::new(
+            JSValue::from_native_function(promise_any_rejected),
+            JSValue::from_object(Rc::clone(&tracker)),
+            vec![JSValue::from_number(index as f64)],
+        ));
+        let _ = promise_then(
+            vm,
+            vec![promise, bound_settler(promise_resolve, &result), on_rejected],
+        )?;
+    }
+    Ok(JSValue::from_object(result))
+}
+
+fn promise_any_rejected(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let tracker = args
+        .first()
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| JSError::TypeError("invalid Promise.any tracker".to_string()))?;
+    let index = args.get(1).map(JSValue::to_number).unwrap_or(0.0) as usize;
+    let value = args.get(2).cloned().unwrap_or(JSValue::undefined());
+    let errors = tracker.borrow().get("errors");
+    if let Some(errors_object) = errors.as_object() {
+        errors_object.borrow_mut().set_index(index, value);
+    }
+    let remaining = tracker.borrow().get("remaining").to_number() as usize - 1;
+    tracker.borrow_mut().set(
+        "remaining".to_string(),
+        JSValue::from_number(remaining as f64),
+    );
+    if remaining == 0 {
+        let result = tracker.borrow().get("result");
+        if let Some(result_object) = result.as_object() {
+            settle_promise(vm, &result_object, true, make_aggregate_error(errors));
+        }
+    }
+    Ok(JSValue::undefined())
+}
+
+/// Builds an `AggregateError`-shaped object carrying the accumulated `errors`.
+fn make_aggregate_error(errors: JSValue) -> JSValue {
+    let mut error = JSObject::new();
+    error.set(
+        "name".to_string(),
+        JSValue::from_string("AggregateError".to_string()),
+    );
+    error.set(
+        "message".to_string(),
+        JSValue::from_string("All promises were rejected".to_string()),
+    );
+    error.set("errors".to_string(), errors);
+    JSValue::from_object(Rc::new(RefCell::new(error)))
+}
+
+/// `Promise.prototype.finally(onFinally)` — waits for `onFinally()` to settle
+/// before re-resolving/re-rejecting the child with the original value.
+fn promise_finally(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let promise = promise_receiver(args.first())?;
+    let on_finally = args.get(1).cloned().unwrap_or(JSValue::undefined());
+    let child = new_promise(vm);
+
+    let wrap = |rejected: bool| {
+        JSValue::from_bound_function(BoundFunctionData::new(
+            JSValue::from_native_function(promise_finally_handler),
+            JSValue::from_object(Rc::clone(&child)),
+            vec![
+                on_finally.clone(),
+                JSValue::from_string(if rejected { "rejected" } else { "fulfilled" }.to_string()),
+            ],
+        ))
+    };
+
+    let (state, result) = {
+        let promise = promise.borrow();
+        (promise.get(STATE).to_string(), promise.get(RESULT))
+    };
+    if state == "pending" {
+        let index = promise.borrow().get(REACTION_COUNT).to_number() as usize;
+        let mut promise = promise.borrow_mut();
+        promise.set(format!("__promise_fulfill_{index}"), wrap(false));
+        promise.set(format!("__promise_reject_{index}"), wrap(true));
+        promise.set(
+            format!("__promise_child_{index}"),
+            JSValue::from_object(new_promise(vm)),
+        );
+        promise.set(
+            REACTION_COUNT.to_string(),
+            JSValue::from_number((index + 1) as f64),
+        );
+    } else {
+        enqueue_reaction(
+            vm,
+            new_promise(vm),
+            wrap(state == "rejected"),
+            result,
+            state == "rejected",
+        );
+    }
+    Ok(JSValue::from_object(child))
+}
+
+fn promise_finally_handler(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let child = args
+        .first()
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| JSError::TypeError("invalid 'finally' handler".to_string()))?;
+    let on_finally = args.get(1).cloned().unwrap_or(JSValue::undefined());
+    let rejected = args.get(2).map(JSValue::to_string).unwrap_or_default() == "rejected";
+    let carried = args.get(3).cloned().unwrap_or(JSValue::undefined());
+
+    let finally_result = if is_callable(&on_finally) {
+        match vm.call(on_finally, JSValue::undefined(), Vec::new()) {
+            Ok(value) => value,
+            Err(err) => {
+                let reason = crate::builtins::error_object::js_value_from_error(vm, err);
+                settle_promise(vm, &child, true, reason);
+                return Ok(JSValue::undefined());
+            }
+        }
+    } else {
+        JSValue::undefined()
+    };
+    let intermediate = promise_resolve_static(vm, vec![JSValue::undefined(), finally_result])?;
+    let mode = if rejected { "rejected" } else { "fulfilled" };
+    let carry = JSValue::from_bound_function(BoundFunctionData::new(
+        JSValue::from_native_function(promise_finally_carry),
+        JSValue::from_object(Rc::clone(&child)),
+        vec![JSValue::from_string(mode.to_string()), carried],
+    ));
+    let reject = bound_settler(promise_reject, &child);
+    let _ = promise_then(vm, vec![intermediate, carry, reject])?;
+    Ok(JSValue::undefined())
+}
+
+fn promise_finally_carry(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let child = args
+        .first()
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| JSError::TypeError("invalid 'finally' handler".to_string()))?;
+    let rejected = args.get(1).map(JSValue::to_string).unwrap_or_default() == "rejected";
+    let carried = args.get(2).cloned().unwrap_or(JSValue::undefined());
+    if rejected {
+        settle_promise(vm, &child, true, carried);
+    } else {
+        resolve_promise(vm, &child, carried);
     }
     Ok(JSValue::undefined())
 }
@@ -349,7 +683,10 @@ fn promise_reaction_job(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let value = args.get(2).cloned().unwrap_or(JSValue::undefined());
     match vm.call(handler, JSValue::undefined(), vec![value]) {
         Ok(value) => resolve_promise(vm, &child, value),
-        Err(err) => settle_promise(vm, &child, true, JSValue::from_string(err.to_string())),
+        Err(err) => {
+            let reason = crate::builtins::error_object::js_value_from_error(vm, err);
+            settle_promise(vm, &child, true, reason);
+        }
     }
     Ok(JSValue::undefined())
 }
@@ -364,6 +701,10 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     prototype.set(
         "catch".to_string(),
         JSValue::from_native_function(promise_catch),
+    );
+    prototype.set(
+        "finally".to_string(),
+        JSValue::from_native_function(promise_finally),
     );
     prototype.set(
         "@@toStringTag".to_string(),
@@ -386,6 +727,18 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     constructor.set(
         "all".to_string(),
         JSValue::from_native_function(promise_all),
+    );
+    constructor.set(
+        "allSettled".to_string(),
+        JSValue::from_native_function(promise_all_settled),
+    );
+    constructor.set(
+        "any".to_string(),
+        JSValue::from_native_function(promise_any),
+    );
+    constructor.set(
+        "race".to_string(),
+        JSValue::from_native_function(promise_race),
     );
     constructor.set(
         "prototype".to_string(),

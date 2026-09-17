@@ -430,14 +430,17 @@ impl VM {
         };
         self.current_frame_mut().env = handler.env;
         if let Some(catch_target) = handler.catch_target {
-            let value = match &error {
-                JSError::Thrown(value) => value.clone(),
+            let value = match error {
+                JSError::Thrown(value) => value,
                 _ => {
                     if std::env::var_os("PIXI_TRACE_ERRORS").is_some() {
                         let stack = self.formatted_js_stack();
                         eprintln!("[EXC] err={error} stack=[{stack}]");
                     }
-                    JSValue::from_string(error.to_string())
+                    // Host-originated errors (pixi_byte's own `TypeError`
+                    // & co.) are caught by scripts as real Error instances so
+                    // `e instanceof TypeError` behaves like the platform.
+                    crate::builtins::error_object::js_value_from_error(self, error)
                 }
             };
             self.stack.push(value);
