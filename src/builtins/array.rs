@@ -739,6 +739,109 @@ fn array_find_index(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error:
     Ok(JSValue::from_number(-1.0))
 }
 
+fn relative_index(value: Option<&JSValue>, default: isize, length: isize) -> isize {
+    let Some(value) = value else {
+        return default;
+    };
+    if value.is_undefined() {
+        return default;
+    }
+    let value = value.to_number();
+    if value.is_nan() {
+        return 0;
+    }
+    let value = value.trunc() as isize;
+    if value < 0 {
+        (length + value).max(0)
+    } else {
+        value.min(length)
+    }
+}
+
+fn array_fill(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let array = receiver(&args, "fill")?;
+    let value = args.get(1).cloned().unwrap_or(JSValue::undefined());
+    let length = length(&array) as isize;
+    let start = relative_index(args.get(2), 0, length);
+    let end = relative_index(args.get(3), length, length);
+    for index in start..end {
+        array.borrow_mut().set_index(index as usize, value.clone());
+    }
+    Ok(JSValue::from_object(array))
+}
+
+fn array_copy_within(
+    _vm: &mut crate::vm::VM,
+    args: Vec<JSValue>,
+) -> crate::error::JSResult<JSValue> {
+    let array = receiver(&args, "copyWithin")?;
+    let length = length(&array) as isize;
+    let target = relative_index(args.get(1), 0, length);
+    let start = relative_index(args.get(2), 0, length);
+    let end = relative_index(args.get(3), length, length);
+    let count = (end - start).min(length - target).max(0);
+    let values: Vec<JSValue> = (0..count)
+        .map(|offset| array.borrow().get_index((start + offset) as usize))
+        .collect();
+    for (offset, value) in values.into_iter().enumerate() {
+        array
+            .borrow_mut()
+            .set_index((target + offset as isize) as usize, value);
+    }
+    Ok(JSValue::from_object(array))
+}
+
+fn array_find_last(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSResult<JSValue> {
+    let array = receiver(&args, "findLast")?;
+    let callback = args.get(1).cloned().unwrap_or(JSValue::undefined());
+    let array_value = JSValue::from_object(Rc::clone(&array));
+    for index in (0..length(&array)).rev() {
+        let value = array.borrow().get_index(index);
+        if vm
+            .call(
+                callback.clone(),
+                JSValue::undefined(),
+                vec![
+                    value.clone(),
+                    JSValue::from_number(index as f64),
+                    array_value.clone(),
+                ],
+            )?
+            .to_boolean()
+        {
+            return Ok(value);
+        }
+    }
+    Ok(JSValue::undefined())
+}
+
+fn array_find_last_index(
+    vm: &mut crate::vm::VM,
+    args: Vec<JSValue>,
+) -> crate::error::JSResult<JSValue> {
+    let array = receiver(&args, "findLastIndex")?;
+    let callback = args.get(1).cloned().unwrap_or(JSValue::undefined());
+    let array_value = JSValue::from_object(Rc::clone(&array));
+    for index in (0..length(&array)).rev() {
+        let value = array.borrow().get_index(index);
+        if vm
+            .call(
+                callback.clone(),
+                JSValue::undefined(),
+                vec![
+                    value,
+                    JSValue::from_number(index as f64),
+                    array_value.clone(),
+                ],
+            )?
+            .to_boolean()
+        {
+            return Ok(JSValue::from_number(index as f64));
+        }
+    }
+    Ok(JSValue::from_number(-1.0))
+}
+
 fn flatten_values(value: JSValue, depth: usize, output: &mut Vec<JSValue>) {
     if depth > 0 && value.is_object() {
         let object = value.as_object().unwrap();
@@ -961,6 +1064,10 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     define_method(&mut proto, "sort", array_sort);
     define_method(&mut proto, "find", array_find);
     define_method(&mut proto, "findIndex", array_find_index);
+    define_method(&mut proto, "findLast", array_find_last);
+    define_method(&mut proto, "findLastIndex", array_find_last_index);
+    define_method(&mut proto, "fill", array_fill);
+    define_method(&mut proto, "copyWithin", array_copy_within);
     define_method(&mut proto, "flat", array_flat);
     define_method(&mut proto, "flatMap", array_flat_map);
     define_method(&mut proto, "reverse", array_reverse);

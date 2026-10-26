@@ -396,6 +396,158 @@ fn string_char_code_at(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     ))
 }
 
+fn string_code_point_at(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let input = receiver(&args, "codePointAt")?;
+    let units: Vec<u16> = input.encode_utf16().collect();
+    let index = args.get(1).map(JSValue::to_number).unwrap_or(0.0);
+    if !index.is_finite() || index < 0.0 {
+        return Ok(JSValue::undefined());
+    }
+    let index = index.trunc() as usize;
+    if index >= units.len() {
+        return Ok(JSValue::undefined());
+    }
+    let first = units[index];
+    if (0xD800..=0xDBFF).contains(&first) && index + 1 < units.len() {
+        let second = units[index + 1];
+        if (0xDC00..=0xDFFF).contains(&second) {
+            let code = 0x10000 + (((first - 0xD800) as u32) << 10) + (second - 0xDC00) as u32;
+            return Ok(JSValue::from_number(code as f64));
+        }
+    }
+    Ok(JSValue::from_number(first as f64))
+}
+
+fn string_at(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let input = receiver(&args, "at")?;
+    let units: Vec<u16> = input.encode_utf16().collect();
+    let length = units.len() as f64;
+    let index = args.get(1).map(JSValue::to_number).unwrap_or(0.0);
+    let index = if index < 0.0 {
+        (length + index).trunc()
+    } else {
+        index.trunc()
+    };
+    if !index.is_finite() || index < 0.0 || index >= length {
+        return Ok(JSValue::undefined());
+    }
+    let index = index as usize;
+    let end = if (0xD800..=0xDBFF).contains(&units[index]) && index + 1 < units.len() {
+        index + 2
+    } else {
+        index + 1
+    };
+    Ok(JSValue::from_string(String::from_utf16_lossy(
+        &units[index..end],
+    )))
+}
+
+fn string_pad_start(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let input = receiver(&args, "padStart")?;
+    let target = args.get(1).map(JSValue::to_number).unwrap_or(0.0);
+    let length = input.chars().count();
+    if !target.is_finite() || target <= length as f64 {
+        return Ok(JSValue::from_string(input));
+    }
+    let fill = args
+        .get(2)
+        .map(JSValue::to_string)
+        .filter(|fill| !fill.is_empty())
+        .unwrap_or_else(|| " ".to_string());
+    let needed = target.trunc() as usize - length;
+    let pad: String = fill.chars().cycle().take(needed).collect();
+    Ok(JSValue::from_string(format!("{pad}{input}")))
+}
+
+fn string_pad_end(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let input = receiver(&args, "padEnd")?;
+    let target = args.get(1).map(JSValue::to_number).unwrap_or(0.0);
+    let length = input.chars().count();
+    if !target.is_finite() || target <= length as f64 {
+        return Ok(JSValue::from_string(input));
+    }
+    let fill = args
+        .get(2)
+        .map(JSValue::to_string)
+        .filter(|fill| !fill.is_empty())
+        .unwrap_or_else(|| " ".to_string());
+    let needed = target.trunc() as usize - length;
+    let pad: String = fill.chars().cycle().take(needed).collect();
+    Ok(JSValue::from_string(format!("{input}{pad}")))
+}
+
+fn string_repeat(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let input = receiver(&args, "repeat")?;
+    let count = args.get(1).map(JSValue::to_number).unwrap_or(0.0);
+    if count < 0.0 || count.is_infinite() {
+        return Err(JSError::RangeError(
+            "Invalid count value: repeat count must be non-negative".to_string(),
+        ));
+    }
+    let count = count.trunc() as usize;
+    if input.len().saturating_mul(count) > 1 << 28 {
+        return Err(JSError::RangeError("Invalid string length".to_string()));
+    }
+    Ok(JSValue::from_string(input.repeat(count)))
+}
+
+fn string_substr(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let input = receiver(&args, "substr")?;
+    let length = input.chars().count() as isize;
+    let mut start = args.get(1).map(JSValue::to_number).unwrap_or(0.0) as isize;
+    if start < 0 {
+        start = (length + start).max(0);
+    }
+    let count = match args.get(2) {
+        Some(value) if !value.to_number().is_nan() => value.to_number().max(0.0) as isize,
+        _ => length - start,
+    };
+    let start = start.min(length).max(0) as usize;
+    let count = count.max(0) as usize;
+    Ok(JSValue::from_string(
+        input.chars().skip(start).take(count).collect(),
+    ))
+}
+
+fn string_normalize(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    Ok(JSValue::from_string(receiver(&args, "normalize")?))
+}
+
+fn string_locale_compare(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let input = receiver(&args, "localeCompare")?;
+    let other = args.get(1).map(JSValue::to_string).unwrap_or_default();
+    Ok(JSValue::from_number(match input.cmp(&other) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    }))
+}
+
+fn string_trim_start(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    Ok(JSValue::from_string(
+        receiver(&args, "trimStart")?.trim_start().to_string(),
+    ))
+}
+
+fn string_trim_end(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    Ok(JSValue::from_string(
+        receiver(&args, "trimEnd")?.trim_end().to_string(),
+    ))
+}
+
+fn string_from_code_point(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let mut output = String::new();
+    for value in args.iter().skip(1) {
+        let code = value.to_number();
+        if !code.is_finite() || code < 0.0 || code > 0x10FFFF as f64 || code.fract() != 0.0 {
+            return Err(JSError::RangeError("Invalid code point".to_string()));
+        }
+        let code = code as u32;
+        output.push(char::from_u32(code).unwrap_or('\u{FFFD}'));
+    }
+    Ok(JSValue::from_string(output))
+}
+
 fn string_substring(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = receiver(&args, "substring")?;
     let length = input.chars().count();
@@ -547,6 +699,51 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         JSValue::from_native_function(string_char_code_at),
     );
     prototype.set(
+        "codePointAt".to_string(),
+        JSValue::from_native_function(string_code_point_at),
+    );
+    prototype.set("at".to_string(), JSValue::from_native_function(string_at));
+    prototype.set(
+        "padStart".to_string(),
+        JSValue::from_native_function(string_pad_start),
+    );
+    prototype.set(
+        "padEnd".to_string(),
+        JSValue::from_native_function(string_pad_end),
+    );
+    prototype.set(
+        "repeat".to_string(),
+        JSValue::from_native_function(string_repeat),
+    );
+    prototype.set(
+        "substr".to_string(),
+        JSValue::from_native_function(string_substr),
+    );
+    prototype.set(
+        "normalize".to_string(),
+        JSValue::from_native_function(string_normalize),
+    );
+    prototype.set(
+        "localeCompare".to_string(),
+        JSValue::from_native_function(string_locale_compare),
+    );
+    prototype.set(
+        "trimStart".to_string(),
+        JSValue::from_native_function(string_trim_start),
+    );
+    prototype.set(
+        "trimEnd".to_string(),
+        JSValue::from_native_function(string_trim_end),
+    );
+    prototype.set(
+        "toLocaleLowerCase".to_string(),
+        JSValue::from_native_function(string_to_lower_case),
+    );
+    prototype.set(
+        "toLocaleUpperCase".to_string(),
+        JSValue::from_native_function(string_to_upper_case),
+    );
+    prototype.set(
         "substring".to_string(),
         JSValue::from_native_function(string_substring),
     );
@@ -575,6 +772,10 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     constructor.set(
         "fromCharCode".to_string(),
         JSValue::from_native_function(string_from_char_code),
+    );
+    constructor.set(
+        "fromCodePoint".to_string(),
+        JSValue::from_native_function(string_from_code_point),
     );
     constructor.set("raw".to_string(), JSValue::from_native_function(string_raw));
     constructor.set(

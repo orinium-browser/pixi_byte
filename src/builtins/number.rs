@@ -175,6 +175,113 @@ fn number_value_of(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::from_number(receiver(&args, "valueOf")?))
 }
 
+fn number_to_fixed(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = receiver(&args, "toFixed")?;
+    let digits = args.get(1).map(JSValue::to_number).unwrap_or(0.0);
+    if !(0.0..=100.0).contains(&digits) {
+        return Err(JSError::RangeError(
+            "toFixed() digits argument must be between 0 and 100".to_string(),
+        ));
+    }
+    let digits = digits.trunc() as usize;
+    if !value.is_finite() {
+        return Ok(JSValue::from_string(
+            JSValue::from_number(value).to_string(),
+        ));
+    }
+    Ok(JSValue::from_string(format!("{value:.digits$}")))
+}
+
+fn number_to_exponential(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = receiver(&args, "toExponential")?;
+    if !value.is_finite() {
+        return Ok(JSValue::from_string(
+            JSValue::from_number(value).to_string(),
+        ));
+    }
+    let digits = args.get(1).map(JSValue::to_number);
+    let raw = match digits {
+        Some(digits) if digits.is_finite() => {
+            if !(0.0..=100.0).contains(&digits) {
+                return Err(JSError::RangeError(
+                    "toExponential() argument must be between 0 and 100".to_string(),
+                ));
+            }
+            format!("{value:.prec$e}", prec = digits.trunc() as usize)
+        }
+        _ => format!("{value:e}"),
+    };
+    Ok(JSValue::from_string(normalize_exponent(&raw)))
+}
+
+fn normalize_exponent(raw: &str) -> String {
+    match raw.split_once('e') {
+        Some((mantissa, exponent)) => match exponent.parse::<i32>() {
+            Ok(exponent) => format!("{mantissa}e{exponent:+}"),
+            Err(_) => raw.to_string(),
+        },
+        None => raw.to_string(),
+    }
+}
+
+fn number_to_precision(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = receiver(&args, "toPrecision")?;
+    let Some(precision) = args.get(1).map(JSValue::to_number) else {
+        return Ok(JSValue::from_string(
+            JSValue::from_number(value).to_string(),
+        ));
+    };
+    if !value.is_finite() {
+        return Ok(JSValue::from_string(
+            JSValue::from_number(value).to_string(),
+        ));
+    }
+    if !(1.0..=100.0).contains(&precision) {
+        return Err(JSError::RangeError(
+            "toPrecision() argument must be between 1 and 100".to_string(),
+        ));
+    }
+    let precision = precision.trunc() as usize;
+    if value == 0.0 {
+        return Ok(JSValue::from_string(format!(
+            "{value:.prec$}",
+            prec = precision - 1
+        )));
+    }
+    let exponent = value.abs().log10().floor() as i32;
+    if exponent < -6 || exponent >= precision as i32 {
+        let raw = format!("{value:.prec$e}", prec = precision - 1);
+        Ok(JSValue::from_string(normalize_exponent(&raw)))
+    } else {
+        let decimals = (precision as i32 - 1 - exponent).max(0) as usize;
+        Ok(JSValue::from_string(format!("{value:.decimals$}")))
+    }
+}
+
+fn number_is_integer(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = args.get(1).map(JSValue::to_number).unwrap_or(f64::NAN);
+    Ok(JSValue::from_bool(
+        value.is_finite() && value.fract() == 0.0,
+    ))
+}
+
+fn number_is_safe_integer(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = args.get(1).map(JSValue::to_number).unwrap_or(f64::NAN);
+    Ok(JSValue::from_bool(
+        value.is_finite() && value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0,
+    ))
+}
+
+fn number_is_finite(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = args.get(1).map(JSValue::to_number).unwrap_or(f64::NAN);
+    Ok(JSValue::from_bool(value.is_finite()))
+}
+
+fn number_is_nan(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let value = args.get(1).map(JSValue::to_number).unwrap_or(f64::NAN);
+    Ok(JSValue::from_bool(value.is_nan()))
+}
+
 /// Installs Number and its primitive prototype.
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     {
@@ -218,6 +325,22 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         "valueOf".to_string(),
         JSValue::from_native_function(number_value_of),
     );
+    prototype.set(
+        "toFixed".to_string(),
+        JSValue::from_native_function(number_to_fixed),
+    );
+    prototype.set(
+        "toExponential".to_string(),
+        JSValue::from_native_function(number_to_exponential),
+    );
+    prototype.set(
+        "toPrecision".to_string(),
+        JSValue::from_native_function(number_to_precision),
+    );
+    prototype.set(
+        "toLocaleString".to_string(),
+        JSValue::from_native_function(number_to_string),
+    );
 
     let mut constructor = JSObject::new();
     constructor.set(
@@ -235,6 +358,54 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     constructor.set(
         "parseFloat".to_string(),
         JSValue::from_native_function(parse_float),
+    );
+    constructor.set(
+        "isInteger".to_string(),
+        JSValue::from_native_function(number_is_integer),
+    );
+    constructor.set(
+        "isSafeInteger".to_string(),
+        JSValue::from_native_function(number_is_safe_integer),
+    );
+    constructor.set(
+        "isFinite".to_string(),
+        JSValue::from_native_function(number_is_finite),
+    );
+    constructor.set(
+        "isNaN".to_string(),
+        JSValue::from_native_function(number_is_nan),
+    );
+    constructor.define_property(
+        "MAX_SAFE_INTEGER".to_string(),
+        Property::read_only(JSValue::from_number(9_007_199_254_740_991.0)),
+    );
+    constructor.define_property(
+        "MIN_SAFE_INTEGER".to_string(),
+        Property::read_only(JSValue::from_number(-9_007_199_254_740_991.0)),
+    );
+    constructor.define_property(
+        "MAX_VALUE".to_string(),
+        Property::read_only(JSValue::from_number(f64::MAX)),
+    );
+    constructor.define_property(
+        "MIN_VALUE".to_string(),
+        Property::read_only(JSValue::from_number(f64::MIN_POSITIVE)),
+    );
+    constructor.define_property(
+        "EPSILON".to_string(),
+        Property::read_only(JSValue::from_number(f64::EPSILON)),
+    );
+    constructor.define_property(
+        "POSITIVE_INFINITY".to_string(),
+        Property::read_only(JSValue::from_number(f64::INFINITY)),
+    );
+    constructor.define_property(
+        "NEGATIVE_INFINITY".to_string(),
+        Property::read_only(JSValue::from_number(f64::NEG_INFINITY)),
+    );
+    constructor.define_property(
+        "NaN".to_string(),
+        Property::read_only(JSValue::from_number(f64::NAN)),
     );
     global.borrow_mut().set(
         "Number".to_string(),

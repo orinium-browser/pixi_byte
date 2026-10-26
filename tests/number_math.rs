@@ -44,3 +44,79 @@ fn math_random_returns_a_fraction() {
     };
     assert!((0.0..1.0).contains(&value));
 }
+
+#[test]
+fn number_formatting_and_static_helpers() {
+    let mut engine = pixi_byte::JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            [
+                (1234.5678).toFixed(2),
+                (12345).toExponential(2),
+                (123.456).toPrecision(4),
+                Number.isInteger(4),
+                Number.isSafeInteger(2 ** 53),
+                Number.MAX_SAFE_INTEGER,
+                Number.isNaN(Number.NaN)
+            ].join("|");
+            "#,
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        pixi_byte::JSValue::from_string(
+            "1234.57|1.23e+4|123.5|true|false|9007199254740991|true".to_string()
+        )
+    );
+}
+
+#[test]
+fn string_unicode_and_padding_helpers() {
+    let mut engine = pixi_byte::JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            [
+                "\u{1F600}".codePointAt(0),
+                "abc".padStart(5, "xy"),
+                "abc".padEnd(5, "xy"),
+                "ab".repeat(3),
+                "hello".at(-1),
+                "  hi  ".trimStart(),
+                String.fromCodePoint(0x1F600).length
+            ].join("|");
+            "#,
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        pixi_byte::JSValue::from_string("128512|xyabc|abcxy|ababab|o|hi  |2".to_string())
+    );
+}
+
+#[test]
+fn array_fill_copy_within_and_find_last() {
+    let mut engine = pixi_byte::JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const a = [1, 2, 3, 4];
+            a.fill(9, 1, 3);
+            const b = [1, 2, 3, 4, 5];
+            b.copyWithin(0, 3);
+            const c = [5, 6, 7, 8];
+            [
+                a.join(","),
+                b.join(","),
+                c.findLast(function (n) { return n % 2 === 0; }),
+                c.findLastIndex(function (n) { return n % 2 === 0; })
+            ].join("|");
+            "#,
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        pixi_byte::JSValue::from_string("1,9,9,4|4,5,3,4,5|8|3".to_string())
+    );
+}
