@@ -95,9 +95,21 @@ pub enum BindingPattern {
     Identifier(String),
     Target(Expression),
     Array(Vec<Option<BindingPattern>>),
-    Object(Vec<(String, BindingPattern)>),
+    Object(Vec<(PatternKey, BindingPattern)>),
     Rest(Box<BindingPattern>),
     Default(Box<BindingPattern>, Expression),
+}
+
+/// Key of an object binding pattern (or destructuring assignment) property.
+///
+/// A computed key keeps its expression: `let {[c]: value} = source` reads
+/// `source[c]`, and the same key is excluded from an object rest element.
+/// Rest elements carry [`PatternKey::Static`] with an empty name, matching the
+/// existing rest sentinel.
+#[derive(Debug, Clone)]
+pub enum PatternKey {
+    Static(String),
+    Computed(Expression),
 }
 
 /// 式
@@ -183,8 +195,17 @@ pub enum Expression {
         super_class: Option<Box<Expression>>,
         constructor: Option<ClassMethod>,
         methods: Vec<ClassMethod>,
+        fields: Vec<ClassField>,
     },
     // TODO: 他の式を追加
+}
+
+#[derive(Debug, Clone)]
+pub struct ClassField {
+    pub name: String,
+    pub computed_name: Option<Box<Expression>>,
+    pub is_static: bool,
+    pub initializer: Option<Expression>,
 }
 
 #[derive(Debug, Clone)]
@@ -519,6 +540,7 @@ impl Parser {
 
     fn parse_for_statement(&mut self) -> JSResult<Statement> {
         self.expect(&TokenKind::For, "Expected 'for'")?;
+        self.eat(&TokenKind::Await)?; // `for await (...)` binds to the enclosing async context
         self.expect(&TokenKind::LeftParen, "Expected '(' after 'for'")?;
 
         if matches!(
@@ -769,6 +791,9 @@ impl Parser {
             TokenKind::LeftShiftEq => Some(Some(BinaryOp::LeftShift)),
             TokenKind::RightShiftEq => Some(Some(BinaryOp::RightShift)),
             TokenKind::UnsignedRightShiftEq => Some(Some(BinaryOp::UnsignedRightShift)),
+            TokenKind::NullishAssign => Some(Some(BinaryOp::Nullish)),
+            TokenKind::AndAssign => Some(Some(BinaryOp::And)),
+            TokenKind::OrAssign => Some(Some(BinaryOp::Or)),
             _ => None,
         };
         if let Some(operator) = assignment {
@@ -998,7 +1023,10 @@ impl Parser {
                 while !self.check(&TokenKind::RightBrace) {
                     if self.eat(&TokenKind::DotDotDot)? {
                         let rest = self.parse_binding_pattern()?;
-                        properties.push((String::new(), BindingPattern::Rest(Box::new(rest))));
+                        properties.push((
+                            PatternKey::Static(String::new()),
+                            BindingPattern::Rest(Box::new(rest)),
+                        ));
                         if !self.check(&TokenKind::RightBrace) {
                             return Err(JSError::SyntaxError(
                                 "Object rest binding must be last".to_string(),
@@ -1007,11 +1035,24 @@ impl Parser {
                         }
                         break;
                     }
-                    let key = self.expect_object_property_key()?;
+                    let key = if self.eat(&TokenKind::LeftBracket)? {
+                        let key = self.parse_expression()?;
+                        self.expect(&TokenKind::RightBracket, "Expected ']' after computed key")?;
+                        PatternKey::Computed(key)
+                    } else {
+                        PatternKey::Static(self.expect_object_property_key()?)
+                    };
                     let value = if self.eat(&TokenKind::Colon)? {
                         self.parse_binding_pattern()?
                     } else {
-                        BindingPattern::Identifier(key.clone())
+                        // Shorthand needs a name to bind: `{[k]}` is invalid.
+                        let PatternKey::Static(name) = &key else {
+                            return Err(JSError::SyntaxError(
+                                "Expected ':' after computed key in binding pattern".to_string(),
+                                self.current().span,
+                            ));
+                        };
+                        BindingPattern::Identifier(name.clone())
                     };
                     let value = if self.eat(&TokenKind::Eq)? {
                         BindingPattern::Default(Box::new(value), self.parse_assignment()?)
@@ -1075,6 +1116,7 @@ impl Parser {
         self.expect(&TokenKind::LeftBrace, "Expected '{' before class body")?;
         let mut constructor = None;
         let mut methods = Vec::new();
+        let mut fields = Vec::new();
         while !self.check(&TokenKind::RightBrace) {
             if self.eat(&TokenKind::Semicolon)? {
                 continue;
@@ -1103,12 +1145,41 @@ impl Parser {
                 let expression = self.parse_expression()?;
                 self.expect(&TokenKind::RightBracket, "Expected ']' after method name")?;
                 ("<computed>".to_string(), Some(Box::new(expression)))
+            } else if matches!(
+                &self.current().kind,
+                TokenKind::String(_) | TokenKind::NumberLiteral(_)
+            ) {
+                (self.expect_object_property_key()?, None)
+            } else if let TokenKind::PrivateName(name) = &self.current().kind {
+                let name = name.clone();
+                self.advance()?;
+                (name, None)
             } else {
                 (
                     self.expect_identifier_name("Expected class method name")?,
                     None,
                 )
             };
+            if !self.check(&TokenKind::LeftParen) && kind == ClassMethodKind::Method {
+                let initializer = if self.eat(&TokenKind::Eq)? {
+                    Some(self.parse_assignment()?)
+                } else {
+                    None
+                };
+                if !self.check(&TokenKind::RightBrace) && !self.check(&TokenKind::Semicolon) {
+                    return Err(JSError::SyntaxError(
+                        "Expected ';' after class field".to_string(),
+                        self.current().span,
+                    ));
+                }
+                fields.push(ClassField {
+                    name: method_name,
+                    computed_name,
+                    is_static,
+                    initializer,
+                });
+                continue;
+            }
             let (params, mut prologue) = self.parse_method_parameters()?;
             let mut body = self.parse_block()?;
             prologue.append(&mut body);
@@ -1133,6 +1204,7 @@ impl Parser {
             super_class,
             constructor,
             methods,
+            fields,
         })
     }
 
@@ -1246,7 +1318,7 @@ impl Parser {
                         computed: true,
                     };
                 } else {
-                    let property = self.expect_identifier_name("Expected property name")?;
+                    let property = self.expect_property_name("Expected property name")?;
                     expr = Expression::OptionalMemberAccess {
                         object: Box::new(expr),
                         property: Box::new(Expression::Literal(Literal::String(property))),
@@ -1254,7 +1326,7 @@ impl Parser {
                     };
                 }
             } else if self.eat(&TokenKind::Dot)? {
-                let property = self.expect_identifier_name("Expected property name")?;
+                let property = self.expect_property_name("Expected property name")?;
 
                 let member = if optional_chain {
                     Expression::OptionalMemberAccess {
@@ -1513,10 +1585,23 @@ impl Parser {
 
     fn parse_new_expression(&mut self) -> JSResult<Expression> {
         self.advance()?; // consume 'new'
+        if self.eat(&TokenKind::Dot)? {
+            // `new.target` meta-property; approximated by `this.constructor`,
+            // which is the value of `new.target` for ordinary instance
+            // construction and preserves the `.prototype` uses bundles rely on.
+            self.expect_identifier_name("Expected 'target' after 'new.'")?;
+            return Ok(Expression::MemberAccess {
+                object: Box::new(Expression::This),
+                property: Box::new(Expression::Literal(Literal::String(
+                    "constructor".to_string(),
+                ))),
+                computed: false,
+            });
+        }
         let mut callee = self.parse_primary()?;
         loop {
             if self.eat(&TokenKind::Dot)? {
-                let property = self.expect_identifier_name("Expected property name")?;
+                let property = self.expect_property_name("Expected property name")?;
                 callee = Expression::MemberAccess {
                     object: Box::new(callee),
                     property: Box::new(Expression::Literal(Literal::String(property))),
@@ -1608,8 +1693,22 @@ impl Parser {
             if self.eat(&TokenKind::LeftBracket)? {
                 let key = self.parse_expression()?;
                 self.expect(&TokenKind::RightBracket, "Expected ']' after computed key")?;
-                self.expect(&TokenKind::Colon, "Expected ':' after computed key")?;
-                let value = self.parse_assignment()?;
+                // `{ [key]() {} }` is the computed form of a method shorthand:
+                // the same data property as `{ [key]: function () {} }`.
+                let value = if self.check(&TokenKind::LeftParen) {
+                    let (params, mut prologue) = self.parse_method_parameters()?;
+                    let mut body = self.parse_block()?;
+                    prologue.append(&mut body);
+                    Expression::Function {
+                        name: None,
+                        params,
+                        body: prologue,
+                        is_generator: false,
+                    }
+                } else {
+                    self.expect(&TokenKind::Colon, "Expected ':' after computed key")?;
+                    self.parse_assignment()?
+                };
                 properties.push(ObjectProperty::ComputedData { key, value });
                 if !self.check(&TokenKind::RightBrace) && !self.eat(&TokenKind::Comma)? {
                     return Err(JSError::SyntaxError(
@@ -1619,6 +1718,70 @@ impl Parser {
                 }
                 continue;
             }
+
+            if matches!(&self.current().kind, TokenKind::Async)
+                && (matches!(self.next.kind, TokenKind::Star)
+                    || matches!(
+                        &self.next.kind,
+                        TokenKind::Identifier(_)
+                            | TokenKind::LeftBracket
+                            | TokenKind::String(_)
+                            | TokenKind::NumberLiteral(_)
+                    ))
+            {
+                // async method shorthand: `async name(...) {}`, `async *name(...) {}`,
+                // `async [computed](...) {}`. Consumed like the existing method
+                // shorthand below; the async/suspendable behavior is a later concern.
+                // (`async` as a plain property key is excluded because its next
+                // token is `:`, `,` or `}`, none of which are method-name starts.)
+                self.advance()?; // 'async'
+                let is_generator = self.eat(&TokenKind::Star)?;
+                let (key, computed_name) = if self.eat(&TokenKind::LeftBracket)? {
+                    let key = self.parse_expression()?;
+                    self.expect(
+                        &TokenKind::RightBracket,
+                        "Expected ']' after computed method name",
+                    )?;
+                    ("<computed>".to_string(), Some(key))
+                } else {
+                    (self.expect_object_property_key()?, None)
+                };
+                let (params, mut prologue) = self.parse_method_parameters()?;
+                let mut body = self.parse_block()?;
+                if let Some(computed_name) = computed_name {
+                    properties.push(ObjectProperty::ComputedData {
+                        key: computed_name,
+                        value: Expression::Function {
+                            name: Some(key),
+                            params,
+                            body: {
+                                prologue.append(&mut body);
+                                prologue
+                            },
+                            is_generator,
+                        },
+                    });
+                } else {
+                    prologue.append(&mut body);
+                    properties.push(ObjectProperty::Data {
+                        key: key.clone(),
+                        value: Expression::Function {
+                            name: Some(key),
+                            params,
+                            body: prologue,
+                            is_generator,
+                        },
+                    });
+                }
+                if !self.check(&TokenKind::RightBrace) && !self.eat(&TokenKind::Comma)? {
+                    return Err(JSError::SyntaxError(
+                        "Expected ',' or '}' in object literal".into(),
+                        self.current().span,
+                    ));
+                }
+                continue;
+            }
+
             if let TokenKind::Identifier(kind) = &self.current().kind
                 && (kind == "get" || kind == "set")
                 && !matches!(
@@ -1754,6 +1917,17 @@ impl Parser {
     /// Current token
     fn current(&self) -> &Token {
         &self.current
+    }
+
+    /// Accepts an identifier-name token or a `#private` name as a property key.
+    fn expect_property_name(&mut self, message: &str) -> JSResult<String> {
+        if let TokenKind::PrivateName(name) = &self.current().kind {
+            let name = name.clone();
+            self.advance()?;
+            Ok(name)
+        } else {
+            self.expect_identifier_name(message)
+        }
     }
 
     /*

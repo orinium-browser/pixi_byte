@@ -454,6 +454,7 @@ impl Expression {
                 super_class,
                 constructor,
                 methods,
+                fields,
             } => {
                 println!(
                     "{prefix}{branch}Class({})",
@@ -466,6 +467,18 @@ impl Expression {
                     println!(
                         "{next_prefix}├─ constructor({})",
                         constructor.params.join(", ")
+                    );
+                }
+                for field in fields.iter() {
+                    println!(
+                        "{next_prefix}├─ {}{}{}",
+                        if field.is_static { "static " } else { "" },
+                        field.name,
+                        if field.initializer.is_some() {
+                            " = <initializer>"
+                        } else {
+                            ""
+                        }
                     );
                 }
                 for (index, method) in methods.iter().enumerate() {

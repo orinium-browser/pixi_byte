@@ -103,7 +103,11 @@ impl Lexer {
                     self.advance();
                     TokenKind::OptionalChain
                 } else if self.match_char('?') {
-                    TokenKind::Nullish
+                    if self.match_char('=') {
+                        TokenKind::NullishAssign
+                    } else {
+                        TokenKind::Nullish
+                    }
                 } else {
                     TokenKind::Question
                 }
@@ -239,7 +243,11 @@ impl Lexer {
             // 論理・ビット演算子
             '&' => {
                 if self.match_char('&') {
-                    TokenKind::And
+                    if self.match_char('=') {
+                        TokenKind::AndAssign
+                    } else {
+                        TokenKind::And
+                    }
                 } else if self.match_char('=') {
                     TokenKind::BitAndEq
                 } else {
@@ -248,7 +256,11 @@ impl Lexer {
             }
             '|' => {
                 if self.match_char('|') {
-                    TokenKind::Or
+                    if self.match_char('=') {
+                        TokenKind::OrAssign
+                    } else {
+                        TokenKind::Or
+                    }
                 } else if self.match_char('=') {
                     TokenKind::BitOrEq
                 } else {
@@ -266,6 +278,27 @@ impl Lexer {
             // 文字列リテラル
             '"' | '\'' => return self.scan_string(ch),
             '`' => return self.scan_template_literal(),
+
+            // プライベートクラスメンバ: `#name`
+            '#' => {
+                // `#` は next_token がすでに消費済み。
+                let name_start = self.position;
+                while let Some(c) = self.peek() {
+                    if c.is_alphanumeric() || c == '_' || c == '$' {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                if self.position == name_start {
+                    return Err(JSError::SyntaxError(
+                        "Private name must be '#' followed by an identifier".to_string(),
+                        Span::new(start, self.position, start_line, start_column),
+                    ));
+                }
+                let name: String = self.source[name_start..self.position].iter().collect();
+                TokenKind::PrivateName(format!("#{name}"))
+            }
 
             // 数値リテラル
             '0'..='9' => return self.scan_number(),
@@ -426,8 +459,42 @@ impl Lexer {
                             value.push(char::from_u32(code).unwrap_or('\u{FFFD}'));
                         }
                         'u' => {
-                            let code = self.scan_hex_escape(4, start, start_line, start_column)?;
-                            value.push(char::from_u32(code).unwrap_or('\u{FFFD}'));
+                            if self.peek() == Some('{') {
+                                self.advance();
+                                let mut code: u32 = 0;
+                                let mut digits = 0;
+                                while let Some(ch) = self.peek() {
+                                    if ch == '}' {
+                                        break;
+                                    }
+                                    let Some(digit) = ch.to_digit(16) else {
+                                        return Err(JSError::SyntaxError(
+                                            "Invalid Unicode escape sequence".to_string(),
+                                            Span::new(
+                                                start,
+                                                self.position,
+                                                start_line,
+                                                start_column,
+                                            ),
+                                        ));
+                                    };
+                                    code = code.saturating_mul(16).saturating_add(digit);
+                                    digits += 1;
+                                    self.advance();
+                                }
+                                if digits == 0 || self.peek() != Some('}') {
+                                    return Err(JSError::SyntaxError(
+                                        "Invalid Unicode escape sequence".to_string(),
+                                        Span::new(start, self.position, start_line, start_column),
+                                    ));
+                                }
+                                self.advance();
+                                value.push(char::from_u32(code).unwrap_or('\u{FFFD}'));
+                            } else {
+                                let code =
+                                    self.scan_hex_escape(4, start, start_line, start_column)?;
+                                value.push(char::from_u32(code).unwrap_or('\u{FFFD}'));
+                            }
                         }
                         '\n' => {}
                         '\\' => value.push('\\'),
@@ -531,11 +598,32 @@ impl Lexer {
         let mut brace_depth = 1_usize;
         let mut quote = None;
         let mut escaped = false;
+        let mut in_regex = false;
+        let mut regex_escaped = false;
+        let mut regex_charset = false;
+        let mut in_line_comment = false;
+        let mut in_block_comment = false;
+        let mut prev = None;
 
         while let Some(ch) = self.peek() {
             self.advance();
+            expression.push(ch);
+
+            if in_block_comment {
+                if prev == Some('*') && ch == '/' {
+                    in_block_comment = false;
+                }
+                prev = Some(ch);
+                continue;
+            }
+            if in_line_comment {
+                if ch == '\n' {
+                    in_line_comment = false;
+                }
+                prev = Some(ch);
+                continue;
+            }
             if let Some(active_quote) = quote {
-                expression.push(ch);
                 if escaped {
                     escaped = false;
                 } else if ch == '\\' {
@@ -543,32 +631,140 @@ impl Lexer {
                 } else if ch == active_quote {
                     quote = None;
                 }
+                prev = Some(ch);
+                continue;
+            }
+            if in_regex {
+                if regex_escaped {
+                    regex_escaped = false;
+                } else if ch == '\\' {
+                    regex_escaped = true;
+                } else if regex_charset {
+                    if ch == ']' {
+                        regex_charset = false;
+                    }
+                } else {
+                    match ch {
+                        '[' => regex_charset = true,
+                        '/' => in_regex = false,
+                        _ => {}
+                    }
+                }
+                prev = Some(ch);
                 continue;
             }
             match ch {
-                '\'' | '"' | '`' => {
+                '\'' | '"' => {
                     quote = Some(ch);
-                    expression.push(ch);
+                }
+                '`' => {
+                    // A nested template literal: consume it as a unit so its
+                    // own `${...}` substitutions (and their braces) don't
+                    // throw off this expression's brace tracking. Its raw text
+                    // still belongs to the extracted expression, which the
+                    // parser lexes again on its own.
+                    self.skip_nested_template_literal(
+                        &mut expression,
+                        literal_start,
+                        start_line,
+                        start_column,
+                    )?;
+                }
+                '/' => {
+                    // `//` and `/*` always start a comment; only regex-vs-
+                    // division is ambiguous based on the previous character.
+                    match self.peek() {
+                        Some('/') => {
+                            self.advance();
+                            expression.push('/');
+                            in_line_comment = true;
+                        }
+                        Some('*') => {
+                            self.advance();
+                            expression.push('*');
+                            in_block_comment = true;
+                        }
+                        _ if prev.is_none() || !is_slash_continuation(prev.unwrap()) => {
+                            in_regex = true;
+                            regex_escaped = false;
+                            regex_charset = false;
+                        }
+                        _ => {}
+                    }
                 }
                 '{' => {
                     brace_depth += 1;
-                    expression.push(ch);
                 }
                 '}' => {
                     brace_depth -= 1;
                     if brace_depth == 0 {
+                        expression.pop();
                         return Ok(expression);
                     }
-                    expression.push(ch);
                 }
-                _ => expression.push(ch),
+                _ => {}
             }
+            prev = Some(ch);
         }
 
         Err(JSError::SyntaxError(
             "Unterminated template expression".to_string(),
             Span::new(literal_start, self.position, start_line, start_column),
         ))
+    }
+
+    /// Consumes a template literal nested inside a `${...}` expression,
+    /// appending its raw text to `expression`.
+    ///
+    /// Backticks inside a substitution cannot be treated like ordinary
+    /// quotes: a nested template may itself contain further `${...}`
+    /// substitutions (with braces, quotes and templates of their own), so the
+    /// scan recurses instead of looking for the next backtick. The caller has
+    /// already pushed the opening backtick.
+    fn skip_nested_template_literal(
+        &mut self,
+        expression: &mut String,
+        literal_start: usize,
+        start_line: usize,
+        start_column: usize,
+    ) -> JSResult<()> {
+        loop {
+            match self.peek() {
+                None => {
+                    return Err(JSError::SyntaxError(
+                        "Unterminated template literal".to_string(),
+                        Span::new(literal_start, self.position, start_line, start_column),
+                    ));
+                }
+                Some('`') => {
+                    self.advance();
+                    expression.push('`');
+                    return Ok(());
+                }
+                Some('\\') => {
+                    self.advance();
+                    expression.push('\\');
+                    if let Some(escaped) = self.peek() {
+                        self.advance();
+                        expression.push(escaped);
+                    }
+                }
+                Some('$') if self.peek_ahead(1) == Some('{') => {
+                    self.advance();
+                    self.advance();
+                    expression.push_str("${");
+                    let inner =
+                        self.scan_template_expression(literal_start, start_line, start_column)?;
+                    expression.push_str(&inner);
+                    expression.push('}');
+                }
+                Some(_) => {
+                    let ch = self.peek().unwrap();
+                    self.advance();
+                    expression.push(ch);
+                }
+            }
+        }
     }
 
     fn scan_hex_escape(
@@ -672,7 +868,6 @@ impl Lexer {
                     | TokenKind::This
                     | TokenKind::RightParen
                     | TokenKind::RightBracket
-                    | TokenKind::RightBrace
                     | TokenKind::PlusPlus
                     | TokenKind::MinusMinus
             )
@@ -880,4 +1075,13 @@ impl Lexer {
     fn current_span(&self) -> Span {
         Span::new(self.position, self.position, self.line, self.column)
     }
+}
+
+/// `/` が現在の値式の続き (除算) であるか、正規表現/コメントの開始かを
+/// 直前の文字から判定する。値の終端になりうる文字の直後は除算。
+fn is_slash_continuation(prev: char) -> bool {
+    prev.is_ascii_alphanumeric()
+        || prev == '_'
+        || prev == '$'
+        || matches!(prev, ')' | ']' | '}' | '\'' | '"' | '`' | '.')
 }

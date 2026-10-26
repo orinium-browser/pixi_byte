@@ -1,8 +1,8 @@
 use crate::error::{JSError, JSResult};
 use crate::intern::{FunctionParam, InternTable, NameId};
 use crate::parser::{
-    BinaryOp, BindingPattern, ClassMethod, ClassMethodKind, Expression, Literal, ObjectProperty,
-    Program, Statement, UnaryOp, VarKind,
+    BinaryOp, BindingPattern, ClassField, ClassMethod, ClassMethodKind, Expression, Literal,
+    ObjectProperty, PatternKey, Program, Statement, UnaryOp, VarKind,
 };
 use crate::value::JSValue;
 use crate::value::jsvalue::{ArrowFunctionData, FunctionData, JsValueKind};
@@ -83,7 +83,13 @@ pub enum Opcode {
     ArrayExtend,
     ObjectSetProperty, // obj[key] = value - スタックから key, value をポップ、obj は残る
     ObjectSpread,      // source の列挙可能なown propertyをobjectへコピー
-    ObjectRest(Vec<NameId>),
+    /// Builds the object rest element of a binding pattern: `excluded` lists
+    /// statically known keys, while the `dynamic` computed keys were pushed
+    /// below the source in evaluation order.
+    ObjectRest {
+        excluded: Vec<NameId>,
+        dynamic: usize,
+    },
     ObjectDefineGetter, // object literal getter; object remains on the stack
     ObjectDefineSetter, // object literal setter; object remains on the stack
     Enumerate,          // for-in用の列挙可能なプロパティ名配列を生成
@@ -100,7 +106,10 @@ pub enum Opcode {
     CallMethodArray,
     CallFunctionOptional(usize),
     CallMethodOptional(usize),
+    CallFunctionOptionalArray,
+    CallMethodOptionalArray,
     Construct(usize, Option<String>), // コンストラクタ呼び出し（引数個数、診断用の名前）
+    ConstructArray(Option<String>), // コンストラクタ呼び出し（展開済み引数配列） - スタック: ..., func, args
 
     // 制御フロー
     Jump(usize),        // 無条件ジャンプ
@@ -1514,7 +1523,7 @@ impl Compiler {
                     .compile_function(program)?;
                 let func_value = JSValue::from_arrow_function(ArrowFunctionData {
                     chunk: Rc::new(function_chunk),
-                    params: param_ids,
+                    params: Rc::new(param_ids),
                     env: None,
                     lexical_this: None,
                     identity: 0,
@@ -1535,11 +1544,30 @@ impl Compiler {
                         .chunk
                         .add_constant(JSValue::from_string("call".to_string()));
                     self.chunk.emit(Opcode::LoadConst(call));
-                    self.chunk.emit(Opcode::LoadThis);
-                    for arg in &args {
-                        self.compile_expression(arg.clone())?;
+                    if args.iter().any(|arg| matches!(arg, Expression::Spread(_))) {
+                        self.chunk.emit(Opcode::NewArray(0));
+                        self.chunk.emit(Opcode::LoadThis);
+                        self.chunk.emit(Opcode::ArrayAppend);
+                        for arg in args {
+                            match arg {
+                                Expression::Spread(value) => {
+                                    self.compile_expression(*value)?;
+                                    self.chunk.emit(Opcode::ArrayExtend);
+                                }
+                                value => {
+                                    self.compile_expression(value)?;
+                                    self.chunk.emit(Opcode::ArrayAppend);
+                                }
+                            }
+                        }
+                        self.chunk.emit(Opcode::CallMethodArray);
+                    } else {
+                        self.chunk.emit(Opcode::LoadThis);
+                        for arg in &args {
+                            self.compile_expression(arg.clone())?;
+                        }
+                        self.chunk.emit(Opcode::CallMethod(args.len() + 1));
                     }
-                    self.chunk.emit(Opcode::CallMethod(args.len() + 1));
                     return Ok(());
                 }
                 if let Expression::MemberAccess {
@@ -1670,17 +1698,51 @@ impl Compiler {
                 } => {
                     self.compile_expression(*object)?;
                     self.compile_expression(*property)?;
-                    for arg in &args {
-                        self.compile_expression(arg.clone())?;
+                    if args.iter().any(|arg| matches!(arg, Expression::Spread(_))) {
+                        self.chunk.emit(Opcode::NewArray(0));
+                        for arg in args {
+                            match arg {
+                                Expression::Spread(value) => {
+                                    self.compile_expression(*value)?;
+                                    self.chunk.emit(Opcode::ArrayExtend);
+                                }
+                                value => {
+                                    self.compile_expression(value)?;
+                                    self.chunk.emit(Opcode::ArrayAppend);
+                                }
+                            }
+                        }
+                        self.chunk.emit(Opcode::CallMethodOptionalArray);
+                    } else {
+                        for arg in &args {
+                            self.compile_expression(arg.clone())?;
+                        }
+                        self.chunk.emit(Opcode::CallMethodOptional(args.len()));
                     }
-                    self.chunk.emit(Opcode::CallMethodOptional(args.len()));
                 }
                 callee => {
                     self.compile_expression(callee)?;
-                    for arg in &args {
-                        self.compile_expression(arg.clone())?;
+                    if args.iter().any(|arg| matches!(arg, Expression::Spread(_))) {
+                        self.chunk.emit(Opcode::NewArray(0));
+                        for arg in args {
+                            match arg {
+                                Expression::Spread(value) => {
+                                    self.compile_expression(*value)?;
+                                    self.chunk.emit(Opcode::ArrayExtend);
+                                }
+                                value => {
+                                    self.compile_expression(value)?;
+                                    self.chunk.emit(Opcode::ArrayAppend);
+                                }
+                            }
+                        }
+                        self.chunk.emit(Opcode::CallFunctionOptionalArray);
+                    } else {
+                        for arg in &args {
+                            self.compile_expression(arg.clone())?;
+                        }
+                        self.chunk.emit(Opcode::CallFunctionOptional(args.len()));
                     }
-                    self.chunk.emit(Opcode::CallFunctionOptional(args.len()));
                 }
             },
             Expression::New { callee, args } => {
@@ -1689,23 +1751,42 @@ impl Compiler {
                     _ => None,
                 };
                 self.compile_expression(*callee)?;
-                for arg in &args {
-                    self.compile_expression(arg.clone())?;
+                if args.iter().any(|arg| matches!(arg, Expression::Spread(_))) {
+                    self.chunk.emit(Opcode::NewArray(0));
+                    for arg in args {
+                        match arg {
+                            Expression::Spread(value) => {
+                                self.compile_expression(*value)?;
+                                self.chunk.emit(Opcode::ArrayExtend);
+                            }
+                            value => {
+                                self.compile_expression(value)?;
+                                self.chunk.emit(Opcode::ArrayAppend);
+                            }
+                        }
+                    }
+                    self.chunk.emit(Opcode::ConstructArray(constructor_name));
+                } else {
+                    for arg in &args {
+                        self.compile_expression(arg.clone())?;
+                    }
+                    self.chunk
+                        .emit(Opcode::Construct(args.len(), constructor_name));
                 }
-                self.chunk
-                    .emit(Opcode::Construct(args.len(), constructor_name));
             }
             Expression::Class {
                 name,
                 super_class,
                 constructor,
                 methods,
+                fields,
             } => {
                 self.compile_class_expression(
                     name,
                     super_class.map(|value| *value),
                     constructor,
                     methods,
+                    fields,
                 )?;
             }
             Expression::Yield { value, delegate } => {
@@ -1761,7 +1842,7 @@ impl Compiler {
         let function_chunk = compiler.compile_function(Program { body })?;
         let value = JSValue::from_function(FunctionData {
             chunk: Rc::new(function_chunk),
-            params: param_ids,
+            params: Rc::new(param_ids),
             env: None,
             name: name_id,
             identity: 0,
@@ -1827,17 +1908,40 @@ impl Compiler {
                 let source_name = self.intern_name(&source)?;
                 self.chunk.emit(Opcode::DefineVar(source_name));
                 let mut excluded = Vec::new();
+                // Computed keys are evaluated once, in property order, and kept
+                // in temporaries so a later rest element can exclude them too.
+                let mut computed_keys: Vec<NameId> = Vec::new();
                 for (key, item) in properties {
                     if let BindingPattern::Rest(rest) = item {
+                        for &key_name in &computed_keys {
+                            self.chunk.emit(Opcode::LoadVar(key_name));
+                        }
                         self.chunk.emit(Opcode::LoadVar(source_name));
-                        self.chunk.emit(Opcode::ObjectRest(excluded.clone()));
+                        self.chunk.emit(Opcode::ObjectRest {
+                            excluded: excluded.clone(),
+                            dynamic: computed_keys.len(),
+                        });
                         self.store_binding_pattern(rest, define)?;
                         continue;
                     }
-                    excluded.push(self.intern_name(key)?);
-                    self.chunk.emit(Opcode::LoadVar(source_name));
-                    let key = self.chunk.add_constant(JSValue::from_string(key.clone()));
-                    self.chunk.emit(Opcode::LoadConst(key));
+                    match key {
+                        PatternKey::Static(key) => {
+                            excluded.push(self.intern_name(key)?);
+                            self.chunk.emit(Opcode::LoadVar(source_name));
+                            let key = self.chunk.add_constant(JSValue::from_string(key.clone()));
+                            self.chunk.emit(Opcode::LoadConst(key));
+                        }
+                        PatternKey::Computed(key) => {
+                            self.compile_expression(key.clone())?;
+                            let name = format!("__pixi_pattern_key_{}", self.next_temporary);
+                            self.next_temporary += 1;
+                            let name = self.intern_name(&name)?;
+                            self.chunk.emit(Opcode::DefineVar(name));
+                            computed_keys.push(name);
+                            self.chunk.emit(Opcode::LoadVar(source_name));
+                            self.chunk.emit(Opcode::LoadVar(name));
+                        }
+                    }
                     self.chunk.emit(Opcode::GetProperty);
                     self.store_binding_pattern(item, define)?;
                 }
@@ -1896,6 +2000,7 @@ impl Compiler {
         super_class: Option<Expression>,
         constructor: Option<ClassMethod>,
         methods: Vec<ClassMethod>,
+        fields: Vec<ClassField>,
     ) -> JSResult<()> {
         let id = self.next_temporary;
         self.next_temporary += 1;
@@ -1908,11 +2013,27 @@ impl Compiler {
             self.chunk.emit(Opcode::DefineVar(name));
         }
 
+        let (instance_fields, static_fields): (Vec<ClassField>, Vec<ClassField>) =
+            fields.into_iter().partition(|field| !field.is_static);
+        let field_inits = instance_fields
+            .iter()
+            .map(Self::class_field_initializer_statement)
+            .collect::<Vec<_>>();
+
         let (params, body) = match constructor {
-            Some(method) => (method.params, method.body),
-            None if super_binding.is_some() => (
-                Vec::new(),
-                vec![Statement::Expression(Expression::Call {
+            Some(method) => {
+                let mut body = method.body;
+                if super_binding.is_some() {
+                    // Derived classes: instance fields run right after `super()`,
+                    // which is (in practice) the first statement of the body.
+                    body.splice(1..1, field_inits);
+                } else {
+                    body.splice(0..0, field_inits);
+                }
+                (method.params, body)
+            }
+            None if super_binding.is_some() => {
+                let mut body = vec![Statement::Expression(Expression::Call {
                     callee: Box::new(Expression::MemberAccess {
                         object: Box::new(Expression::Super),
                         property: Box::new(Expression::Literal(Literal::String(
@@ -1924,9 +2045,11 @@ impl Compiler {
                         Expression::This,
                         Expression::Identifier("arguments".to_string()),
                     ],
-                })],
-            ),
-            None => (Vec::new(), Vec::new()),
+                })];
+                body.splice(1..1, field_inits);
+                (Vec::new(), body)
+            }
+            None => (Vec::new(), field_inits),
         };
         self.emit_function_value(name.clone(), params, body, super_binding.clone(), false)?;
         let class_binding_name = self.intern_name(&class_binding)?;
@@ -1985,8 +2108,46 @@ impl Compiler {
             self.chunk.emit(Opcode::Pop);
         }
 
+        for field in static_fields {
+            self.chunk.emit(Opcode::LoadVar(class_binding_name));
+            if let Some(computed_name) = field.computed_name {
+                self.compile_expression(*computed_name)?;
+            } else {
+                let key = self
+                    .chunk
+                    .add_constant(JSValue::from_string(field.name.clone()));
+                self.chunk.emit(Opcode::LoadConst(key));
+            }
+            match field.initializer {
+                Some(initializer) => self.compile_expression(initializer)?,
+                None => self.compile_expression(Expression::Literal(Literal::Undefined))?,
+            }
+            self.chunk.emit(Opcode::SetProperty);
+            self.chunk.emit(Opcode::Pop);
+        }
+
         self.chunk.emit(Opcode::LoadVar(class_binding_name));
         Ok(())
+    }
+
+    fn class_field_initializer_statement(field: &ClassField) -> Statement {
+        let property =
+            field.computed_name.as_ref().cloned().unwrap_or_else(|| {
+                Box::new(Expression::Literal(Literal::String(field.name.clone())))
+            });
+        Statement::Expression(Expression::Assignment {
+            left: Box::new(Expression::MemberAccess {
+                object: Box::new(Expression::This),
+                property,
+                computed: field.computed_name.is_some(),
+            }),
+            right: Box::new(
+                field
+                    .initializer
+                    .clone()
+                    .unwrap_or(Expression::Literal(Literal::Undefined)),
+            ),
+        })
     }
 
     fn emit_set_prototype(
@@ -2150,24 +2311,32 @@ fn binding_pattern_names(pattern: &BindingPattern, names: &mut Vec<String>) {
     }
 }
 
+/// Converts one element of an assignment pattern, turning `target = default`
+/// into a [`BindingPattern::Default`]. Assignment expressions only appear in
+/// destructuring *assignments*, where the parser sees `({a: b = 1} = source)`.
+fn assignment_value_pattern(expression: Expression) -> JSResult<BindingPattern> {
+    match expression {
+        Expression::Assignment { left, right } => Ok(BindingPattern::Default(
+            Box::new(assignment_binding_pattern(*left)?),
+            *right,
+        )),
+        value => assignment_binding_pattern(value),
+    }
+}
+
 fn assignment_binding_pattern(expression: Expression) -> JSResult<BindingPattern> {
     match expression {
         Expression::Identifier(name) => Ok(BindingPattern::Identifier(name)),
         target @ Expression::MemberAccess { .. } => Ok(BindingPattern::Target(target)),
         Expression::ArrayLiteral(items) => items
             .into_iter()
-            .map(|item| {
-                let pattern = match item {
-                    Expression::Spread(value) => {
-                        BindingPattern::Rest(Box::new(assignment_binding_pattern(*value)?))
-                    }
-                    Expression::Assignment { left, right } => BindingPattern::Default(
-                        Box::new(assignment_binding_pattern(*left)?),
-                        *right,
-                    ),
-                    value => assignment_binding_pattern(value)?,
-                };
-                Ok(Some(pattern))
+            .map(|item| match item {
+                // An elision (`[a, , b] = list`) binds nothing.
+                Expression::Literal(Literal::Undefined) => Ok(None),
+                Expression::Spread(value) => Ok(Some(BindingPattern::Rest(Box::new(
+                    assignment_binding_pattern(*value)?,
+                )))),
+                value => Ok(Some(assignment_value_pattern(value)?)),
             })
             .collect::<JSResult<Vec<_>>>()
             .map(BindingPattern::Array),
@@ -2176,10 +2345,14 @@ fn assignment_binding_pattern(expression: Expression) -> JSResult<BindingPattern
             for property in properties {
                 match property {
                     ObjectProperty::Data { key, value } => {
-                        bindings.push((key, assignment_binding_pattern(value)?));
+                        bindings.push((PatternKey::Static(key), assignment_value_pattern(value)?));
+                    }
+                    ObjectProperty::ComputedData { key, value } => {
+                        bindings
+                            .push((PatternKey::Computed(key), assignment_value_pattern(value)?));
                     }
                     ObjectProperty::Spread(value) => bindings.push((
-                        String::new(),
+                        PatternKey::Static(String::new()),
                         BindingPattern::Rest(Box::new(assignment_binding_pattern(value)?)),
                     )),
                     _ => {

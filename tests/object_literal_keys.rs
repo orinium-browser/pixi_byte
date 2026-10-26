@@ -109,3 +109,39 @@ fn object_literals_support_spread_and_computed_keys() {
         .unwrap();
     assert_eq!(result, JSValue::from_number(5.0));
 }
+
+#[test]
+fn object_literals_support_computed_method_shorthand() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const method = "read";
+            const target = {
+                value: 4,
+                [method](extra = 1) { return this.value + extra; }
+            };
+            target.read(2);
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::from_number(6.0));
+}
+
+#[test]
+fn computed_method_shorthand_accepts_symbol_keys() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const key = Symbol.iterator;
+            const target = {
+                [key]: function () { return "data"; },
+                [key]() { return this; }
+            };
+            target[key]() === target;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::from_bool(true));
+}

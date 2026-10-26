@@ -20,6 +20,7 @@ pub enum TokenKind {
 
     // 識別子とキーワード
     Identifier(String),
+    PrivateName(String),
 
     // キーワード
     Let,
@@ -95,6 +96,9 @@ pub enum TokenKind {
     Question,      // ?
     OptionalChain, // ?.
     Nullish,       // ??
+    NullishAssign, // ??=
+    AndAssign,     // &&=
+    OrAssign,      // ||=
     Colon,         // :
 
     // 代入演算子
@@ -179,12 +183,23 @@ impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TokenKind::NumberLiteral(n) => write!(f, "JsNumberLiteral({})", n),
-            TokenKind::String(s) => write!(f, "JsString(\"{}\")", s),
+            TokenKind::String(s) => write!(f, "JsString({})", truncate_debug_string(s)),
             TokenKind::RegExpLiteral(pattern, flags) => {
-                write!(f, "JsRegExp(/{pattern}/{flags})")
+                let pattern_str = truncate_debug_string(pattern);
+                let flags_str = truncate_debug_string(flags);
+                write!(f, "JsRegExp(/{pattern_str}/{flags_str})")
             }
-            TokenKind::Identifier(s) => write!(f, "JsIdentifier({})", s),
-            _ => write!(f, "{:?}", self),
+            TokenKind::Identifier(s) => write!(f, "JsIdentifier({})", truncate_debug_string(s)),
+            _ => fmt::Display::fmt(self, f),
         }
+    }
+}
+
+/// Debug helper for large token payloads to avoid gigantic logs.
+fn truncate_debug_string(s: &str) -> String {
+    if s.len() > 120 {
+        format!("...{}...", &s[..120])
+    } else {
+        s.to_string()
     }
 }

@@ -148,3 +148,41 @@ fn string_raw_can_be_used_as_a_template_tag() {
     let result = engine.eval(r#"String.raw`\b${2}`"#).unwrap();
     assert_eq!(result, JSValue::from_string("\\b2".to_string()));
 }
+
+#[test]
+fn nested_template_literals_inside_interpolation_scan_as_one_unit() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                const path = (e) => `${e.host}${e.path ? `/${e.path}` : ""}/api/`;
+                const envelope = (c) => `${`${path(c)}${c.projectId}/envelope/`}?q`;
+                envelope({ host: "h", path: "p", projectId: 7 });
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(
+        result,
+        JSValue::from_string("h/p/api/7/envelope/?q".to_string())
+    );
+}
+
+#[test]
+fn interpolation_expressions_with_comments_and_regex_braces_scan_correctly() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                const a = `1${1/* } */+2}`;
+                const b = `2${1// } skipped
+                +2}`;
+                const c = `3${/(})/.test("}")}`;
+                const d = `4${{x: 0}.x}b`;
+                a + "," + b + "," + c + "," + d;
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::from_string("13,23,3true,40b".to_string()));
+}

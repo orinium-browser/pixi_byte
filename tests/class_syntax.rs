@@ -341,3 +341,123 @@ fn class_accessors_are_invoked_as_properties() {
 
     assert_eq!(result, JSValue::from_string("box:5:10".to_string()));
 }
+
+#[test]
+fn instance_fields_are_initialized_on_construction() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                class Box {
+                    value = 3;
+                    label = "L";
+                    unset;
+                }
+                const box = new Box();
+                box.value + ":" + box.label + ":" + box.unset;
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::from_string("3:L:undefined".to_string()));
+}
+
+#[test]
+fn static_fields_are_defined_on_the_class() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                class Box {
+                    static count = 2;
+                    static dismiss = async () => {};
+                }
+                Box.count + ":" + typeof Box.dismiss;
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::from_string("2:function".to_string()));
+}
+
+#[test]
+fn computed_instance_fields_resolve_their_key() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                const key = "computed";
+                class Box {
+                    [key] = 7;
+                }
+                new Box().computed;
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::from_number(7.0));
+}
+
+#[test]
+fn derived_class_instance_fields_run_after_super_constructor() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                class Base {
+                    constructor() { this.tag = "base"; }
+                }
+                class Child extends Base {
+                    x = 5;
+                    constructor() {
+                        super();
+                        this.y = 6;
+                    }
+                }
+                const child = new Child();
+                child.tag + ":" + child.x + ":" + child.y;
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::from_string("base:5:6".to_string()));
+}
+
+#[test]
+fn object_async_method_shorthand_parses_as_a_method() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                const o = {
+                    async double(x) { return x * 2; },
+                    after: true,
+                };
+                o.double(21) + ":" + o.after;
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::from_string("42:true".to_string()));
+}
+
+#[test]
+fn private_class_fields_and_methods_are_accessible_via_their_names() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+                class Box {
+                    #secret = 7;
+                    static #brand = "B";
+                    #reveal() { return this.#secret; }
+                    static reveal() { return Box.#brand; }
+                }
+                const box = new Box();
+                box.#reveal() + ":" + Box.reveal();
+            "#,
+        )
+        .unwrap();
+
+    assert_eq!(result, JSValue::from_string("7:B".to_string()));
+}

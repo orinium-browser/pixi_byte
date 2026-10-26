@@ -1096,14 +1096,23 @@ impl VM {
                     }
                 }
             }
-            Opcode::ObjectRest(excluded) => {
+            Opcode::ObjectRest { excluded, dynamic } => {
                 let source = self.pop()?;
+                // Computed keys sit below the source, pushed in evaluation order.
+                // Their property-key coercion matches `GetProperty` and
+                // `ObjectSetProperty`, so exclusion compares like with like.
+                let mut computed_keys = Vec::with_capacity(*dynamic);
+                for _ in 0..*dynamic {
+                    let key = self.pop()?;
+                    computed_keys.push(key_str(&key, key_scratch).to_string());
+                }
                 let mut result =
                     crate::value::JSObject::with_prototype(Some(Rc::clone(&self.object_prototype)));
                 if let Some(source) = source.as_object() {
                     let intern = chunk.intern.borrow();
                     for key in source.borrow().enumerable_keys() {
-                        let is_excluded = excluded.iter().any(|&id| intern.name(id) == key);
+                        let is_excluded = excluded.iter().any(|&id| intern.name(id) == key)
+                            || computed_keys.iter().any(|computed| *computed == key);
                         if !is_excluded {
                             let value = source.borrow().get(&key);
                             result.set(key, value);
@@ -1252,6 +1261,26 @@ impl VM {
                 let result = self.call(func, this, args)?;
                 self.stack.push(result);
             }
+            Opcode::CallFunctionOptionalArray => {
+                let arguments = self.pop()?;
+                let Some(arguments) = arguments.as_object() else {
+                    return Err(JSError::TypeError(
+                        "CallFunctionOptionalArray: arguments are not an array".to_string(),
+                    ));
+                };
+                let length = arguments.borrow().get("length").to_number() as usize;
+                let args = (0..length)
+                    .map(|index| arguments.borrow().get_index(index))
+                    .collect();
+                let func = self.pop()?;
+                if func.is_undefined() || func.is_null() {
+                    self.stack.push(JSValue::undefined());
+                } else {
+                    let this = JSValue::from_object(self.global_object.clone());
+                    let result = self.call(func, this, args)?;
+                    self.stack.push(result);
+                }
+            }
             Opcode::CallFunctionOptional(arg_count) => {
                 let mut args = Vec::with_capacity(*arg_count);
                 for _ in 0..*arg_count {
@@ -1265,6 +1294,32 @@ impl VM {
                     let this = JSValue::from_object(self.global_object.clone());
                     let result = self.call(func, this, args)?;
                     self.stack.push(result);
+                }
+            }
+            Opcode::CallMethodOptionalArray => {
+                let arguments = self.pop()?;
+                let Some(arguments) = arguments.as_object() else {
+                    return Err(JSError::TypeError(
+                        "CallMethodOptionalArray: arguments are not an array".to_string(),
+                    ));
+                };
+                let length = arguments.borrow().get("length").to_number() as usize;
+                let args = (0..length)
+                    .map(|index| arguments.borrow().get_index(index))
+                    .collect();
+                let property = self.pop()?;
+                let object = self.pop()?;
+                if object.is_null() || object.is_undefined() {
+                    self.stack.push(JSValue::undefined());
+                } else {
+                    let key = key_str(&property, key_scratch);
+                    let method = self.resolve_method_property(&object, key)?;
+                    if method.is_null() || method.is_undefined() {
+                        self.stack.push(JSValue::undefined());
+                    } else {
+                        let result = self.call(method, object, args)?;
+                        self.stack.push(result);
+                    }
                 }
             }
             Opcode::CallMethodOptional(arg_count) => {
@@ -1425,91 +1480,31 @@ impl VM {
                 args.reverse();
 
                 let constructor = self.pop()?;
-                let mut constructor_target = constructor.clone();
-                while let Some(bound) = constructor_target.as_bound_function() {
-                    let mut combined = bound.bound_args.clone();
-                    combined.extend(args);
-                    args = combined;
-                    constructor_target = (*bound.target).clone();
-                }
-                let direct_prototype = match constructor_target.kind() {
-                    JsValueKind::Function => self
-                        .user_function_object(&constructor_target)
-                        .and_then(|properties| properties.borrow().get("prototype").as_object()),
-                    JsValueKind::Object => constructor_target
-                        .as_object()
-                        .and_then(|object| object.borrow().get("prototype").as_object()),
-                    _ => None,
-                };
-                let mut callable = match constructor_target.kind() {
-                    JsValueKind::Object => {
-                        let object = constructor_target.as_object().unwrap();
-                        let mut callable = object.borrow().get("__construct__");
-                        if callable.is_undefined() {
-                            let call = object.borrow().get("__call__");
-                            if matches!(
-                                call.kind(),
-                                JsValueKind::Function | JsValueKind::BoundFunction
-                            ) {
-                                callable = call;
-                            } else {
-                                let keys = object.borrow().keys();
-                                let name = constructor_name
-                                    .as_deref()
-                                    .map(|name| format!(" '{name}'"))
-                                    .unwrap_or_default();
-                                return Err(JSError::TypeError(format!(
-                                    "object{name} is not a constructor (own properties: {keys:?})"
-                                )));
-                            }
+                let result =
+                    self.construct_value(constructor, args, constructor_name.as_deref())?;
+                self.stack.push(result);
+            }
+            Opcode::ConstructArray(constructor_name) => {
+                let args_value = self.pop()?;
+                let args = match args_value.as_object() {
+                    Some(object) => {
+                        let len = object.borrow().get("length").as_number().unwrap_or(0.0) as usize;
+                        let mut args = Vec::with_capacity(len);
+                        for index in 0..len {
+                            args.push(object.borrow().get(&index.to_string()));
                         }
-                        callable
+                        args
                     }
-                    JsValueKind::Undefined
-                    | JsValueKind::Null
-                    | JsValueKind::Boolean
-                    | JsValueKind::Number
-                    | JsValueKind::String => {
-                        let name = constructor_name
-                            .as_deref()
-                            .map(|name| format!(" '{name}'"))
-                            .unwrap_or_default();
-                        return Err(JSError::TypeError(format!(
-                            "value{name} is not a constructor (found {})",
-                            constructor.type_of()
-                        )));
+                    None => {
+                        return Err(JSError::TypeError(
+                            "spread arguments must be an array".to_string(),
+                        ));
                     }
-                    _ => constructor_target.clone(),
                 };
-                while let Some(bound) = callable.as_bound_function() {
-                    let mut combined = bound.bound_args.clone();
-                    combined.extend(args);
-                    args = combined;
-                    callable = (*bound.target).clone();
-                }
-                if callable.is_arrow_function() {
-                    return Err(JSError::TypeError(
-                        "arrow function is not a constructor".to_string(),
-                    ));
-                }
-                let callable_prototype = self
-                    .user_function_object(&callable)
-                    .and_then(|properties| properties.borrow().get("prototype").as_object());
-                let prototype = callable_prototype
-                    .or(direct_prototype)
-                    .or_else(|| Some(Rc::clone(&self.object_prototype)));
-                let this = JSValue::from_object(Rc::new(RefCell::new(JSObject::with_prototype(
-                    prototype,
-                ))));
-                let result = self.call(callable, this.clone(), args)?;
-                self.stack.push(match result.kind() {
-                    JsValueKind::Object
-                    | JsValueKind::Function
-                    | JsValueKind::ArrowFunction
-                    | JsValueKind::NativeFunction
-                    | JsValueKind::BoundFunction => result,
-                    _ => this,
-                });
+                let constructor = self.pop()?;
+                let result =
+                    self.construct_value(constructor, args, constructor_name.as_deref())?;
+                self.stack.push(result);
             }
 
             // その他
@@ -1826,8 +1821,126 @@ impl VM {
         {
             JSValue::undefined()
         } else {
+            // Arrays created through raw `JSArray::to_object()` (e.g. by host
+            // APIs that build them without a VM) never get a prototype link.
+            // Fall back to Array.prototype for anything marked as a pixi array
+            // so `.map`/`.forEach`/&c. still resolve.
+            if object.borrow().has_own_property("__pixi_array__")
+                && let Some(array_constructor) =
+                    self.global_object.borrow().get("Array").as_object()
+                && let Some(array_prototype) =
+                    array_constructor.borrow().get("prototype").as_object()
+            {
+                let value = array_prototype.borrow().get(key);
+                if !value.is_undefined() {
+                    return value;
+                }
+            }
             self.object_prototype.borrow().get(key)
         }
+    }
+
+    /// Constructs a value using the same semantics as the `Construct` opcode,
+    /// given an already-materialised argument list (used for spread `new`).
+    fn construct_value(
+        &mut self,
+        constructor: JSValue,
+        mut args: Vec<JSValue>,
+        constructor_name: Option<&str>,
+    ) -> JSResult<JSValue> {
+        let mut constructor_target = constructor.clone();
+        while let Some(bound) = constructor_target.as_bound_function() {
+            let mut combined = bound.bound_args.clone();
+            combined.extend(args);
+            args = combined;
+            constructor_target = (*bound.target).clone();
+        }
+        let direct_prototype = match constructor_target.kind() {
+            JsValueKind::Function => self
+                .user_function_object(&constructor_target)
+                .and_then(|properties| properties.borrow().get("prototype").as_object()),
+            JsValueKind::Object => constructor_target
+                .as_object()
+                .and_then(|object| object.borrow().get("prototype").as_object()),
+            _ => None,
+        };
+        let mut callable = match constructor_target.kind() {
+            JsValueKind::Object => {
+                let object = constructor_target.as_object().unwrap();
+                let mut callable = object.borrow().get("__construct__");
+                if callable.is_undefined() {
+                    let call = object.borrow().get("__call__");
+                    if matches!(
+                        call.kind(),
+                        JsValueKind::Function | JsValueKind::BoundFunction
+                    ) {
+                        callable = call;
+                    } else {
+                        let keys = object.borrow().keys();
+                        let name = constructor_name
+                            .map(|name| format!(" '{name}'"))
+                            .unwrap_or_default();
+                        return Err(JSError::TypeError(format!(
+                            "object{name} is not a constructor (own properties: {keys:?})"
+                        )));
+                    }
+                }
+                callable
+            }
+            JsValueKind::Undefined
+            | JsValueKind::Null
+            | JsValueKind::Boolean
+            | JsValueKind::Number
+            | JsValueKind::String => {
+                let name = constructor_name
+                    .map(|name| format!(" '{name}'"))
+                    .unwrap_or_default();
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "[debug not-constructor]{name} stack={:?}",
+                    self.frames
+                        .iter()
+                        .map(|frame| frame
+                            .function_name
+                            .as_ref()
+                            .map(|name| name.as_str())
+                            .unwrap_or_default())
+                        .collect::<Vec<_>>()
+                );
+                return Err(JSError::TypeError(format!(
+                    "value{name} is not a constructor (found {})",
+                    constructor.type_of()
+                )));
+            }
+            _ => constructor_target.clone(),
+        };
+        while let Some(bound) = callable.as_bound_function() {
+            let mut combined = bound.bound_args.clone();
+            combined.extend(args);
+            args = combined;
+            callable = (*bound.target).clone();
+        }
+        if callable.is_arrow_function() {
+            return Err(JSError::TypeError(
+                "arrow function is not a constructor".to_string(),
+            ));
+        }
+        let callable_prototype = self
+            .user_function_object(&callable)
+            .and_then(|properties| properties.borrow().get("prototype").as_object());
+        let prototype = callable_prototype
+            .or(direct_prototype)
+            .or_else(|| Some(Rc::clone(&self.object_prototype)));
+        let this = JSValue::from_object(Rc::new(RefCell::new(JSObject::with_prototype(prototype))));
+        let result = self.call(callable, this.clone(), args)?;
+        Ok(match result.kind() {
+            JsValueKind::Object
+            | JsValueKind::Function
+            | JsValueKind::ArrowFunction
+            | JsValueKind::NativeFunction
+            | JsValueKind::BoundFunction => result,
+            _ => this,
+        })
     }
 
     /// Calls a function (native / JS / bound function).

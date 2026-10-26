@@ -266,7 +266,7 @@ pub struct FunctionData {
     /// 関数本体のバイトコード。
     pub chunk: Rc<BytecodeChunk>,
     /// 引数パラメータの NameId。
-    pub params: Vec<FunctionParam>,
+    pub params: Rc<Vec<FunctionParam>>,
     /// キャプチャされた環境（非クロージャの場合は None）。
     pub env: Option<Rc<RefCell<Environment>>>,
     /// 関数名（あれば）。
@@ -279,7 +279,7 @@ pub struct FunctionData {
 #[derive(Debug, Clone)]
 pub struct ArrowFunctionData {
     pub chunk: Rc<BytecodeChunk>,
-    pub params: Vec<FunctionParam>,
+    pub params: Rc<Vec<FunctionParam>>,
     pub env: Option<Rc<RefCell<Environment>>>,
     /// キャプチャされたレキシカル `this`。
     pub lexical_this: Option<JSValue>,
