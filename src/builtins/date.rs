@@ -136,31 +136,6 @@ fn date_get_full_year(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::from_number(year as f64))
 }
 
-fn date_set_date(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let milliseconds = date_value(&args, "setDate")?;
-    let requested_day = args
-        .get(1)
-        .unwrap_or(&JSValue::undefined())
-        .to_number()
-        .trunc() as i64;
-    let days = (milliseconds / 86_400_000.0).floor() as i64;
-    let time_within_day = milliseconds - days as f64 * 86_400_000.0;
-    let (year, month, _) = civil_from_days(days);
-    let updated =
-        days_from_civil(year, month, requested_day) as f64 * 86_400_000.0 + time_within_day;
-    match args.first() {
-        Some(value) if value.kind() == JsValueKind::Object => {
-            value
-                .as_object()
-                .unwrap()
-                .borrow_mut()
-                .set(DATE_VALUE.to_string(), JSValue::from_number(updated));
-        }
-        _ => {}
-    }
-    Ok(JSValue::from_number(updated))
-}
-
 fn set_date_year(args: &[JSValue], method: &str, legacy: bool) -> JSResult<JSValue> {
     let milliseconds = date_value(args, method)?;
     let mut requested_year = args
@@ -186,10 +161,6 @@ fn set_date_year(args: &[JSValue], method: &str, legacy: bool) -> JSResult<JSVal
             .set(DATE_VALUE.to_string(), JSValue::from_number(updated));
     }
     Ok(JSValue::from_number(updated))
-}
-
-fn date_set_full_year(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    set_date_year(&args, "setFullYear", false)
 }
 
 fn date_set_year(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
@@ -224,44 +195,466 @@ fn date_to_utc_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     )))
 }
 
+const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// Milliseconds within the current day plus the clock fields.
+fn within_day(milliseconds: f64) -> (i64, i64, i64, i64) {
+    let day = milliseconds.rem_euclid(86_400_000.0) as i64;
+    (
+        day / 3_600_000,
+        day / 60_000 % 60,
+        day / 1_000 % 60,
+        day % 1_000,
+    )
+}
+
+fn weekday_index(milliseconds: f64) -> i64 {
+    let days = (milliseconds / 86_400_000.0).floor() as i64;
+    (days + 4).rem_euclid(7)
+}
+
+fn store_date_value(args: &[JSValue], updated: f64) {
+    if let Some(value) = args.first()
+        && value.kind() == JsValueKind::Object
+    {
+        value
+            .as_object()
+            .unwrap()
+            .borrow_mut()
+            .set(DATE_VALUE.to_string(), JSValue::from_number(updated));
+    }
+}
+
+fn arg_number(args: &[JSValue], index: usize) -> f64 {
+    args.get(index).map(JSValue::to_number).unwrap_or(f64::NAN)
+}
+
+/// Rebuilds a timestamp from the current one, overriding the supplied fields.
+/// `None` keeps the current value; `month` is zero-based, matching `setMonth`.
+#[allow(clippy::too_many_arguments)]
+fn rebuild_timestamp(
+    milliseconds: f64,
+    year: Option<i64>,
+    month: Option<i64>,
+    day: Option<i64>,
+    hour: Option<i64>,
+    minute: Option<i64>,
+    second: Option<i64>,
+    millisecond: Option<i64>,
+) -> f64 {
+    if !milliseconds.is_finite() {
+        return f64::NAN;
+    }
+    let days = (milliseconds / 86_400_000.0).floor() as i64;
+    let (current_year, current_month, current_day) = civil_from_days(days);
+    let (current_hour, current_minute, current_second, current_millisecond) =
+        within_day(milliseconds);
+
+    let month = month.unwrap_or(i64::from(current_month) - 1);
+    let (year_offset, month) = (month.div_euclid(12), month.rem_euclid(12));
+    let year = year.unwrap_or(i64::from(current_year)) + year_offset;
+    let day = day.unwrap_or(i64::from(current_day));
+    let hour = hour.unwrap_or(current_hour);
+    let minute = minute.unwrap_or(current_minute);
+    let second = second.unwrap_or(current_second);
+    let millisecond = millisecond.unwrap_or(current_millisecond);
+
+    let base_days = days_from_civil(year as i32, (month + 1) as u32, day);
+    base_days as f64 * 86_400_000.0
+        + (hour * 3_600_000 + minute * 60_000 + second * 1_000 + millisecond) as f64
+}
+
+fn date_get_day(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "getDay")?;
+    if !milliseconds.is_finite() {
+        return Ok(JSValue::from_number(f64::NAN));
+    }
+    Ok(JSValue::from_number(weekday_index(milliseconds) as f64))
+}
+
+fn date_get_hours(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "getHours")?;
+    if !milliseconds.is_finite() {
+        return Ok(JSValue::from_number(f64::NAN));
+    }
+    Ok(JSValue::from_number(within_day(milliseconds).0 as f64))
+}
+
+fn date_get_minutes(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "getMinutes")?;
+    if !milliseconds.is_finite() {
+        return Ok(JSValue::from_number(f64::NAN));
+    }
+    Ok(JSValue::from_number(within_day(milliseconds).1 as f64))
+}
+
+fn date_get_seconds(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "getSeconds")?;
+    if !milliseconds.is_finite() {
+        return Ok(JSValue::from_number(f64::NAN));
+    }
+    Ok(JSValue::from_number(within_day(milliseconds).2 as f64))
+}
+
+fn date_get_milliseconds(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "getMilliseconds")?;
+    if !milliseconds.is_finite() {
+        return Ok(JSValue::from_number(f64::NAN));
+    }
+    Ok(JSValue::from_number(within_day(milliseconds).3 as f64))
+}
+
+fn date_get_year(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let (year, _, _) = date_parts(&args, "getYear")?;
+    Ok(JSValue::from_number((year - 1900) as f64))
+}
+
+fn date_get_timezone_offset(_vm: &mut VM, _args: Vec<JSValue>) -> JSResult<JSValue> {
+    // The engine has no time-zone database yet; dates are treated as UTC.
+    Ok(JSValue::from_number(0.0))
+}
+
+fn date_set_time(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let updated = arg_number(&args, 1);
+    store_date_value(&args, updated);
+    Ok(JSValue::from_number(updated))
+}
+
+fn date_set_milliseconds(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "setMilliseconds")?;
+    let updated = rebuild_timestamp(
+        milliseconds,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(arg_number(&args, 1) as i64),
+    );
+    store_date_value(&args, updated);
+    Ok(JSValue::from_number(updated))
+}
+
+fn date_set_seconds(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "setSeconds")?;
+    let updated = rebuild_timestamp(
+        milliseconds,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(arg_number(&args, 1) as i64),
+        if args.len() > 2 {
+            Some(arg_number(&args, 2) as i64)
+        } else {
+            None
+        },
+    );
+    store_date_value(&args, updated);
+    Ok(JSValue::from_number(updated))
+}
+
+fn date_set_minutes(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "setMinutes")?;
+    let updated = rebuild_timestamp(
+        milliseconds,
+        None,
+        None,
+        None,
+        None,
+        Some(arg_number(&args, 1) as i64),
+        if args.len() > 2 {
+            Some(arg_number(&args, 2) as i64)
+        } else {
+            None
+        },
+        if args.len() > 3 {
+            Some(arg_number(&args, 3) as i64)
+        } else {
+            None
+        },
+    );
+    store_date_value(&args, updated);
+    Ok(JSValue::from_number(updated))
+}
+
+fn date_set_hours(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "setHours")?;
+    let updated = rebuild_timestamp(
+        milliseconds,
+        None,
+        None,
+        None,
+        Some(arg_number(&args, 1) as i64),
+        if args.len() > 2 {
+            Some(arg_number(&args, 2) as i64)
+        } else {
+            None
+        },
+        if args.len() > 3 {
+            Some(arg_number(&args, 3) as i64)
+        } else {
+            None
+        },
+        if args.len() > 4 {
+            Some(arg_number(&args, 4) as i64)
+        } else {
+            None
+        },
+    );
+    store_date_value(&args, updated);
+    Ok(JSValue::from_number(updated))
+}
+
+fn date_set_month(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "setMonth")?;
+    let updated = rebuild_timestamp(
+        milliseconds,
+        None,
+        Some(arg_number(&args, 1) as i64),
+        if args.len() > 2 {
+            Some(arg_number(&args, 2) as i64)
+        } else {
+            None
+        },
+        None,
+        None,
+        None,
+        None,
+    );
+    store_date_value(&args, updated);
+    Ok(JSValue::from_number(updated))
+}
+
+fn date_set_full_year_all(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "setFullYear")?;
+    let updated = rebuild_timestamp(
+        milliseconds,
+        Some(arg_number(&args, 1) as i64),
+        if args.len() > 2 {
+            Some(arg_number(&args, 2) as i64)
+        } else {
+            None
+        },
+        if args.len() > 3 {
+            Some(arg_number(&args, 3) as i64)
+        } else {
+            None
+        },
+        None,
+        None,
+        None,
+        None,
+    );
+    store_date_value(&args, updated);
+    Ok(JSValue::from_number(updated))
+}
+
+fn date_set_date_all(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "setDate")?;
+    let updated = rebuild_timestamp(
+        milliseconds,
+        None,
+        None,
+        Some(arg_number(&args, 1) as i64),
+        None,
+        None,
+        None,
+        None,
+    );
+    store_date_value(&args, updated);
+    Ok(JSValue::from_number(updated))
+}
+
+fn format_offset() -> &'static str {
+    "GMT+0000 (Coordinated Universal Time)"
+}
+
+fn date_to_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "toString")?;
+    if !milliseconds.is_finite() {
+        return Ok(JSValue::from_str("Invalid Date"));
+    }
+    let days = (milliseconds / 86_400_000.0).floor() as i64;
+    let (year, month, day) = civil_from_days(days);
+    let (hour, minute, second, _) = within_day(milliseconds);
+    Ok(JSValue::from_string(format!(
+        "{} {} {:02} {:04} {:02}:{:02}:{:02} {}",
+        WEEKDAYS[weekday_index(milliseconds) as usize],
+        MONTHS[month.saturating_sub(1) as usize],
+        day,
+        year,
+        hour,
+        minute,
+        second,
+        format_offset()
+    )))
+}
+
+fn date_to_date_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "toDateString")?;
+    if !milliseconds.is_finite() {
+        return Ok(JSValue::from_str("Invalid Date"));
+    }
+    let days = (milliseconds / 86_400_000.0).floor() as i64;
+    let (year, month, day) = civil_from_days(days);
+    Ok(JSValue::from_string(format!(
+        "{} {} {:02} {:04}",
+        WEEKDAYS[weekday_index(milliseconds) as usize],
+        MONTHS[month.saturating_sub(1) as usize],
+        day,
+        year
+    )))
+}
+
+fn date_to_time_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "toTimeString")?;
+    if !milliseconds.is_finite() {
+        return Ok(JSValue::from_str("Invalid Date"));
+    }
+    let (hour, minute, second, _) = within_day(milliseconds);
+    Ok(JSValue::from_string(format!(
+        "{:02}:{:02}:{:02} {}",
+        hour,
+        minute,
+        second,
+        format_offset()
+    )))
+}
+
+fn date_to_iso_string(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "toISOString")?;
+    if !milliseconds.is_finite() {
+        return Err(crate::error::JSError::RangeError(
+            "Invalid time value".to_string(),
+        ));
+    }
+    let days = (milliseconds / 86_400_000.0).floor() as i64;
+    let (year, month, day) = civil_from_days(days);
+    let (hour, minute, second, millisecond) = within_day(milliseconds);
+    if (0..=9999).contains(&year) {
+        Ok(JSValue::from_string(format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+            year, month, day, hour, minute, second, millisecond
+        )))
+    } else {
+        let sign = if year < 0 { '-' } else { '+' };
+        Ok(JSValue::from_string(format!(
+            "{sign}{:06}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+            year.abs(),
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            millisecond
+        )))
+    }
+}
+
+fn date_to_json(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = date_value(&args, "toJSON")?;
+    if !milliseconds.is_finite() {
+        return Ok(JSValue::null());
+    }
+    date_to_iso_string(_vm, args)
+}
+
+fn date_utc(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let milliseconds = rebuild_timestamp(
+        0.0,
+        Some(arg_number(&args, 1) as i64),
+        Some(arg_number(&args, 2) as i64),
+        if args.len() > 3 {
+            Some(arg_number(&args, 3) as i64)
+        } else {
+            Some(1)
+        },
+        if args.len() > 4 {
+            Some(arg_number(&args, 4) as i64)
+        } else {
+            Some(0)
+        },
+        if args.len() > 5 {
+            Some(arg_number(&args, 5) as i64)
+        } else {
+            Some(0)
+        },
+        if args.len() > 6 {
+            Some(arg_number(&args, 6) as i64)
+        } else {
+            Some(0)
+        },
+        if args.len() > 7 {
+            Some(arg_number(&args, 7) as i64)
+        } else {
+            Some(0)
+        },
+    );
+    Ok(JSValue::from_number(milliseconds))
+}
+
 pub fn install(global: &Rc<RefCell<JSObject>>) {
     let mut prototype = JSObject::new();
-    prototype.set(
-        "getTime".to_string(),
-        JSValue::from_native_function(date_get_time),
-    );
-    prototype.set(
-        "valueOf".to_string(),
-        JSValue::from_native_function(date_value_of),
-    );
-    prototype.set(
-        "getDate".to_string(),
-        JSValue::from_native_function(date_get_date),
-    );
-    prototype.set(
-        "getMonth".to_string(),
-        JSValue::from_native_function(date_get_month),
-    );
-    prototype.set(
-        "getFullYear".to_string(),
-        JSValue::from_native_function(date_get_full_year),
-    );
-    prototype.set(
-        "setDate".to_string(),
-        JSValue::from_native_function(date_set_date),
-    );
-    prototype.set(
-        "setFullYear".to_string(),
-        JSValue::from_native_function(date_set_full_year),
-    );
-    prototype.set(
-        "setYear".to_string(),
-        JSValue::from_native_function(date_set_year),
-    );
-    prototype.set(
-        "toUTCString".to_string(),
-        JSValue::from_native_function(date_to_utc_string),
-    );
+    let methods: &[(&str, crate::value::jsvalue::NativeFunctionType)] = &[
+        ("getTime", date_get_time),
+        ("valueOf", date_value_of),
+        ("getDate", date_get_date),
+        ("getMonth", date_get_month),
+        ("getFullYear", date_get_full_year),
+        ("getDay", date_get_day),
+        ("getHours", date_get_hours),
+        ("getMinutes", date_get_minutes),
+        ("getSeconds", date_get_seconds),
+        ("getMilliseconds", date_get_milliseconds),
+        ("getYear", date_get_year),
+        ("getTimezoneOffset", date_get_timezone_offset),
+        ("getUTCDate", date_get_date),
+        ("getUTCMonth", date_get_month),
+        ("getUTCFullYear", date_get_full_year),
+        ("getUTCDay", date_get_day),
+        ("getUTCHours", date_get_hours),
+        ("getUTCMinutes", date_get_minutes),
+        ("getUTCSeconds", date_get_seconds),
+        ("getUTCMilliseconds", date_get_milliseconds),
+        ("setTime", date_set_time),
+        ("setMilliseconds", date_set_milliseconds),
+        ("setUTCMilliseconds", date_set_milliseconds),
+        ("setSeconds", date_set_seconds),
+        ("setUTCSeconds", date_set_seconds),
+        ("setMinutes", date_set_minutes),
+        ("setUTCMinutes", date_set_minutes),
+        ("setHours", date_set_hours),
+        ("setUTCHours", date_set_hours),
+        ("setDate", date_set_date_all),
+        ("setUTCDate", date_set_date_all),
+        ("setMonth", date_set_month),
+        ("setUTCMonth", date_set_month),
+        ("setFullYear", date_set_full_year_all),
+        ("setUTCFullYear", date_set_full_year_all),
+        ("setYear", date_set_year),
+        ("toUTCString", date_to_utc_string),
+        ("toGMTString", date_to_utc_string),
+        ("toString", date_to_string),
+        ("toDateString", date_to_date_string),
+        ("toTimeString", date_to_time_string),
+        ("toISOString", date_to_iso_string),
+        ("toJSON", date_to_json),
+        ("toLocaleString", date_to_string),
+        ("toLocaleDateString", date_to_date_string),
+        ("toLocaleTimeString", date_to_time_string),
+    ];
+    for (name, function) in methods {
+        prototype.set(
+            (*name).to_string(),
+            JSValue::from_native_function(*function),
+        );
+    }
 
     let mut date = JSObject::new();
     date.set(
@@ -281,6 +674,7 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         "parse".to_string(),
         JSValue::from_native_function(date_parse),
     );
+    date.set("UTC".to_string(), JSValue::from_native_function(date_utc));
     global.borrow_mut().set(
         "Date".to_string(),
         JSValue::from_object(Rc::new(RefCell::new(date))),

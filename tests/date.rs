@@ -81,3 +81,35 @@ fn date_parse_is_present_and_rejects_unsupported_text_with_nan() {
     };
     assert!(value.is_nan());
 }
+
+#[test]
+fn date_exposes_getters_setters_and_iso_formatting() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const date = new Date(Date.UTC(2020, 0, 2, 3, 4, 5, 6));
+            const fields = [
+                date.getDay(), date.getHours(), date.getMinutes(),
+                date.getSeconds(), date.getMilliseconds(), date.getUTCDay()
+            ].join(":");
+            const iso = date.toISOString();
+            date.setUTCFullYear(2021);
+            const year = date.getFullYear();
+            date.setMilliseconds(7);
+            fields + "|" + iso + "|" + year + "|" + date.getMilliseconds();
+            "#,
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        JSValue::from_string("4:3:4:5:6:4|2020-01-02T03:04:05.006Z|2021|7".to_string())
+    );
+}
+
+#[test]
+fn date_utc_constructs_timestamp_from_components() {
+    let mut engine = JSEngine::new();
+    let result = engine.eval("Date.UTC(1970, 0, 2, 3, 4, 5, 6)").unwrap();
+    assert_eq!(result, JSValue::from_number(97_445_006.0));
+}
