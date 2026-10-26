@@ -74,7 +74,7 @@ fn format_index_key(index: u32, buffer: &mut [u8; 10]) -> &str {
 }
 
 /// JavaScript オブジェクトの内部表現
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct JSObject {
     /// プロパティマップ
     properties: Rc<RefCell<FxHashMap<String, Property>>>,
@@ -139,9 +139,31 @@ impl Property {
     }
 }
 
+/// Clone は新しい JSObject を作らないと同様に、内部の `Rc` を共有する。
+/// ライブ数カウンタのために手動実装する。
+impl Clone for JSObject {
+    fn clone(&self) -> Self {
+        crate::census::object_created();
+        Self {
+            properties: Rc::clone(&self.properties),
+            elements: self.elements.as_ref().map(Rc::clone),
+            prototype: self.prototype.as_ref().map(Rc::clone),
+            prototype_is_explicit: self.prototype_is_explicit,
+            extensible: self.extensible,
+        }
+    }
+}
+
+impl Drop for JSObject {
+    fn drop(&mut self) {
+        crate::census::object_dropped();
+    }
+}
+
 impl JSObject {
     /// 新しい空の JSObject を作成します。
     pub fn new() -> Self {
+        crate::census::object_created();
         Self {
             properties: Rc::new(RefCell::new(FxHashMap::default())),
             elements: None,
@@ -153,6 +175,7 @@ impl JSObject {
 
     /// プロトタイプを指定してオブジェクトを作成します。
     pub fn with_prototype(prototype: Option<Rc<RefCell<JSObject>>>) -> Self {
+        crate::census::object_created();
         Self {
             properties: Rc::new(RefCell::new(FxHashMap::default())),
             elements: None,
@@ -168,6 +191,7 @@ impl JSObject {
     /// 配列リテラル等の生成で、要素ごとの String キー生成・ハッシュ・Property
     /// 生成が不要になり、O(n) の move だけで済みます。
     pub fn with_elements(elements: Vec<JSValue>) -> Self {
+        crate::census::object_created();
         Self {
             properties: Rc::new(RefCell::new(FxHashMap::default())),
             elements: Some(Rc::new(RefCell::new(
@@ -371,6 +395,15 @@ impl JSObject {
     }
 
     /// プロパティを削除します。non-configurable の場合は削除に失敗します。
+    /// Releases spare capacity in the property map.
+    ///
+    /// Used after bulk deletion (e.g. a settled promise dropping its reaction
+    /// bookkeeping), where the emptied table would otherwise keep the memory of
+    /// thousands of properties alive.
+    pub fn shrink_properties(&mut self) {
+        self.properties.borrow_mut().shrink_to_fit();
+    }
+
     pub fn delete(&mut self, key: &str) -> bool {
         if let Some(prop) = self.properties.borrow().get(key)
             && !prop.configurable
@@ -648,6 +681,30 @@ impl JSObject {
             return Some(prop.clone());
         }
         self.element_property_descriptor(key)
+    }
+
+    /// Value of own property `key` (clone), if present.
+    ///
+    /// Unlike [`JSObject::get`] it does not walk the prototype chain, so it
+    /// reports only engine-created slots such as `__call__`.
+    pub(crate) fn own_property_value(&self, key: &str) -> Option<JSValue> {
+        self.properties
+            .borrow()
+            .get(key)
+            .map(|property| property.value.clone())
+    }
+
+    /// Number of this object's own data properties whose value is `value`.
+    ///
+    /// The VM uses it to tell the references a materialized function object
+    /// holds to its function value (`__call__` and `prototype.constructor`) from
+    /// references that JavaScript code can still reach.
+    pub(crate) fn reference_count_in_properties(&self, value: &JSValue) -> usize {
+        self.properties
+            .borrow()
+            .values()
+            .filter(|property| property.value.same_reference(value))
+            .count()
     }
 
     pub fn dump_properties(&self) {

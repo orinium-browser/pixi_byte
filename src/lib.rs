@@ -1,4 +1,5 @@
 pub mod builtins;
+pub mod census;
 pub mod compiler;
 pub mod error;
 pub mod gc;
@@ -10,6 +11,32 @@ pub mod value;
 pub mod vm;
 
 pub use error::{JSError, JSResult};
+
+/// Live-value census: counts of the engine values that currently exist, by
+/// kind. Diagnostics for memory investigations and regression tests.
+pub fn live_census() -> String {
+    census::report()
+}
+
+/// Total bytecode opcodes executed so far (diagnostics).
+pub fn executed_opcodes() -> u64 {
+    vm::VM::executed_opcodes()
+}
+/// Attribution counters for memory investigations (`PIXI_LEAK_DEBUG`).
+pub fn leak_attribution(limit: usize) -> String {
+    census::attribution_report(limit)
+}
+
+/// Callable-object cache size (diagnostics for memory investigations).
+pub fn cached_callable_objects() -> usize {
+    vm::VM::cached_callable_objects()
+}
+
+/// Microtask jobs dropped because a queue or drain was full (diagnostics).
+pub fn dropped_jobs() -> u64 {
+    vm::VM::dropped_jobs()
+}
+
 pub use value::JSValue;
 // Re-export native function type for convenience in tests and builtins
 pub use value::jsvalue::NativeFunctionType;
@@ -145,6 +172,16 @@ impl JSEngine {
     /// Runs all queued jobs, including jobs enqueued while draining the queue.
     pub fn run_jobs(&mut self) -> JSResult<()> {
         self.vm.run_jobs()
+    }
+
+    /// Returns whether any asynchronous jobs are still waiting to run.
+    pub fn has_pending_jobs(&self) -> bool {
+        self.vm.has_pending_jobs()
+    }
+
+    /// Snapshot of the engine's bookkeeping sizes (memory diagnostics).
+    pub fn diagnostics(&self) -> vm::VmDiagnostics {
+        self.vm.diagnostics()
     }
 }
 

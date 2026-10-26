@@ -15,14 +15,31 @@ use std::rc::Rc;
 /// 環境自身は `InternTable` への参照を保持しない。`NameId` から名前文字列へ
 /// 戻す必要がある場合（グローバルオブジェクトへのフォールバックなど）は、
 /// 実行中のチャンクが共有するテーブル経由で行う（`BytecodeChunk::intern`）。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Environment {
     bindings: Rc<RefCell<FxHashMap<NameId, JSValue>>>,
     outer: Option<Rc<RefCell<Environment>>>,
 }
 
+impl Clone for Environment {
+    fn clone(&self) -> Self {
+        crate::census::environment_created();
+        Self {
+            bindings: Rc::clone(&self.bindings),
+            outer: self.outer.as_ref().map(Rc::clone),
+        }
+    }
+}
+
+impl Drop for Environment {
+    fn drop(&mut self) {
+        crate::census::environment_dropped();
+    }
+}
+
 impl Environment {
     pub fn new() -> Self {
+        crate::census::environment_created();
         Self {
             bindings: Rc::new(RefCell::new(FxHashMap::default())),
             outer: None,
@@ -30,10 +47,31 @@ impl Environment {
     }
 
     pub fn with_outer(outer: Rc<RefCell<Environment>>) -> Self {
+        crate::census::environment_created();
         Self {
             bindings: Rc::new(RefCell::new(FxHashMap::default())),
             outer: Some(outer),
         }
+    }
+
+    /// Snapshot of the values currently bound in this environment.
+    ///
+    /// Used by the VM's end-of-scope cycle reclamation, which needs to inspect
+    /// the scope's bindings without holding the `RefCell` borrow.
+    pub fn values(&self) -> Vec<JSValue> {
+        self.bindings.borrow().values().cloned().collect()
+    }
+
+    /// Drops every binding, breaking cycles between this scope and closures
+    /// created inside it (`env -> f -> env`).
+    ///
+    /// Only called once the VM has established that no reference to the scope
+    /// exists outside that cycle, so the cleared bindings were already
+    /// unobservable.
+    pub fn clear_bindings(&self) {
+        let mut bindings = self.bindings.borrow_mut();
+        bindings.clear();
+        bindings.shrink_to_fit();
     }
 
     pub fn outer(&self) -> Option<Rc<RefCell<Environment>>> {

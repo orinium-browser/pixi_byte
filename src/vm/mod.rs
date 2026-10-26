@@ -9,7 +9,9 @@ use crate::error::{JSError, JSResult};
 use crate::intern::{FunctionParam, NameId};
 use crate::runtime::{CallFrame, Environment, FunctionName};
 use crate::value::jsobject::{JSObject, Property};
-use crate::value::jsvalue::{ArrowFunctionData, FunctionData, JSValue, JsValueKind};
+use crate::value::jsvalue::{
+    ArrowFunctionData, FunctionData, JSValue, JsValueKind, NATIVE_CALLABLE_ID_BIT,
+};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use std::any::Any;
@@ -21,6 +23,81 @@ struct Job {
     callback: JSValue,
     this: JSValue,
     arguments: Vec<JSValue>,
+}
+
+/// Bytecode opcodes executed by this process (diagnostics).
+pub(crate) static EXECUTED_OPCODES: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Callable-object cache size, mirrored for diagnostics outside the VM.
+pub(crate) static LIVE_CALLABLE_OBJECTS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Jobs dropped because the queue or a drain was full (diagnostics).
+pub(crate) static DROPPED_JOBS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Smallest callable-object cache size that triggers a reclamation sweep.
+const CALLABLE_OBJECT_SWEEP_FLOOR: usize = 1024;
+
+/// Whether a cached callable object is unreachable garbage.
+///
+/// `identity` is the value's [`callable_storage_identity`], where the high bits
+/// mark native and bound functions.
+///
+/// [`callable_storage_identity`]: JSValue::callable_storage_identity
+fn callable_object_is_garbage(identity: u64, object: &Rc<RefCell<JSObject>>) -> bool {
+    // Native function objects are shared per function pointer (`identity` is the
+    // pointer), so a different boxed instance of the same function may still be
+    // reachable even when this one is not. Their number is bounded by the
+    // native functions in the binary, so keeping them cached cannot grow
+    // without bound.
+    if identity & NATIVE_CALLABLE_ID_BIT != 0 {
+        return false;
+    }
+    // Any other holder means JS code can still reach the object.
+    if Rc::strong_count(object) > 1 {
+        return false;
+    }
+    if std::env::var_os("PIXI_SWEEP_AGGRESSIVE").is_some() {
+        return true;
+    }
+    let object = object.borrow();
+    let Some(value) = object.own_property_value("__call__") else {
+        return false;
+    };
+    let mut internal_refs = object.reference_count_in_properties(&value);
+    // The engine-created prototype holds `constructor`, another reference to the
+    // same value. It may only be treated as engine-internal while nothing else
+    // holds it: otherwise JS could still reach the function through
+    // `fn.prototype.constructor` even though it dropped `fn` itself.
+    if let Some(prototype_value) = object.own_property_value("prototype") {
+        // `var p = fn.prototype` keeps sharing the property's boxed value, so the
+        // count stays at 2 (property + local clone) only while nothing outside
+        // this entry holds the prototype.
+        if prototype_value.boxed_strong_count() > 2 {
+            return false;
+        }
+        if let Some(prototype) = prototype_value.as_object() {
+            // One holder is the `prototype` property itself, the other is the
+            // clone above. Anything else is JS code.
+            if Rc::strong_count(&prototype) > 2 {
+                return false;
+            }
+            internal_refs += prototype.borrow().reference_count_in_properties(&value);
+        }
+    }
+    // `value` is a local clone, so the count is exactly `1 + internal_refs`
+    // when no reference outside this entry's object graph exists.
+    value.boxed_strong_count() == internal_refs + 1
+}
+
+/// The environment a closure value captures, if any.
+fn captured_environment(value: &JSValue) -> Option<Rc<RefCell<Environment>>> {
+    match value.kind() {
+        JsValueKind::Function => value.as_function().and_then(|func| func.env.clone()),
+        JsValueKind::ArrowFunction => value.as_arrow_function().and_then(|func| func.env.clone()),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -58,6 +135,23 @@ impl PrimitiveHint {
     }
 }
 
+/// Bookkeeping sizes owned by the VM.
+///
+/// Exposed so memory-regression tests can distinguish "the engine still holds
+/// N entries" from "the allocator has not returned pages yet": a leak that is
+/// rooted in VM state shows up here before it shows up in process RSS.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VmDiagnostics {
+    /// Materialized callable objects still cached by the VM.
+    pub callable_objects: usize,
+    /// Host jobs waiting at the next microtask checkpoint.
+    pub pending_jobs: usize,
+    /// Call frames currently on the JS stack.
+    pub frames: usize,
+    /// Values currently on the operand stack.
+    pub stack: usize,
+}
+
 /// 仮想マシン
 pub struct VM {
     /// オペランドスタック
@@ -75,7 +169,11 @@ pub struct VM {
     /// Number.prototype への参照（数値プリミティブのメソッド検索に利用）
     pub number_prototype: Rc<RefCell<JSObject>>,
     /// Own properties for user-defined callable values, keyed by function identity.
-    callable_objects: HashMap<u64, Rc<RefCell<JSObject>>>,
+    callable_object_cache: HashMap<u64, Rc<RefCell<JSObject>>>,
+    /// Cache size that triggers the next [`VM::reclaim_dead_callable_objects`]
+    /// sweep. Reclamation is amortised: the sweep runs once the cache doubles
+    /// past the live set it left behind (or reaches the floor).
+    callable_object_sweep_at: usize,
     /// Bytecode position (pc) of the most recent terminal error, if any.
     pub(crate) last_error_pc: Option<usize>,
     /// pc of the currently-executing opcode.
@@ -84,6 +182,13 @@ pub struct VM {
     pub(crate) last_error_fn: Option<String>,
     /// Function-name call stack (innermost first) at the terminal error.
     pub(crate) last_error_stack: Vec<String>,
+    /// Number of real arguments passed to the native function currently
+    /// running (excluding the receiver that the call path prepends).
+    ///
+    /// Builtins that model methods which ignore `this` (the `Object` statics)
+    /// use it to tell the synthetic receiver apart from real arguments, even
+    /// when the receiver and the first argument are the same value.
+    pub(crate) native_arg_count: Option<usize>,
     /// Host data slot.
     ///
     /// A shared slot where the host (the embedding app) can store arbitrary state.
@@ -176,7 +281,9 @@ impl VM {
             last_error_stack: Vec::new(),
             string_prototype,
             number_prototype,
-            callable_objects: HashMap::new(),
+            callable_object_cache: HashMap::new(),
+            callable_object_sweep_at: CALLABLE_OBJECT_SWEEP_FLOOR,
+            native_arg_count: None,
             host: None,
             jobs: VecDeque::new(),
         }
@@ -184,11 +291,36 @@ impl VM {
 
     /// Enqueues a callable job for the next host microtask checkpoint.
     pub fn enqueue_job(&mut self, callback: JSValue, this: JSValue, arguments: Vec<JSValue>) {
+        const MAX_JOBS_QUEUE: usize = 1000;
+        if self.jobs.len() >= MAX_JOBS_QUEUE {
+            DROPPED_JOBS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return;
+        }
         self.jobs.push_back(Job {
             callback,
             this,
             arguments,
         });
+    }
+
+    /// Returns whether any asynchronous jobs are still waiting to run.
+    pub fn has_pending_jobs(&self) -> bool {
+        !self.jobs.is_empty()
+    }
+
+    /// Total bytecode opcodes executed by this process (diagnostics).
+    pub fn executed_opcodes() -> u64 {
+        EXECUTED_OPCODES.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Snapshot of the engine's bookkeeping sizes (memory diagnostics).
+    pub fn diagnostics(&self) -> VmDiagnostics {
+        VmDiagnostics {
+            callable_objects: self.callable_object_cache.len(),
+            pending_jobs: self.jobs.len(),
+            frames: self.frames.len(),
+            stack: self.stack.len(),
+        }
     }
 
     /// Creates an Array object connected to the realm's `Array.prototype`.
@@ -205,21 +337,80 @@ impl VM {
         array
     }
 
-    fn register_user_function(
+    /// `function@pc` of the innermost frame, for memory attribution.
+    pub(crate) fn attribution_site(&self) -> String {
+        let name = self
+            .frames
+            .last()
+            .and_then(|frame| frame.function_name.as_ref())
+            .map(|name| name.as_str())
+            .unwrap_or_else(|| "<top>".to_string());
+        format!("{name}@{}", self.current_pc)
+    }
+
+    pub(crate) fn user_function_object(
         &mut self,
-        function: &JSValue,
-        constructible: bool,
-        length: usize,
-        name: Option<&str>,
-    ) {
-        let Some(identity) = function.callable_storage_identity() else {
-            return;
+        value: &JSValue,
+    ) -> Option<Rc<RefCell<JSObject>>> {
+        let identity = value.callable_storage_identity()?;
+        if let Some(obj) = self.callable_object_cache.get(&identity) {
+            return Some(Rc::clone(obj));
+        }
+        if self.callable_object_cache.len() >= self.callable_object_sweep_at {
+            self.reclaim_dead_callable_objects();
+        }
+
+        let (constructible, length, name) = match value.kind() {
+            JsValueKind::Function => {
+                let func = value.as_function().unwrap();
+                let intern = func.chunk.intern.borrow();
+                let name = func.name.map(|id| intern.name(id).to_string());
+                let length = func.params.len();
+                (true, length, name)
+            }
+            JsValueKind::ArrowFunction => {
+                let arrow = value.as_arrow_function().unwrap();
+                let length = arrow.params.len();
+                (false, length, None)
+            }
+            JsValueKind::NativeFunction => (false, 0, None),
+            JsValueKind::BoundFunction => {
+                let bound = value.as_bound_function().unwrap();
+                let target_obj = self.user_function_object(&bound.target);
+                let target_len = target_obj
+                    .as_ref()
+                    .and_then(|obj| obj.borrow().get("length").as_number())
+                    .map(|n| n as usize)
+                    .unwrap_or(0);
+                let target_name = target_obj
+                    .as_ref()
+                    .and_then(|obj| obj.borrow().get("name").as_string().map(|s| s.to_string()))
+                    .unwrap_or_default();
+                let bound_len = target_len.saturating_sub(bound.bound_args.len());
+                let bound_name = if target_name.is_empty() {
+                    "bound".to_string()
+                } else {
+                    format!("bound {target_name}")
+                };
+                (
+                    !bound.target.is_arrow_function(),
+                    bound_len,
+                    Some(bound_name),
+                )
+            }
+            _ => return None,
         };
+
+        if crate::census::attribution_enabled() {
+            let site = self.attribution_site();
+            crate::census::note("materialize", &site);
+        }
+        // Materialize lazily.
         let mut properties = JSObject::with_prototype(Some(Rc::clone(&self.function_prototype)));
         properties.define_property(
             "__call__".to_string(),
             Property {
-                value: function.clone(),
+                value: value.clone(),
                 enumerable: false,
                 writable: false,
                 configurable: false,
@@ -241,7 +432,7 @@ impl VM {
         properties.define_property(
             "name".to_string(),
             Property {
-                value: JSValue::from_string(name.unwrap_or("").to_string()),
+                value: JSValue::from_string(name.unwrap_or_default()),
                 enumerable: false,
                 writable: false,
                 configurable: true,
@@ -251,7 +442,7 @@ impl VM {
         );
         if constructible {
             let mut prototype = JSObject::with_prototype(Some(Rc::clone(&self.object_prototype)));
-            prototype.set("constructor".to_string(), function.clone());
+            prototype.set("constructor".to_string(), value.clone());
             properties.define_property(
                 "prototype".to_string(),
                 Property {
@@ -264,43 +455,184 @@ impl VM {
                 },
             );
         }
-        self.callable_objects
-            .insert(identity, Rc::new(RefCell::new(properties)));
-    }
-
-    pub(crate) fn user_function_object(&self, value: &JSValue) -> Option<Rc<RefCell<JSObject>>> {
-        let identity = value.callable_storage_identity()?;
-        self.callable_objects.get(&identity).cloned()
-    }
-
-    fn ensure_callable_object(&mut self, value: &JSValue) -> Option<Rc<RefCell<JSObject>>> {
-        let identity = value.callable_storage_identity()?;
-        if let Some(object) = self.callable_objects.get(&identity) {
-            return Some(Rc::clone(object));
-        }
-        let mut properties = JSObject::with_prototype(Some(Rc::clone(&self.function_prototype)));
-        properties.define_property(
-            "__call__".to_string(),
-            Property {
-                value: value.clone(),
-                enumerable: false,
-                writable: false,
-                configurable: false,
-                getter: None,
-                setter: None,
-            },
+        let obj = Rc::new(RefCell::new(properties));
+        self.callable_object_cache.insert(identity, Rc::clone(&obj));
+        LIVE_CALLABLE_OBJECTS.store(
+            self.callable_object_cache.len(),
+            std::sync::atomic::Ordering::Relaxed,
         );
-        let object = Rc::new(RefCell::new(properties));
-        self.callable_objects.insert(identity, Rc::clone(&object));
-        Some(object)
+        Some(obj)
+    }
+
+    /// Drops callable objects that nothing but this cache still references.
+    ///
+    /// A materialized function object exists so that own properties written to
+    /// a function value survive across reads. It references its function value
+    /// through `__call__` and `prototype.constructor`, while this cache holds
+    /// the object: an `Rc` cycle that outlives the function on its own. The
+    /// sweep breaks it for entries whose object has no other holder and whose
+    /// function value is referenced only from inside the entry, which is the
+    /// case once JS code drops its last reference to the function.
+    fn reclaim_dead_callable_objects(&mut self) {
+        self.callable_object_cache
+            .retain(|identity, object| !callable_object_is_garbage(*identity, object));
+        self.callable_object_sweep_at =
+            (self.callable_object_cache.len() * 2).max(CALLABLE_OBJECT_SWEEP_FLOOR);
+        LIVE_CALLABLE_OBJECTS.store(
+            self.callable_object_cache.len(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
+    pub(crate) fn ensure_callable_object(
+        &mut self,
+        value: &JSValue,
+    ) -> Option<Rc<RefCell<JSObject>>> {
+        self.user_function_object(value)
+    }
+
+    /// References to `value` that a cached callable object of `identity` holds.
+    ///
+    /// `Ok(0)` when the value has no cached object. `Err(())` when that object
+    /// is reachable from outside the cache (a live `Rc` holder), because then
+    /// the entry is not garbage and neither are the references it makes.
+    fn cached_object_refs_to(&self, identity: u64, value: &JSValue) -> Result<usize, ()> {
+        let Some(object) = self.callable_object_cache.get(&identity) else {
+            return Ok(0);
+        };
+        if Rc::strong_count(object) > 1 {
+            return Err(());
+        }
+        let object = object.borrow();
+        let mut refs = object.reference_count_in_properties(value);
+        if let Some(prototype_value) = object.own_property_value("prototype") {
+            // `var p = fn.prototype` clones the property's value, which keeps
+            // sharing one boxed value: the count stays at 2 (the property and
+            // the clone below) only while nothing outside holds it.
+            if prototype_value.boxed_strong_count() > 2 {
+                return Err(());
+            }
+            if let Some(prototype) = prototype_value.as_object() {
+                // One holder is the property itself, the other the clone above.
+                if Rc::strong_count(&prototype) > 2 {
+                    return Err(());
+                }
+                refs += prototype.borrow().reference_count_in_properties(value);
+            }
+        }
+        Ok(refs)
+    }
+
+    /// Breaks the `scope -> closure -> scope` reference cycle a finished scope
+    /// leaves behind.
+    ///
+    /// A closure created in a scope captures that scope's environment, and the
+    /// environment's bindings hold the closure (`var f = function () { ... }`,
+    /// a named function expression, an argument default, ...). `Rc` cannot free
+    /// such a cycle, so without this every function call that creates a closure
+    /// would retain its whole scope forever -- which is what made long-running
+    /// bundles grow without bound.
+    ///
+    /// The scope is only cleared when every closure it holds is referenced
+    /// exclusively from that same cycle (its bindings plus its own callable
+    /// object). Any other holder means JS can still reach the closure -- and
+    /// therefore the scope -- so the scope is left untouched and the ordinary
+    /// `Rc` counting decides its lifetime.
+    fn reclaim_exited_scope(&mut self, env: &Rc<RefCell<Environment>>) {
+        // A scope nothing else references is freed by `Rc` alone; the cycle
+        // case is the only one that needs help.
+        if Rc::strong_count(env) <= 1 {
+            return;
+        }
+        let values = env.borrow().values();
+        if values.is_empty() {
+            return;
+        }
+
+        // Distinct closures that capture this scope, with their slot count.
+        let mut captured: Vec<(JSValue, usize)> = Vec::new();
+        for value in &values {
+            let Some(captured_env) = captured_environment(value) else {
+                continue;
+            };
+            if !Rc::ptr_eq(&captured_env, env) {
+                continue;
+            }
+            match captured
+                .iter_mut()
+                .find(|(existing, _)| existing.same_reference(value))
+            {
+                Some((_, slots)) => *slots += 1,
+                None => captured.push((value.clone(), 1)),
+            }
+        }
+        if captured.is_empty() {
+            // The scope is held by something that is not a closure created in
+            // it (a nested scope, an escaping object, ...). Leave it alone.
+            return;
+        }
+
+        let mut release_cache_entries = Vec::new();
+        for (value, slots) in &captured {
+            let cache_refs = match value.callable_storage_identity() {
+                Some(identity) => match self.cached_object_refs_to(identity, value) {
+                    Ok(refs) => {
+                        if self.callable_object_cache.contains_key(&identity) {
+                            release_cache_entries.push(identity);
+                        }
+                        refs
+                    }
+                    // The callable object is held from outside the cache, so
+                    // the entry (and this closure) is still reachable.
+                    Err(()) => return,
+                },
+                None => 0,
+            };
+            // Live clones held by this function: `slots` of them in the
+            // `values` snapshot, plus one in `captured`; `slots` more are the
+            // scope's own bindings.
+            let accounted = 2 * slots + 1 + cache_refs;
+            if value.boxed_strong_count() != accounted {
+                return;
+            }
+        }
+
+        for identity in release_cache_entries {
+            self.callable_object_cache.remove(&identity);
+        }
+        LIVE_CALLABLE_OBJECTS.store(
+            self.callable_object_cache.len(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        env.borrow().clear_bindings();
+        if crate::census::attribution_enabled() {
+            let site = self.attribution_site();
+            crate::census::note("reclaimed-scope", &site);
+        }
     }
 
     /// Runs queued jobs in FIFO order until the queue is empty.
     pub fn run_jobs(&mut self) -> JSResult<()> {
-        while let Some(job) = self.jobs.pop_front() {
+        const MAX_JOBS: usize = 500;
+        let mut count = 0;
+        while count < MAX_JOBS {
+            let Some(job) = self.jobs.pop_front() else {
+                break;
+            };
+            count += 1;
             self.call(job.callback, job.this, job.arguments)?;
         }
         Ok(())
+    }
+
+    /// Callable-object cache size (diagnostics).
+    pub fn cached_callable_objects() -> usize {
+        LIVE_CALLABLE_OBJECTS.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Microtask jobs dropped because a queue or drain was full (diagnostics).
+    pub fn dropped_jobs() -> u64 {
+        DROPPED_JOBS.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Bytecode position of the last terminal error (if any).
@@ -325,11 +657,39 @@ impl VM {
         // プロパティキー文字列のスクラッチバッファ。文字列キー（定数プール由来）は
         // as_string() で借用できるため、ループ内で毎回 String を確保せずに済む。
         let mut key_scratch = String::new();
+        let census_every: u64 = std::env::var("PIXI_CENSUS_EVERY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let opcode_limit: u64 = std::env::var("PIXI_OPCODE_LIMIT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let trace_opcodes = census_every != 0 || opcode_limit != 0;
 
         while pc < chunk.code.len() {
             let opcode = &chunk.code[pc];
             pc += 1;
             self.current_pc = pc - 1;
+            if trace_opcodes {
+                let total = EXECUTED_OPCODES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if opcode_limit != 0 && total > opcode_limit {
+                    return Err(JSError::InternalError(format!(
+                        "opcode limit {opcode_limit} reached (diagnostic)"
+                    )));
+                }
+                if census_every != 0 && total % census_every == 0 {
+                    eprintln!(
+                        "[census] opcodes={total} pc={} callables={} jobs={} frames={} stack={} | {}",
+                        pc,
+                        self.callable_object_cache.len(),
+                        self.jobs.len(),
+                        self.frames.len(),
+                        self.stack.len(),
+                        crate::census::report()
+                    );
+                }
+            }
 
             let control = match self.execute_opcode(opcode, chunk, &mut key_scratch) {
                 Ok(control) => control,
@@ -569,12 +929,15 @@ impl VM {
                     next.define(*name, value);
                 }
                 self.current_frame_mut().env = Rc::new(RefCell::new(next));
+                self.reclaim_exited_scope(&current);
             }
             Opcode::ExitScope => {
-                let outer = self.current_env().borrow().outer().ok_or_else(|| {
+                let leaving = self.current_env();
+                let outer = leaving.borrow().outer().ok_or_else(|| {
                     JSError::InternalError("Cannot exit the outermost scope".to_string())
                 })?;
                 self.current_frame_mut().env = outer;
+                self.reclaim_exited_scope(&leaving);
             }
             Opcode::Pop => {
                 self.stack.pop();
@@ -1172,7 +1535,6 @@ impl VM {
                     JsValueKind::Function => {
                         let func_data = func_const.as_function().unwrap();
                         let captured = Some(self.current_env());
-                        let length = func_data.params.len();
                         let func = JSValue::from_function(FunctionData {
                             chunk: Rc::clone(&func_data.chunk),
                             params: func_data.params.clone(),
@@ -1180,14 +1542,10 @@ impl VM {
                             name: func_data.name,
                             identity: crate::value::jsvalue::next_function_identity(),
                         });
-                        let intern = chunk.intern.borrow();
-                        let name_str = func_data.name.map(|id| intern.name(id));
-                        self.register_user_function(&func, true, length, name_str);
                         self.stack.push(func);
                     }
                     JsValueKind::ArrowFunction => {
                         let arrow_data = func_const.as_arrow_function().unwrap();
-                        let length = arrow_data.params.len();
                         let func = JSValue::from_arrow_function(ArrowFunctionData {
                             chunk: Rc::clone(&arrow_data.chunk),
                             params: arrow_data.params.clone(),
@@ -1195,7 +1553,6 @@ impl VM {
                             lexical_this: Some(self.current_frame().this.clone()),
                             identity: crate::value::jsvalue::next_function_identity(),
                         });
-                        self.register_user_function(&func, false, length, None);
                         self.stack.push(func);
                     }
                     _other => {
@@ -1648,8 +2005,14 @@ impl VM {
         self.frames.push(CallFrame::new(env, this, function_name));
         let result = self.execute(&func);
 
-        self.frames.pop();
-        self.stack = old_stack;
+        if let Some(frame) = self.frames.pop() {
+            let env = frame.env.clone();
+            drop(frame);
+            self.stack = old_stack;
+            self.reclaim_exited_scope(&env);
+        } else {
+            self.stack = old_stack;
+        }
 
         result
     }

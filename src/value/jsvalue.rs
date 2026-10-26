@@ -194,6 +194,7 @@ fn is_inline_str_bits(bits: u64) -> bool {
 
 /// ボックス値（`Rc<BoxedValue>`）を組み立てる。
 fn boxed_value(kind: JsValueKind, payload: BoxedPayload) -> JSValue {
+    crate::census::value_created(kind);
     let boxed = BoxedValue { kind, payload };
     let rc: Rc<BoxedValue> = Rc::new(boxed);
     let ptr = Rc::into_raw(rc) as u64;
@@ -239,6 +240,12 @@ pub enum JsValueKind {
 struct BoxedValue {
     kind: JsValueKind,
     payload: BoxedPayload,
+}
+
+impl Drop for BoxedValue {
+    fn drop(&mut self) {
+        crate::census::value_dropped(self.kind);
+    }
 }
 
 /// ボックス値の実データ。
@@ -682,6 +689,35 @@ impl JSValue {
             }
             _ => self.user_function_identity(),
         }
+    }
+
+    /// Whether both values are the same constant value or the same boxed
+    /// reference (bit equality: boxed values carry their `Rc` pointer).
+    ///
+    /// Used by the VM's callable-object sweep, which must recognise the
+    /// engine-created references to a function value without cloning them.
+    pub(crate) fn same_reference(&self, other: &JSValue) -> bool {
+        self.0 == other.0
+    }
+
+    /// Number of live clones sharing this boxed value (0 for immediates).
+    ///
+    /// The VM uses it to decide whether a materialized function object is the
+    /// only thing keeping its function value alive: the object knows how many
+    /// references to the value it holds itself, so any excess count belongs to
+    /// JS code that can still reach the function.
+    pub(crate) fn boxed_strong_count(&self) -> usize {
+        if !is_boxed_bits(self.0) {
+            return 0;
+        }
+        let ptr = (self.0 & PTR_MASK) as *const BoxedValue;
+        // SAFETY: `self` holds a strong reference to `*ptr`, so the value is
+        // live. The `Rc` is borrowed only to read the count: wrapping it in
+        // `ManuallyDrop` keeps `from_raw` from taking ownership, so neither the
+        // count nor the allocation changes when it goes out of scope.
+        let rc: core::mem::ManuallyDrop<Rc<BoxedValue>> =
+            core::mem::ManuallyDrop::new(unsafe { Rc::from_raw(ptr) });
+        Rc::strong_count(&rc)
     }
 
     // -----------------------------------------------------------------------

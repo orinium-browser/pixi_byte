@@ -27,6 +27,11 @@ fn new_promise(vm: &VM) -> Rc<RefCell<JSObject>> {
             let proto = constructor.borrow().get("prototype");
             proto.as_object()
         });
+    crate::census::promise_created();
+    if crate::census::attribution_enabled() {
+        let site = vm.attribution_site();
+        crate::census::note("promise", &site);
+    }
     let mut promise = JSObject::with_prototype(prototype);
     promise.set(
         STATE.to_string(),
@@ -34,18 +39,6 @@ fn new_promise(vm: &VM) -> Rc<RefCell<JSObject>> {
     );
     promise.set(RESULT.to_string(), JSValue::undefined());
     promise.set(REACTION_COUNT.to_string(), JSValue::from_number(0.0));
-    promise.set(
-        "then".to_string(),
-        JSValue::from_native_function(promise_then),
-    );
-    promise.set(
-        "catch".to_string(),
-        JSValue::from_native_function(promise_catch),
-    );
-    promise.set(
-        "finally".to_string(),
-        JSValue::from_native_function(promise_finally),
-    );
     Rc::new(RefCell::new(promise))
 }
 
@@ -180,10 +173,9 @@ fn promise_all_fulfill(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 /// `Promise.race(iterable)` — settles the result with whichever input settles
 /// first (fulfilment or rejection).
 fn promise_race(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let values = args
-        .get(1)
-        .and_then(|v| v.as_object())
-        .ok_or_else(|| JSError::TypeError("Promise.race expects an array-like object".to_string()))?;
+    let values = args.get(1).and_then(|v| v.as_object()).ok_or_else(|| {
+        JSError::TypeError("Promise.race expects an array-like object".to_string())
+    })?;
     let length = values.borrow().get("length").to_number() as usize;
     let result = new_promise(vm);
     if length == 0 {
@@ -242,12 +234,9 @@ fn promise_race_settle(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 /// `Promise.allSettled(iterable)` — waits for every input and reports each
 /// outcome as `{ status, value | reason }` without rejecting early.
 fn promise_all_settled(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let values = args
-        .get(1)
-        .and_then(|v| v.as_object())
-        .ok_or_else(|| {
-            JSError::TypeError("Promise.allSettled expects an array-like object".to_string())
-        })?;
+    let values = args.get(1).and_then(|v| v.as_object()).ok_or_else(|| {
+        JSError::TypeError("Promise.allSettled expects an array-like object".to_string())
+    })?;
     let length = values.borrow().get("length").to_number() as usize;
     let result = new_promise(vm);
     if length == 0 {
@@ -309,10 +298,9 @@ fn promise_all_settled_reaction(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSV
 
     let values = tracker.borrow().get("values");
     if let Some(values_object) = values.as_object() {
-        values_object.borrow_mut().set_index(
-            index,
-            JSValue::from_object(Rc::new(RefCell::new(entry))),
-        );
+        values_object
+            .borrow_mut()
+            .set_index(index, JSValue::from_object(Rc::new(RefCell::new(entry))));
     }
     let remaining = tracker.borrow().get("remaining").to_number() as usize - 1;
     tracker.borrow_mut().set(
@@ -331,10 +319,9 @@ fn promise_all_settled_reaction(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSV
 /// `Promise.any(iterable)` — resolves with the first fulfilled input; rejects
 /// with an `AggregateError` once every input has rejected.
 fn promise_any(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
-    let values = args
-        .get(1)
-        .and_then(|v| v.as_object())
-        .ok_or_else(|| JSError::TypeError("Promise.any expects an array-like object".to_string()))?;
+    let values = args.get(1).and_then(|v| v.as_object()).ok_or_else(|| {
+        JSError::TypeError("Promise.any expects an array-like object".to_string())
+    })?;
     let length = values.borrow().get("length").to_number() as usize;
     let result = new_promise(vm);
     if length == 0 {
@@ -365,7 +352,11 @@ fn promise_any(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         ));
         let _ = promise_then(
             vm,
-            vec![promise, bound_settler(promise_resolve, &result), on_rejected],
+            vec![
+                promise,
+                bound_settler(promise_resolve, &result),
+                on_rejected,
+            ],
         )?;
     }
     Ok(JSValue::from_object(result))
@@ -435,6 +426,7 @@ fn promise_finally(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     };
     if state == "pending" {
         let index = promise.borrow().get(REACTION_COUNT).to_number() as usize;
+        crate::census::reaction_registered();
         let mut promise = promise.borrow_mut();
         promise.set(format!("__promise_fulfill_{index}"), wrap(false));
         promise.set(format!("__promise_reject_{index}"), wrap(true));
@@ -518,6 +510,7 @@ fn promise_then(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     };
     if state == "pending" {
         let index = promise.borrow().get(REACTION_COUNT).to_number() as usize;
+        crate::census::reaction_registered();
         let mut promise = promise.borrow_mut();
         promise.set(format!("__promise_fulfill_{index}"), on_fulfilled);
         promise.set(format!("__promise_reject_{index}"), on_rejected);
@@ -625,6 +618,7 @@ fn settle_promise(vm: &mut VM, promise: &Rc<RefCell<JSObject>>, rejected: bool, 
     if promise.borrow().get(STATE).to_string() != "pending" {
         return;
     }
+    crate::census::promise_settled();
     let reaction_count = promise.borrow().get(REACTION_COUNT).to_number() as usize;
     {
         let mut promise = promise.borrow_mut();
@@ -650,6 +644,26 @@ fn settle_promise(vm: &mut VM, promise: &Rc<RefCell<JSObject>>, rejected: bool, 
         if let Some(child_object) = child.as_object() {
             enqueue_reaction(vm, child_object, handler, result.clone(), rejected);
         }
+    }
+    // Reactions are consumed by settlement: keeping them would retain every
+    // handler closure and child promise for as long as the settled promise
+    // itself is alive.
+    drop_reactions(promise, reaction_count);
+}
+
+/// Removes the stored reactions (`then` bookkeeping) from a settled promise.
+fn drop_reactions(promise: &Rc<RefCell<JSObject>>, reaction_count: usize) {
+    let mut promise = promise.borrow_mut();
+    for index in 0..reaction_count {
+        promise.delete(&format!("__promise_fulfill_{index}"));
+        promise.delete(&format!("__promise_reject_{index}"));
+        promise.delete(&format!("__promise_child_{index}"));
+    }
+    promise.set(REACTION_COUNT.to_string(), JSValue::from_number(0.0));
+    if reaction_count > 0 {
+        // Deleting thousands of keys leaves the property table with the
+        // capacity of the largest reaction list it ever held.
+        promise.shrink_properties();
     }
 }
 
