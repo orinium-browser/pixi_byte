@@ -150,6 +150,16 @@ fn set_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(JSValue::from_object(set))
 }
 
+fn weak_set_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let set = create_collection(vm, "WeakSet");
+    if let Some(iterable) = args.get(1) {
+        for value in iterable_values(vm, iterable)? {
+            insert(&set, value.clone(), value);
+        }
+    }
+    Ok(JSValue::from_object(set))
+}
+
 fn set_add(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let set = receiver(&args, "Set.add")?;
     let value = args.get(1).cloned().unwrap_or(JSValue::undefined());
@@ -514,11 +524,29 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
         JSValue::from_native_function(collection_delete),
     );
 
+    let mut weak_set_prototype = JSObject::new();
+    weak_set_prototype.set("add".to_string(), JSValue::from_native_function(set_add));
+    weak_set_prototype.set(
+        "has".to_string(),
+        JSValue::from_native_function(collection_has),
+    );
+    weak_set_prototype.set(
+        "delete".to_string(),
+        JSValue::from_native_function(collection_delete),
+    );
+
     global.borrow_mut().set(
         "Set".to_string(),
         JSValue::from_object(Rc::new(RefCell::new(constructor(
             set_prototype,
             set_constructor,
+        )))),
+    );
+    global.borrow_mut().set(
+        "WeakSet".to_string(),
+        JSValue::from_object(Rc::new(RefCell::new(constructor(
+            weak_set_prototype,
+            weak_set_constructor,
         )))),
     );
     global.borrow_mut().set(
