@@ -34,22 +34,16 @@ fn object_constructor(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResult<JS
 }
 
 fn object_static_arguments(vm: &crate::vm::VM, mut args: Vec<JSValue>) -> Vec<JSValue> {
-    let constructor = vm.global_object.borrow().get("Object");
-    let has_receiver = match args.first() {
-        Some(receiver) if receiver.clone().kind() == JsValueKind::Object => {
-            let rc = receiver.as_object().unwrap();
-            if let Some(ctor_rc) = constructor.as_object() {
-                Rc::ptr_eq(&rc, &vm.global_object) || Rc::ptr_eq(&rc, &ctor_rc)
-            } else {
-                Rc::ptr_eq(&rc, &vm.global_object)
-            }
-        }
-        Some(receiver) => {
-            let kind = receiver.clone().kind();
-            kind == JsValueKind::Undefined || kind == JsValueKind::Null
-        }
-        _ => false,
-    };
+    // Native calls prepend their receiver, so an argument list one longer than
+    // the caller passed starts with `this`. Count the arguments rather than
+    // inspecting the first value: `Object.defineProperty(Object, ...)` passes
+    // the receiver as its own target, and core-js calls these statics as
+    // methods of its helper objects, where neither type nor identity helps.
+    // Direct Rust callers (tests, internal helpers) pass only real arguments,
+    // and no call is in progress, so nothing is dropped for them.
+    let has_receiver = vm
+        .native_arg_count
+        .is_some_and(|arg_count| args.len() == arg_count + 1);
     if has_receiver {
         args.remove(0);
     }
@@ -315,9 +309,11 @@ fn object_set_prototype_of(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResu
             obj_ref.borrow_mut().set_prototype(None);
             Ok(obj)
         }
-        _ => Err(JSError::TypeError(
-            "Object.setPrototypeOf: prototype must be an object or null".to_string(),
-        )),
+        _ => Err(JSError::TypeError(format!(
+            "Object.setPrototypeOf: prototype must be an object or null (got kind {:?} value {:?})",
+            proto.kind(),
+            proto.to_console_string()
+        ))),
     }
 }
 
@@ -342,8 +338,11 @@ fn object_has_own_property(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JS
             let obj_ref = receiver.as_object().unwrap();
             Ok(JSValue::from_bool(obj_ref.borrow().has_own_property(&key)))
         }
-        JsValueKind::Function | JsValueKind::ArrowFunction => Ok(JSValue::from_bool(
-            vm.user_function_object(&receiver)
+        JsValueKind::Function
+        | JsValueKind::ArrowFunction
+        | JsValueKind::NativeFunction
+        | JsValueKind::BoundFunction => Ok(JSValue::from_bool(
+            vm.ensure_callable_object(&receiver)
                 .is_some_and(|object| object.borrow().has_own_property(&key)),
         )),
         JsValueKind::String => {
@@ -362,7 +361,7 @@ fn object_has_own_property(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JS
 }
 
 /// Object.prototype.isPrototypeOf のネイティブ実装
-fn object_is_prototype_of(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
+fn object_is_prototype_of(vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JSResult<JSValue> {
     if args.len() < 2 {
         return Err(JSError::TypeError(
             "isPrototypeOf: missing arguments".to_string(),
@@ -371,7 +370,19 @@ fn object_is_prototype_of(_vm: &mut crate::vm::VM, mut args: Vec<JSValue>) -> JS
     let receiver = args.remove(0);
     let obj = args.remove(0);
 
-    match (receiver.as_object(), obj.as_object()) {
+    // Callables (functions, classes, native functions) keep their properties in
+    // a separate object map, so `Function.prototype.isPrototypeOf(fn)` has to
+    // compare against that object rather than only `as_object()`.
+    let receiver_object = match receiver.kind() {
+        JsValueKind::Object => receiver.as_object(),
+        _ => vm.ensure_callable_object(&receiver),
+    };
+    let target_object = match obj.kind() {
+        JsValueKind::Object => obj.as_object(),
+        _ => vm.ensure_callable_object(&obj),
+    };
+
+    match (receiver_object, target_object) {
         (Some(proto_ref), Some(target_ref)) => {
             let mut current = target_ref.borrow().get_prototype();
             while let Some(p) = current {
@@ -444,12 +455,12 @@ fn object_define_property(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> JSResul
     let prop_name = args.remove(0);
     let desc = args.remove(0);
 
-    let key = vm.to_property_key(prop_name)?;
+    let key = vm.to_property_key(prop_name.clone())?;
 
     let object = match obj.kind() {
         JsValueKind::Object => Some(obj.as_object().unwrap()),
-        JsValueKind::Function | JsValueKind::ArrowFunction => vm.user_function_object(&obj),
-        _ => None,
+        // Any callable (native, bound, user function, arrow) is a valid target.
+        _ => vm.ensure_callable_object(&obj),
     };
 
     match object {
@@ -768,7 +779,7 @@ fn object_get_own_property_symbols(
     Ok(vm.array_from_values(Vec::new()))
 }
 
-fn enumerable_object(vm: &crate::vm::VM, value: &JSValue) -> Option<Rc<RefCell<JSObject>>> {
+fn enumerable_object(vm: &mut crate::vm::VM, value: &JSValue) -> Option<Rc<RefCell<JSObject>>> {
     match value.kind() {
         JsValueKind::Object => Some(value.as_object().unwrap()),
         JsValueKind::Function | JsValueKind::ArrowFunction => vm.user_function_object(value),

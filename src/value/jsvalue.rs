@@ -37,6 +37,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT_BOUND_FUNCTION_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_FUNCTION_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Identity-space markers used by [`JSValue::callable_storage_identity`].
+///
+/// User and bound function identities are small counters, so the two high
+/// bits are free. Native functions have no counter: their identity is the
+/// function pointer, which is stable for every boxed instance of the same
+/// builtin (which is what lets properties written to `Math.floor` survive a
+/// round trip through the VM).
+pub(crate) const BOUND_CALLABLE_ID_BIT: u64 = 1 << 63;
+pub(crate) const NATIVE_CALLABLE_ID_BIT: u64 = 1 << 62;
+
 /// インライン短文字列エンコーディングは payload バイトをビット 0-39 に置き、
 /// デコード時に `self.0` のメモリをそのままバイト列として参照する。
 /// これはリトルエンディアンでのみメモリ順 == バイト順になるため、
@@ -685,7 +695,13 @@ impl JSValue {
         match self.kind() {
             JsValueKind::BoundFunction => {
                 let d = self.as_bound_function().unwrap();
-                Some(d.identity | (1_u64 << 63))
+                Some(d.identity | BOUND_CALLABLE_ID_BIT)
+            }
+            JsValueKind::NativeFunction => {
+                let Some(f) = self.as_native_function() else {
+                    return None;
+                };
+                Some((f as usize as u64) | NATIVE_CALLABLE_ID_BIT)
             }
             _ => self.user_function_identity(),
         }

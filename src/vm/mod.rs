@@ -42,15 +42,14 @@ const CALLABLE_OBJECT_SWEEP_FLOOR: usize = 1024;
 /// Whether a cached callable object is unreachable garbage.
 ///
 /// `identity` is the value's [`callable_storage_identity`], where the high bits
-/// mark native and bound functions.
+/// mark bound functions.
 ///
 /// [`callable_storage_identity`]: JSValue::callable_storage_identity
 fn callable_object_is_garbage(identity: u64, object: &Rc<RefCell<JSObject>>) -> bool {
-    // Native function objects are shared per function pointer (`identity` is the
-    // pointer), so a different boxed instance of the same function may still be
-    // reachable even when this one is not. Their number is bounded by the
-    // native functions in the binary, so keeping them cached cannot grow
-    // without bound.
+    // Native function objects are shared per function pointer; different boxed
+    // instances of the same native function may still be reachable through
+    // different call paths. They are bounded by the binary, so never collect
+    // them.
     if identity & NATIVE_CALLABLE_ID_BIT != 0 {
         return false;
     }
@@ -406,7 +405,11 @@ impl VM {
             crate::census::note("materialize", &site);
         }
         // Materialize lazily.
-        let mut properties = JSObject::with_prototype(Some(Rc::clone(&self.function_prototype)));
+        let property_capacity = if constructible { 4 } else { 3 };
+        let mut properties = JSObject::with_prototype_capacity(
+            Some(Rc::clone(&self.function_prototype)),
+            property_capacity,
+        );
         properties.define_property(
             "__call__".to_string(),
             Property {
@@ -441,7 +444,8 @@ impl VM {
             },
         );
         if constructible {
-            let mut prototype = JSObject::with_prototype(Some(Rc::clone(&self.object_prototype)));
+            let mut prototype =
+                JSObject::with_prototype_capacity(Some(Rc::clone(&self.object_prototype)), 1);
             prototype.set("constructor".to_string(), value.clone());
             properties.define_property(
                 "prototype".to_string(),
@@ -1304,7 +1308,10 @@ impl VM {
                     }
                     JsValueKind::NativeFunction => {
                         let key_str = key_str(&key, key_scratch);
-                        let value = self.function_prototype.borrow().get(key_str);
+                        let value = self
+                            .user_function_object(&obj)
+                            .map(|properties| properties.borrow().get(key_str))
+                            .unwrap_or_else(|| self.function_prototype.borrow().get(key_str));
                         self.stack.push(value);
                     }
                     JsValueKind::String => {
@@ -1356,9 +1363,10 @@ impl VM {
                 let object = self.pop()?;
                 let object = match &object.kind() {
                     JsValueKind::Object => Some(object.as_object().unwrap()),
-                    JsValueKind::Function | JsValueKind::ArrowFunction => {
-                        self.user_function_object(&object)
-                    }
+                    JsValueKind::Function
+                    | JsValueKind::ArrowFunction
+                    | JsValueKind::BoundFunction
+                    | JsValueKind::NativeFunction => self.user_function_object(&object),
                     _ => None,
                 };
                 let Some(object) = object else {
@@ -1775,11 +1783,11 @@ impl VM {
                     }
                     JsValueKind::Function
                     | JsValueKind::ArrowFunction
-                    | JsValueKind::BoundFunction => self
+                    | JsValueKind::BoundFunction
+                    | JsValueKind::NativeFunction => self
                         .user_function_object(&object)
                         .map(|properties| properties.borrow().get(key))
                         .unwrap_or_else(|| self.function_prototype.borrow().get(key)),
-                    JsValueKind::NativeFunction => self.function_prototype.borrow().get(key),
                     JsValueKind::String => self.string_prototype.borrow().get(key),
                     JsValueKind::Number => self.number_prototype.borrow().get(key),
                     _ => {
@@ -2057,9 +2065,10 @@ impl VM {
         let key_index = crate::value::jsobject::canonical_array_index(key_string);
         let object_ref = match object.kind() {
             JsValueKind::Object => Some(object.as_object().unwrap()),
-            JsValueKind::Function | JsValueKind::ArrowFunction | JsValueKind::BoundFunction => {
-                self.ensure_callable_object(object)
-            }
+            JsValueKind::Function
+            | JsValueKind::ArrowFunction
+            | JsValueKind::BoundFunction
+            | JsValueKind::NativeFunction => self.ensure_callable_object(object),
             _ => None,
         };
         let Some(object_ref) = object_ref else {
@@ -2152,20 +2161,20 @@ impl VM {
                     }
                 }
             }
-            JsValueKind::Function | JsValueKind::ArrowFunction | JsValueKind::BoundFunction => {
-                Ok(self
-                    .user_function_object(object)
-                    .map(|properties| properties.borrow().get(key))
-                    .unwrap_or_else(|| self.function_prototype.borrow().get(key)))
-            }
-            JsValueKind::NativeFunction => Ok(self.function_prototype.borrow().get(key)),
+            JsValueKind::Function
+            | JsValueKind::ArrowFunction
+            | JsValueKind::BoundFunction
+            | JsValueKind::NativeFunction => Ok(self
+                .user_function_object(object)
+                .map(|properties| properties.borrow().get(key))
+                .unwrap_or_else(|| self.function_prototype.borrow().get(key))),
             JsValueKind::String => Ok(self.string_prototype.borrow().get(key)),
             JsValueKind::Number => Ok(self.number_prototype.borrow().get(key)),
             _ => Ok(JSValue::undefined()),
         }
     }
 
-    fn object_fallback_property(&self, object: &Rc<RefCell<JSObject>>, key: &str) -> JSValue {
+    fn object_fallback_property(&mut self, object: &Rc<RefCell<JSObject>>, key: &str) -> JSValue {
         let mut callable = object.borrow().get("__call__");
         let is_callable = !callable.is_undefined();
         if is_callable {
@@ -2350,10 +2359,14 @@ impl VM {
 
             JsValueKind::NativeFunction => {
                 let f = callee.as_native_function().unwrap();
+                let real_arg_count = args.len();
                 let mut all = vec![this];
 
                 all.extend(args);
-                f(self, all)
+                let previous_count = self.native_arg_count.replace(real_arg_count);
+                let result = f(self, all);
+                self.native_arg_count = previous_count;
+                result
             }
 
             JsValueKind::Function => {

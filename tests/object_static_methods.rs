@@ -173,3 +173,52 @@ fn entries_values_and_from_entries_round_trip_enumerable_properties() {
         .unwrap();
     assert_eq!(result, pixi_byte::JSValue::from_bool(true));
 }
+
+#[test]
+fn define_property_accepts_the_constructor_as_its_own_target() {
+    let mut engine = pixi_byte::JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            Object.defineProperty(Object, "ownSentinel", { value: 5, configurable: true });
+            Object.ownSentinel;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, pixi_byte::JSValue::from_number(5.0));
+}
+
+#[test]
+fn object_statics_drop_the_receiver_when_called_through_a_wrapper() {
+    let mut engine = pixi_byte::JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const key = Symbol("state");
+            const helper = { defineProperty: Object.defineProperty };
+            const target = function () {};
+            helper.defineProperty(target, key, { value: 7, configurable: true });
+            target[key] === 7;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, pixi_byte::JSValue::from_bool(true));
+}
+
+#[test]
+fn native_functions_carry_own_properties() {
+    let mut engine = pixi_byte::JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            Object.defineProperty(parseInt, "sentinel", { value: 3, configurable: true });
+            const defined = parseInt.sentinel;
+            parseInt.extra = 4;
+            defined === 3
+                && parseInt.extra === 4
+                && Object.prototype.hasOwnProperty.call(parseInt, "extra");
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, pixi_byte::JSValue::from_bool(true));
+}

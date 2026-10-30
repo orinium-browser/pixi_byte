@@ -185,6 +185,27 @@ impl JSObject {
         }
     }
 
+    /// プロトタイプを指定し、プロパティマップの容量を確保して作成します。
+    ///
+    /// 関数オブジェクトのように生成直後に既知の個数のプロパティを定義する
+    /// 場合、再ハッシュによる複数回の確保を避けられます。
+    pub fn with_prototype_capacity(
+        prototype: Option<Rc<RefCell<JSObject>>>,
+        capacity: usize,
+    ) -> Self {
+        crate::census::object_created();
+        Self {
+            properties: Rc::new(RefCell::new(FxHashMap::with_capacity_and_hasher(
+                capacity,
+                Default::default(),
+            ))),
+            elements: None,
+            prototype,
+            prototype_is_explicit: true,
+            extensible: true,
+        }
+    }
+
     /// 密な要素ベクトルを持つオブジェクト（配列）を作成します。
     ///
     /// 要素はプロパティマップへ展開せず、そのまま要素ストレージへ移します。
