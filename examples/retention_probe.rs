@@ -1,9 +1,9 @@
 //! Heap-retention probe for the JS engine.
 //!
-//! Runs one Pixiv-bundle-shaped scenario per invocation in rounds and prints
-//! live bytes plus VM bookkeeping between rounds, then reports what is left
-//! after dropping the engine. Used to attribute linear growth to a specific
-//! retention path.
+//! Runs one representative workload scenario per invocation in rounds and
+//! prints live bytes plus VM bookkeeping between rounds, then reports what is
+//! left after dropping the engine. Used to attribute linear growth to a
+//! specific retention path.
 //!
 //! ```sh
 //! cargo run --profile dhat --features dhat-heap --example retention_probe -- fnprops
@@ -163,11 +163,10 @@ fn scenarios() -> Vec<(&'static str, &'static str)> {
             "#,
         ),
         (
-            // Mirrors the hot unit observed on accounts.pixiv.net: a helper
-            // creates a never-settling promise while the caller decorates two
-            // throwaway functions. The sink is cleared every round, so nothing
-            // should survive.
-            "siteunit",
+            // A helper creates a never-settling promise while the caller
+            // decorates two throwaway functions. The sink is cleared every
+            // round, so nothing should survive.
+            "decoratedclosures",
             r#"
             function makePromise() {
               return new Promise(function () {});

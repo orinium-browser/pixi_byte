@@ -6,9 +6,9 @@
 //! created a closure leaked its whole scope: environments, closure values, the
 //! objects decorating them and the promises their callbacks settled on.
 //!
-//! This is the shape `https://accounts.pixiv.net/` hits in its hot loop (a
-//! helper creating a never-settling promise while the caller decorates two
-//! throwaway functions), and it grew live memory until the process was killed.
+//! A representative hot loop has a helper create a never-settling promise
+//! while the caller decorates two throwaway functions. Before the cycle was
+//! broken, this shape grew live memory until the process was killed.
 //!
 //! dhat allows one profiler per process and the census counters are global, so
 //! the measurement lives in a single test in its own binary.
@@ -23,7 +23,7 @@ use pixi_byte::JSEngine;
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-/// Site-shaped units executed per round. Every unit creates a scope, two
+/// Workload units executed per round. Every unit creates a scope, two
 /// decorated closures and one pending promise.
 const UNITS_PER_ROUND: usize = 2000;
 /// Rounds to run; the second half is compared against the first half.
@@ -45,10 +45,10 @@ fn count(census: &str, key: &str) -> usize {
         .unwrap_or_else(|| panic!("census has no `{key}=` field: {census}"))
 }
 
-/// The hot unit observed on the Pixiv account page: a function call that
-/// creates closures inside its own scope, decorates them and creates a promise
-/// that never settles. Nothing outlives the call.
-fn site_unit() -> String {
+/// A representative hot unit: a function call that creates closures inside its
+/// own scope, decorates them and creates a promise that never settles. Nothing
+/// outlives the call.
+fn closure_promise_unit() -> String {
     format!(
         r#"
         function makePromise() {{
@@ -113,11 +113,13 @@ fn closure_scopes_and_settled_reactions_are_reclaimed() {
     };
 
     let unit = engine
-        .compile(&site_unit())
-        .expect("site-shaped unit must compile");
+        .compile(&closure_promise_unit())
+        .expect("closure workload unit must compile");
     let mut samples = Vec::new();
     for round in 0..ROUNDS {
-        engine.execute(&unit).expect("site-shaped unit must run");
+        engine
+            .execute(&unit)
+            .expect("closure workload unit must run");
         engine.run_jobs().expect("jobs must run");
         let sample = measure(&mut engine);
         println!(
