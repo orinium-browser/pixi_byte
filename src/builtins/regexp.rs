@@ -210,47 +210,177 @@ fn normalize_character_classes(pattern: &str) -> String {
     output
 }
 
-pub(crate) fn compile(object: &Rc<RefCell<JSObject>>) -> JSResult<regex::Regex> {
+pub(crate) fn compile(object: &Rc<RefCell<JSObject>>) -> JSResult<CompiledRegex> {
     let pattern = object.borrow().get(PATTERN).to_string();
     let flags = object.borrow().get(FLAGS).to_string();
     let pattern = normalize_pattern(&pattern);
-    let mut builder = RegexBuilder::new(&pattern);
+
+    // Fast path: the linear-time `regex` crate handles the vast majority of
+    // patterns and is the engine's preferred matcher.
+    if let Ok(regex) = build_native(&pattern, &flags) {
+        return Ok(CompiledRegex::Native(regex));
+    }
+    // `regex` rejects `\x{D800}`-style surrogate escapes (code units are not
+    // Unicode scalar values). Swap them for U+FFFD and retry.
+    let sanitized = sanitize_surrogate_escapes(&pattern);
+    if sanitized != pattern {
+        if let Ok(regex) = build_native(&sanitized, &flags) {
+            return Ok(CompiledRegex::Native(regex));
+        }
+    }
+    // Slow path: look-around and backreferences are not supported by `regex`,
+    // so fall back to the backtracking `fancy-regex` engine. Real-world bundles
+    // (e.g. es-abstract/get-intrinsic) rely on these constructs.
+    if let Some(regex) = build_fancy(&pattern, &flags) {
+        return Ok(CompiledRegex::Fancy(regex));
+    }
+    if sanitized != pattern {
+        if let Some(regex) = build_fancy(&sanitized, &flags) {
+            return Ok(CompiledRegex::Fancy(regex));
+        }
+    }
+    // Last resort: never-match regex so pattern failures degrade to "no match"
+    // instead of throwing out of the program.
+    Ok(CompiledRegex::Native(
+        RegexBuilder::new(r"\b\B")
+            .build()
+            .expect("never-matching fallback always compiles"),
+    ))
+}
+
+fn build_native(pattern: &str, flags: &str) -> Result<regex::Regex, regex::Error> {
+    let mut builder = RegexBuilder::new(pattern);
     builder
         .case_insensitive(flags.contains('i'))
         .multi_line(flags.contains('m'))
         .dot_matches_new_line(flags.contains('s'));
-    match builder.build() {
-        Ok(regex) => Ok(regex),
-        Err(_) => {
-            // JS allows `\x{D800}`-style surrogate escapes (code units), but the
-            // `regex` crate rejects them since they are not Unicode scalar
-            // values. Swap surrogate escapes for U+FFFD so the pattern stays
-            // structurally valid, then retry.
-            let sanitized = sanitize_surrogate_escapes(&pattern);
-            let mut builder = RegexBuilder::new(&sanitized);
-            builder
-                .case_insensitive(flags.contains('i'))
-                .multi_line(flags.contains('m'))
-                .dot_matches_new_line(flags.contains('s'));
-            match builder.build() {
-                Ok(regex) => Ok(regex),
-                // Last resort: never-match regex so pattern failures degrade to
-                // "no match" instead of throwing out of the program.
-                Err(_) => {
-                    // Last resort: never-match regex so pattern failures degrade
-                    // to "no match" instead of throwing out of the program.
-                    let mut fallback = RegexBuilder::new(r"\b\B");
-                    fallback
-                        .case_insensitive(flags.contains('i'))
-                        .multi_line(flags.contains('m'))
-                        .dot_matches_new_line(flags.contains('s'));
-                    Ok(fallback.build().unwrap_or_else(|_| {
-                        RegexBuilder::new(r"a^")
-                            .build()
-                            .expect("never-matching fallback always compiles")
-                    }))
-                }
-            }
+    builder.build()
+}
+
+fn build_fancy(pattern: &str, flags: &str) -> Option<fancy_regex::Regex> {
+    // `fancy_regex::RegexBuilder` does not expose the `m`/`s` options, so apply
+    // them (and `i`, harmlessly) as inline flags at the front of the pattern.
+    let mut inline = String::new();
+    if flags.contains('i') {
+        inline.push('i');
+    }
+    if flags.contains('m') {
+        inline.push('m');
+    }
+    if flags.contains('s') {
+        inline.push('s');
+    }
+    let pattern = if inline.is_empty() {
+        pattern.to_string()
+    } else {
+        format!("(?{inline}){pattern}")
+    };
+    fancy_regex::Regex::new(&pattern).ok()
+}
+
+/// A compiled regular expression backed by either the linear-time `regex`
+/// engine or the backtracking `fancy-regex` engine (for look-around and
+/// backreferences). Byte ranges are exposed so callers do not depend on the
+/// concrete engine's capture types.
+pub(crate) enum CompiledRegex {
+    Native(regex::Regex),
+    Fancy(fancy_regex::Regex),
+}
+
+pub(crate) type ByteSpan = (usize, usize);
+
+fn native_capture_spans(captures: &regex::Captures<'_>) -> Vec<Option<ByteSpan>> {
+    captures
+        .iter()
+        .map(|capture| capture.map(|matched| (matched.start(), matched.end())))
+        .collect()
+}
+
+fn fancy_capture_spans(captures: &fancy_regex::Captures<'_>) -> Vec<Option<ByteSpan>> {
+    captures
+        .iter()
+        .map(|capture| capture.map(|matched| (matched.start(), matched.end())))
+        .collect()
+}
+
+impl CompiledRegex {
+    pub(crate) fn is_match(&self, input: &str) -> bool {
+        match self {
+            Self::Native(regex) => regex.is_match(input),
+            Self::Fancy(regex) => regex.is_match(input).unwrap_or(false),
+        }
+    }
+
+    pub(crate) fn find_at(&self, input: &str, start: usize) -> Option<ByteSpan> {
+        match self {
+            Self::Native(regex) => regex.find_at(input, start).map(|m| (m.start(), m.end())),
+            Self::Fancy(regex) => regex
+                .find_from_pos(input, start)
+                .ok()
+                .flatten()
+                .map(|m| (m.start(), m.end())),
+        }
+    }
+
+    pub(crate) fn captures_at(&self, input: &str, start: usize) -> Option<Vec<Option<ByteSpan>>> {
+        match self {
+            Self::Native(regex) => regex
+                .captures_at(input, start)
+                .map(|captures| native_capture_spans(&captures)),
+            Self::Fancy(regex) => regex
+                .captures_from_pos(input, start)
+                .ok()
+                .flatten()
+                .map(|captures| fancy_capture_spans(&captures)),
+        }
+    }
+
+    pub(crate) fn find_iter(&self, input: &str) -> Vec<ByteSpan> {
+        match self {
+            Self::Native(regex) => regex
+                .find_iter(input)
+                .map(|matched| (matched.start(), matched.end()))
+                .collect(),
+            Self::Fancy(regex) => regex
+                .find_iter(input)
+                .filter_map(Result::ok)
+                .map(|matched| (matched.start(), matched.end()))
+                .collect(),
+        }
+    }
+
+    pub(crate) fn captures_iter(&self, input: &str) -> Vec<Vec<Option<ByteSpan>>> {
+        match self {
+            Self::Native(regex) => regex
+                .captures_iter(input)
+                .map(|captures| native_capture_spans(&captures))
+                .collect(),
+            Self::Fancy(regex) => regex
+                .captures_iter(input)
+                .filter_map(Result::ok)
+                .map(|captures| fancy_capture_spans(&captures))
+                .collect(),
+        }
+    }
+
+    pub(crate) fn split(&self, input: &str) -> Vec<ByteSpan> {
+        let offset = input.as_ptr() as usize;
+        match self {
+            Self::Native(regex) => regex
+                .split(input)
+                .map(|part| {
+                    let start = part.as_ptr() as usize - offset;
+                    (start, start + part.len())
+                })
+                .collect(),
+            Self::Fancy(regex) => regex
+                .split(input)
+                .filter_map(Result::ok)
+                .map(|part| {
+                    let start = part.as_ptr() as usize - offset;
+                    (start, start + part.len())
+                })
+                .collect(),
         }
     }
 }
@@ -330,10 +460,10 @@ fn regexp_test(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     };
     let matched = expression
         .find_at(&input, start)
-        .filter(|matched| !flags.contains('y') || matched.start() == start);
+        .filter(|(match_start, _)| !flags.contains('y') || *match_start == start);
     if stateful {
         let last_index = matched
-            .map(|matched| utf16_offset(&input, matched.end()) as f64)
+            .map(|(_, end)| utf16_offset(&input, end) as f64)
             .unwrap_or(0.0);
         object
             .borrow_mut()
@@ -368,7 +498,11 @@ fn regexp_exec(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         0
     };
     let captures = expression.captures_at(&input, start).filter(|captures| {
-        !flags.contains('y') || captures.get(0).is_some_and(|m| m.start() == start)
+        !flags.contains('y')
+            || captures
+                .first()
+                .and_then(|capture| *capture)
+                .is_some_and(|(match_start, _)| match_start == start)
     });
     let Some(captures) = captures else {
         if stateful {
@@ -380,8 +514,9 @@ fn regexp_exec(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     };
     if stateful {
         let last_index = captures
-            .get(0)
-            .map(|matched| utf16_offset(&input, matched.end()) as f64)
+            .first()
+            .and_then(|capture| *capture)
+            .map(|(_, end)| utf16_offset(&input, end) as f64)
             .unwrap_or(0.0);
         object
             .borrow_mut()
@@ -391,14 +526,18 @@ fn regexp_exec(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         .iter()
         .map(|capture| {
             capture
-                .map(|capture| JSValue::from_string(capture.as_str().to_string()))
+                .map(|(start, end)| JSValue::from_string(input[start..end].to_string()))
                 .unwrap_or(JSValue::undefined())
         })
         .collect();
     let result = vm.array_from_values(values);
     if result.kind() == JsValueKind::Object {
         let result = result.as_object().unwrap();
-        let index = captures.get(0).map(|capture| capture.start()).unwrap_or(0);
+        let index = captures
+            .first()
+            .and_then(|capture| *capture)
+            .map(|(start, _)| start)
+            .unwrap_or(0);
         result
             .borrow_mut()
             .set("index".to_string(), JSValue::from_number(index as f64));

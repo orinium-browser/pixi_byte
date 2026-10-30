@@ -98,12 +98,19 @@ fn legacy_character_class_ranges_allow_class_escapes_as_endpoints() {
 }
 
 #[test]
-fn unsupported_lookarounds_do_not_prevent_regexp_construction() {
-    // Lookarounds are unsupported by the `regex` crate and degrade to a
-    // never-matching pattern (`\b\B`), so construction succeeds.
+fn lookarounds_are_supported_via_fancy_fallback() {
+    // Lookarounds are not supported by the `regex` crate, so the engine falls
+    // back to `fancy-regex` and evaluates them for real. `" add ,"` satisfies
+    // the positive lookahead and the negative lookahead, so the pattern matches.
     let mut engine = pixi_byte::JSEngine::new();
     let result = engine
         .eval(r#"/\s+(add|subtract)\b(?!\))\s*(?=[,])/.test(" add ,")"#)
+        .unwrap();
+    assert_eq!(result, JSValue::from_bool(true));
+
+    // `" add)"` fails the negative lookahead `(?!\))`.
+    let result = engine
+        .eval(r#"/\s+(add|subtract)\b(?!\))\s*(?=[,])/.test(" add) ,")"#)
         .unwrap();
     assert_eq!(result, JSValue::from_bool(false));
 }

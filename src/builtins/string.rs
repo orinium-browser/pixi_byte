@@ -107,20 +107,23 @@ fn string_replace(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
         let mut output = String::new();
         let mut last_end = 0;
         for captures in regex.captures_iter(&input) {
-            let matched = captures.get(0).expect("capture zero must exist");
-            output.push_str(&input[last_end..matched.start()]);
+            let Some((matched_start, matched_end)) = captures.first().and_then(|capture| *capture)
+            else {
+                continue;
+            };
+            output.push_str(&input[last_end..matched_start]);
             output.push_str(&replacement_text(
                 vm,
                 &replacement,
                 &input,
-                matched.start(),
-                matched.end(),
+                matched_start,
+                matched_end,
                 captures
                     .iter()
-                    .map(|capture| capture.map(|capture| capture.as_str().to_string()))
+                    .map(|capture| capture.map(|(start, end)| input[start..end].to_string()))
                     .collect(),
             )?);
-            last_end = matched.end();
+            last_end = matched_end;
             if !global {
                 break;
             }
@@ -238,11 +241,9 @@ fn string_split(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
             JsValueKind::Object if regexp::is_regexp(&value.as_object().unwrap()) => {
                 let ranges: Vec<_> = regexp::compile(&value.as_object().unwrap())?
                     .split(input)
+                    .into_iter()
                     .take(limit)
-                    .map(|part| {
-                        let start = part.as_ptr() as usize - input.as_ptr() as usize;
-                        base_offset + start..base_offset + start + part.len()
-                    })
+                    .map(|(start, end)| base_offset + start..base_offset + end)
                     .collect();
                 JSValue::str_slices_from_shared(base, ranges).collect()
             }
@@ -303,7 +304,8 @@ fn string_match(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     if regexp::flags(&expression).contains('g') {
         let matches: Vec<_> = regex
             .find_iter(&input)
-            .map(|matched| JSValue::from_str(matched.as_str()))
+            .into_iter()
+            .map(|(start, end)| JSValue::from_str(&input[start..end]))
             .collect();
         return if matches.is_empty() {
             Ok(JSValue::null())
@@ -311,14 +313,14 @@ fn string_match(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
             Ok(vm.array_from_values(matches))
         };
     }
-    let Some(captures) = regex.captures(&input) else {
+    let Some(captures) = regex.captures_at(&input, 0) else {
         return Ok(JSValue::null());
     };
     let values = captures
         .iter()
         .map(|capture| {
             capture
-                .map(|capture| JSValue::from_string(capture.as_str().to_string()))
+                .map(|(start, end)| JSValue::from_string(input[start..end].to_string()))
                 .unwrap_or(JSValue::undefined())
         })
         .collect();
