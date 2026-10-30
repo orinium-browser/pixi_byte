@@ -2188,7 +2188,7 @@ impl VM {
             // APIs that build them without a VM) never get a prototype link.
             // Fall back to Array.prototype for anything marked as a pixi array
             // so `.map`/`.forEach`/&c. still resolve.
-            if object.borrow().has_own_property("__pixi_array__")
+            if object.borrow().is_array()
                 && let Some(array_constructor) =
                     self.global_object.borrow().get("Array").as_object()
                 && let Some(array_prototype) =
@@ -3066,7 +3066,7 @@ fn key_str<'a>(key: &'a JSValue, scratch: &'a mut String) -> &'a str {
 }
 
 fn update_array_length_after_index_write(object: &Rc<RefCell<JSObject>>, index: Option<usize>) {
-    if !object.borrow().has_own_property("__pixi_array__") {
+    if !object.borrow().is_array() {
         return;
     }
     let Some(index) = index else {

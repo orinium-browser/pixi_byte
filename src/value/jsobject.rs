@@ -203,6 +203,42 @@ impl JSObject {
         }
     }
 
+    /// Whether this object is an array (has dense element storage).
+    ///
+    /// Arrays keep no `length` entry in the property map: it is synthesised
+    /// from `elements.len()`, so creating an array literal allocates no
+    /// `HashMap` entries at all.
+    pub fn is_array(&self) -> bool {
+        self.elements.is_some()
+    }
+
+    fn array_length(&self) -> Option<usize> {
+        self.elements
+            .as_ref()
+            .map(|elements| elements.borrow().len())
+    }
+
+    /// Resize the dense element storage (array `length` write).
+    fn set_array_length(&mut self, length: usize) -> bool {
+        let Some(elements) = &self.elements else {
+            return false;
+        };
+        elements.borrow_mut().resize(length, None);
+        true
+    }
+
+    /// Synthesised descriptor for the `length` own property of an array.
+    fn array_length_descriptor(&self) -> Option<Property> {
+        Some(Property {
+            value: JSValue::from_number(self.array_length()? as f64),
+            enumerable: false,
+            writable: true,
+            configurable: false,
+            getter: None,
+            setter: None,
+        })
+    }
+
     /// 配列要素ストレージから、正準配列インデックスのプロパティディスクリプタを
     /// 合成します（要素は writable / enumerable / configurable すべて true）。
     fn element_property_descriptor(&self, key: &str) -> Option<Property> {
@@ -222,6 +258,12 @@ impl JSObject {
         // 自身のプロパティを検索
         if let Some(prop) = self.properties.borrow().get(key) {
             return prop.value.clone();
+        }
+
+        if key == "length"
+            && let Some(length) = self.array_length()
+        {
+            return JSValue::from_number(length as f64);
         }
 
         // 配列要素を検索（穴は undefined として扱う）
@@ -334,6 +376,14 @@ impl JSObject {
             return true;
         }
 
+        if key == "length" && self.is_array() {
+            let raw = value.to_number();
+            if !raw.is_finite() || raw < 0.0 {
+                return false;
+            }
+            return self.set_array_length(raw as usize);
+        }
+
         // 配列要素ストレージへの書き込み
         if let Some(index) = canonical_array_index(&key)
             && let Some(elements) = &self.elements
@@ -367,6 +417,9 @@ impl JSObject {
     /// 自身のプロパティのみを確認します。
     pub fn has_own_property(&self, key: &str) -> bool {
         if self.properties.borrow().contains_key(key) {
+            return true;
+        }
+        if key == "length" && self.is_array() {
             return true;
         }
         if let Some(index) = canonical_array_index(key)
@@ -405,6 +458,10 @@ impl JSObject {
     }
 
     pub fn delete(&mut self, key: &str) -> bool {
+        if key == "length" && self.is_array() {
+            // Array `length` is non-configurable.
+            return false;
+        }
         if let Some(prop) = self.properties.borrow().get(key)
             && !prop.configurable
         {
@@ -521,6 +578,9 @@ impl JSObject {
     /// 文字列のown property名を列挙可能性に関係なく取得します。
     pub fn own_property_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.properties.borrow().keys().cloned().collect();
+        if self.is_array() {
+            names.push("length".to_string());
+        }
         if let Some(elements) = &self.elements {
             let elements = elements.borrow();
             let props = self.properties.borrow();
@@ -555,6 +615,13 @@ impl JSObject {
     ///
     /// ディスクリプタは部分的に指定されることがあり、未指定属性は既存のプロパティから継承されます。
     pub fn define_property(&mut self, key: String, property: Property) -> bool {
+        if key == "length" && self.is_array() {
+            let raw = property.value.to_number();
+            if !raw.is_finite() || raw < 0.0 {
+                return false;
+            }
+            return self.set_array_length(raw as usize);
+        }
         // New properties cannot be added
         if !self.extensible && !self.has_own_property(&key) {
             return false;
@@ -679,6 +746,9 @@ impl JSObject {
     pub fn get_property_descriptor(&self, key: &str) -> Option<Property> {
         if let Some(prop) = self.properties.borrow().get(key) {
             return Some(prop.clone());
+        }
+        if key == "length" {
+            return self.array_length_descriptor();
         }
         self.element_property_descriptor(key)
     }

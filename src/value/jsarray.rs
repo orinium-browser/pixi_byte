@@ -1,4 +1,4 @@
-use super::{JSObject, JSValue, Property};
+use super::{JSObject, JSValue};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -70,37 +70,7 @@ impl JSArray {
 
     /// 配列をJSObjectに変換
     pub fn to_object(self) -> JSValue {
-        let len = self.elements.len();
-
-        // 要素ベクトルをそのまま JSObject の要素ストレージへ移す。
-        // 従来は要素ごとに i.to_string() で String キーを作って HashMap に
-        // 展開していたが、その変換コスト（String 生成 / ハッシュ / Property 生成）を
-        // 排除するため、dense な Vec のまま共有する。
-        let mut obj = JSObject::with_elements(self.elements);
-
-        obj.define_property(
-            "__pixi_array__".to_string(),
-            Property {
-                value: JSValue::from_bool(true),
-                enumerable: false,
-                writable: false,
-                configurable: false,
-                getter: None,
-                setter: None,
-            },
-        );
-        obj.define_property(
-            "length".to_string(),
-            Property {
-                value: JSValue::from_number(len as f64),
-                enumerable: false,
-                writable: true,
-                configurable: false,
-                getter: None,
-                setter: None,
-            },
-        );
-
+        let obj = JSObject::with_elements(self.elements);
         JSValue::from_object(Rc::new(RefCell::new(obj)))
     }
 }

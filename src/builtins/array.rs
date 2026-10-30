@@ -309,7 +309,7 @@ fn array_concat(vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::JSR
     for value in args.into_iter().skip(1) {
         if value.is_object() {
             let array = value.as_object().unwrap();
-            if array.borrow().has_own_property("__pixi_array__") {
+            if array.borrow().is_array() {
                 for index in 0..length(&array) {
                     values.push(array.borrow().get_index(index));
                 }
@@ -845,7 +845,7 @@ fn array_find_last_index(
 fn flatten_values(value: JSValue, depth: usize, output: &mut Vec<JSValue>) {
     if depth > 0 && value.is_object() {
         let object = value.as_object().unwrap();
-        if object.borrow().has_own_property("__pixi_array__") {
+        if object.borrow().is_array() {
             for index in 0..length(&object) {
                 flatten_values(object.borrow().get_index(index), depth - 1, output);
             }
@@ -922,10 +922,7 @@ fn array_is_array(_vm: &mut crate::vm::VM, args: Vec<JSValue>) -> crate::error::
     } else {
         args.first()
     };
-    let is_array = value.is_some_and(|v| {
-        v.as_object()
-            .is_some_and(|obj| obj.borrow().has_own_property("__pixi_array__"))
-    });
+    let is_array = value.is_some_and(|v| v.as_object().is_some_and(|obj| obj.borrow().is_array()));
     Ok(JSValue::from_bool(is_array))
 }
 

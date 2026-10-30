@@ -71,7 +71,7 @@ fn serialize(
 
             let (is_array, entries): (bool, Vec<(String, JSValue)>) = {
                 let object = object.borrow();
-                let is_array = object.get("__pixi_array__") == JSValue::from_bool(true);
+                let is_array = object.is_array();
                 if is_array {
                     let length = object.get("length").to_number().max(0.0) as usize;
                     let entries = (0..length)

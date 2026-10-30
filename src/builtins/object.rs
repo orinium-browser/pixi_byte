@@ -400,7 +400,7 @@ pub(crate) fn object_to_string(
     match receiver.kind() {
         JsValueKind::Object => {
             let object = receiver.as_object().unwrap();
-            if object.borrow().has_own_property("__pixi_array__") {
+            if object.borrow().is_array() {
                 Ok(JSValue::from_str("[object Array]"))
             } else if object.borrow().has_own_property("__pixi_regexp__") {
                 Ok(JSValue::from_str("[object RegExp]"))
