@@ -16,11 +16,7 @@ fn error_constructor(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
 /// real JS Error object chaining to the matching global prototype, so that
 /// `catch (e) { e instanceof TypeError }` behaves like the platform instead of
 /// receiving a raw string.
-pub(crate) fn host_error_to_js_value(
-    vm: &mut VM,
-    name: &str,
-    message: &str,
-) -> JSResult<JSValue> {
+pub(crate) fn host_error_to_js_value(vm: &mut VM, name: &str, message: &str) -> JSResult<JSValue> {
     let args = vec![
         JSValue::undefined(),
         JSValue::from_string(message.to_string()),
