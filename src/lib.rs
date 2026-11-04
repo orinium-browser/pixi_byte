@@ -1,4 +1,5 @@
 pub mod builtins;
+mod async_lowering;
 pub mod census;
 pub mod compiler;
 pub mod error;
@@ -66,7 +67,12 @@ impl JSEngine {
 
     /// JavaScriptコードを評価
     pub fn eval_with_options(&mut self, source: &str, options: &EvalOptions) -> JSResult<JSValue> {
-        let bytecode = self.compile_with_options(source, options)?;
+        self.vm.last_error_pc = None;
+        self.vm.last_error_fn = None;
+        self.vm.last_error_stack.clear();
+        self.vm.last_error_variables.clear();
+        let lowered_source = async_lowering::lower_async_await(source);
+        let bytecode = self.compile_with_options(&lowered_source, options)?;
         self.execute(&bytecode)
     }
 
@@ -149,6 +155,11 @@ impl JSEngine {
     /// Function-name call stack (innermost first) at the terminal error.
     pub fn last_error_stack(&self) -> &[String] {
         self.vm.last_error_stack()
+    }
+
+    /// Local variables captured at the most recent terminal error.
+    pub fn last_error_variables(&self) -> &[(String, String)] {
+        self.vm.last_error_variables()
     }
 
     /// Calls a JS function value from Rust.
