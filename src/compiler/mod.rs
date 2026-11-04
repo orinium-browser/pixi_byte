@@ -2013,6 +2013,20 @@ impl Compiler {
             self.chunk.emit(Opcode::DefineVar(name));
         }
 
+        // A named class expression has an inner self-name binding that is
+        // visible to its constructor, fields, and methods, but not outside the
+        // expression. Create its lexical scope before emitting those closures.
+        let class_name_binding = if let Some(name) = name.as_ref() {
+            self.chunk.emit(Opcode::EnterScope);
+            let binding = self.intern_name(name)?;
+            let undefined = self.chunk.add_constant(JSValue::undefined());
+            self.chunk.emit(Opcode::LoadConst(undefined));
+            self.chunk.emit(Opcode::DefineVar(binding));
+            Some(binding)
+        } else {
+            None
+        };
+
         let (instance_fields, static_fields): (Vec<ClassField>, Vec<ClassField>) =
             fields.into_iter().partition(|field| !field.is_static);
         let field_inits = instance_fields
@@ -2054,6 +2068,11 @@ impl Compiler {
         self.emit_function_value(name.clone(), params, body, super_binding.clone(), false)?;
         let class_binding_name = self.intern_name(&class_binding)?;
         self.chunk.emit(Opcode::DefineVar(class_binding_name));
+
+        if let Some(binding) = class_name_binding {
+            self.chunk.emit(Opcode::LoadVar(class_binding_name));
+            self.chunk.emit(Opcode::StoreVar(binding));
+        }
 
         if let Some(super_binding) = super_binding.as_ref() {
             self.emit_set_prototype(&class_binding, super_binding, false)?;
@@ -2127,6 +2146,9 @@ impl Compiler {
         }
 
         self.chunk.emit(Opcode::LoadVar(class_binding_name));
+        if name.is_some() {
+            self.chunk.emit(Opcode::ExitScope);
+        }
         Ok(())
     }
 
