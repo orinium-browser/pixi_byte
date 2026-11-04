@@ -1375,10 +1375,184 @@ impl VM {
                     }
                 }
             }
+            Opcode::GetIndex => {
+                let key = self.pop()?;
+                let obj = self.pop()?;
+
+                match &obj.kind() {
+                    JsValueKind::Object => {
+                        let obj_ref = obj.as_object().unwrap();
+                        // Fast path for arrays with integer indices
+                        if obj_ref.borrow().is_array() {
+                            if key.is_number() {
+                                let idx = key.as_number().unwrap();
+                                if idx >= 0.0 && idx.is_finite() && idx.fract() == 0.0 {
+                                    let idx_usize = idx as usize;
+                                    let value = obj_ref.borrow().get_index(idx_usize);
+                                    self.stack.push(value);
+                                    return Ok(ControlFlow::Continue);
+                                }
+                            } else if key.is_string() {
+                                if let Some(idx_str) = key.as_string() {
+                                    if let Ok(idx) = idx_str.parse::<usize>() {
+                                        let value = obj_ref.borrow().get_index(idx);
+                                        self.stack.push(value);
+                                        return Ok(ControlFlow::Continue);
+                                    }
+                                }
+                            } else {
+                                let num = key.to_number();
+                                if num >= 0.0 && num.is_finite() && num.fract() == 0.0 {
+                                    let idx_usize = num as usize;
+                                    let value = obj_ref.borrow().get_index(idx_usize);
+                                    self.stack.push(value);
+                                    return Ok(ControlFlow::Continue);
+                                }
+                            }
+                        }
+
+                        let key_str_val = key_str(&key, key_scratch);
+
+                        let maybe_prop = { obj_ref.borrow().get_property_descriptor(key_str_val) };
+
+                        if let Some(prop) = maybe_prop {
+                            if let Some(getter) = prop.getter.clone() {
+                                let result = self.call(getter, obj.clone(), vec![])?;
+                                self.stack.push(result);
+                                return Ok(ControlFlow::Continue);
+                            }
+                            self.stack.push(prop.value.clone());
+                            return Ok(ControlFlow::Continue);
+                        }
+
+                        if let Some(prop) = inherited_property_descriptor(&obj_ref, key_str_val) {
+                            if let Some(getter) = prop.getter {
+                                let result = self.call(getter, obj.clone(), vec![])?;
+                                self.stack.push(result);
+                            } else {
+                                self.stack.push(prop.value);
+                            }
+                            return Ok(ControlFlow::Continue);
+                        }
+
+                        let host_getter = {
+                            obj_ref
+                                .borrow()
+                                .get(crate::value::jsobject::HOST_GET_PROPERTY)
+                        };
+
+                        if host_getter.is_callable() && !host_getter.is_object() {
+                            let result = self.call(host_getter, obj.clone(), vec![key.clone()])?;
+                            self.stack.push(result);
+                            return Ok(ControlFlow::Continue);
+                        }
+
+                        let value = {
+                            let object = obj_ref.borrow();
+                            if object.has_property(key_str_val) {
+                                object.get(key_str_val)
+                            } else {
+                                drop(object);
+                                self.object_fallback_property(&obj_ref, key_str_val)
+                            }
+                        };
+
+                        self.stack.push(value);
+                    }
+                    JsValueKind::Function | JsValueKind::ArrowFunction => {
+                        let key_str_val = key_str(&key, key_scratch);
+                        let object = self.user_function_object(&obj);
+                        if let Some(object) = object {
+                            let descriptor = object.borrow().get_property_descriptor(key_str_val);
+                            if let Some(getter) = descriptor.and_then(|property| property.getter) {
+                                let value = self.call(getter, obj.clone(), Vec::new())?;
+                                self.stack.push(value);
+                            } else {
+                                let value = object.borrow().get(key_str_val);
+                                self.stack.push(value);
+                            }
+                        } else {
+                            let value = self.function_prototype.borrow().get(key_str_val);
+                            self.stack.push(value);
+                        }
+                    }
+                    JsValueKind::NativeFunction => {
+                        let key_str_val = key_str(&key, key_scratch);
+                        let value = self
+                            .user_function_object(&obj)
+                            .map(|properties| properties.borrow().get(key_str_val))
+                            .unwrap_or_else(|| self.function_prototype.borrow().get(key_str_val));
+                        self.stack.push(value);
+                    }
+                    JsValueKind::String => {
+                        let string = obj.as_string().unwrap();
+                        let key_str_val = key_str(&key, key_scratch);
+                        if key_str_val == "length" {
+                            self.stack
+                                .push(JSValue::from_number(string.encode_utf16().count() as f64));
+                        } else if let Ok(index) = key_str_val.parse::<usize>() {
+                            let value = string
+                                .chars()
+                                .nth(index)
+                                .map(JSValue::from_char)
+                                .unwrap_or(JSValue::undefined());
+                            self.stack.push(value);
+                        } else {
+                            let value = self.string_prototype.borrow().get(key_str_val);
+                            self.stack.push(value);
+                        }
+                    }
+                    JsValueKind::Number => {
+                        let key_str_val = key_str(&key, key_scratch);
+                        let value = self.number_prototype.borrow().get(key_str_val);
+                        self.stack.push(value);
+                    }
+                    _ => {
+                        self.stack.push(JSValue::undefined());
+                    }
+                }
+            }
             Opcode::SetProperty => {
                 let value = self.pop()?;
                 let key = self.pop()?;
                 let obj = self.pop()?;
+                self.set_object_property(&obj, key, value.clone(), key_scratch)?;
+                self.stack.push(value);
+            }
+            Opcode::SetIndex => {
+                let value = self.pop()?;
+                let key = self.pop()?;
+                let obj = self.pop()?;
+                if let JsValueKind::Object = &obj.kind() {
+                    let obj_ref = obj.as_object().unwrap();
+                    if obj_ref.borrow().is_array() {
+                        if key.is_number() {
+                            let idx = key.as_number().unwrap();
+                            if idx >= 0.0 && idx.is_finite() && idx.fract() == 0.0 {
+                                let idx_usize = idx as usize;
+                                obj_ref.borrow_mut().set_index(idx_usize, value.clone());
+                                self.stack.push(value);
+                                return Ok(ControlFlow::Continue);
+                            }
+                        } else if key.is_string() {
+                            if let Some(idx_str) = key.as_string() {
+                                if let Ok(idx) = idx_str.parse::<usize>() {
+                                    obj_ref.borrow_mut().set_index(idx, value.clone());
+                                    self.stack.push(value);
+                                    return Ok(ControlFlow::Continue);
+                                }
+                            }
+                        } else {
+                            let num = key.to_number();
+                            if num >= 0.0 && num.is_finite() && num.fract() == 0.0 {
+                                let idx_usize = num as usize;
+                                obj_ref.borrow_mut().set_index(idx_usize, value.clone());
+                                self.stack.push(value);
+                                return Ok(ControlFlow::Continue);
+                            }
+                        }
+                    }
+                }
                 self.set_object_property(&obj, key, value.clone(), key_scratch)?;
                 self.stack.push(value);
             }
@@ -1387,6 +1561,44 @@ impl VM {
                 let old_value = self.pop()?;
                 let key = self.pop()?;
                 let obj = self.pop()?;
+                self.set_object_property(&obj, key, value, key_scratch)?;
+                self.stack.push(old_value);
+            }
+            Opcode::SetIndexKeepOld => {
+                let value = self.pop()?;
+                let old_value = self.pop()?;
+                let key = self.pop()?;
+                let obj = self.pop()?;
+                if let JsValueKind::Object = &obj.kind() {
+                    let obj_ref = obj.as_object().unwrap();
+                    if obj_ref.borrow().is_array() {
+                        if key.is_number() {
+                            let idx = key.as_number().unwrap();
+                            if idx >= 0.0 && idx.is_finite() && idx.fract() == 0.0 {
+                                let idx_usize = idx as usize;
+                                obj_ref.borrow_mut().set_index(idx_usize, value.clone());
+                                self.stack.push(old_value);
+                                return Ok(ControlFlow::Continue);
+                            }
+                        } else if key.is_string() {
+                            if let Some(idx_str) = key.as_string() {
+                                if let Ok(idx) = idx_str.parse::<usize>() {
+                                    obj_ref.borrow_mut().set_index(idx, value.clone());
+                                    self.stack.push(old_value);
+                                    return Ok(ControlFlow::Continue);
+                                }
+                            }
+                        } else {
+                            let num = key.to_number();
+                            if num >= 0.0 && num.is_finite() && num.fract() == 0.0 {
+                                let idx_usize = num as usize;
+                                obj_ref.borrow_mut().set_index(idx_usize, value.clone());
+                                self.stack.push(old_value);
+                                return Ok(ControlFlow::Continue);
+                            }
+                        }
+                    }
+                }
                 self.set_object_property(&obj, key, value, key_scratch)?;
                 self.stack.push(old_value);
             }
