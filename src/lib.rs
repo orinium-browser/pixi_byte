@@ -1,5 +1,5 @@
-pub mod builtins;
 mod async_lowering;
+pub mod builtins;
 pub mod census;
 pub mod compiler;
 pub mod error;
