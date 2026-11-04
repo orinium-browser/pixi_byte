@@ -75,8 +75,11 @@ pub enum Opcode {
     NewObject,       // 空のオブジェクトを作成
     NewRegExp(String, String),
     GetProperty,        // obj[key] - スタックから key, obj をポップ、結果をプッシュ
+    GetIndex,           // obj[index] - specialized array index access
     SetProperty,        // obj[key] = value - スタックから value, key, obj をポップ
+    SetIndex,           // obj[index] = value - specialized array index assignment
     SetPropertyKeepOld, // postfix update用: obj, key, old, newからoldを残す
+    SetIndexKeepOld,    // postfix update用 for array index
     DeleteProperty,     // delete obj[key] - スタックから key, obj をポップ
     ArrayPush,          // arr.push(value) - スタックから index, value をポップ、arr は残る
     ArrayAppend,
@@ -1284,7 +1287,11 @@ impl Compiler {
                             self.compile_expression(*property)?;
                         }
                         self.compile_expression(*right)?;
-                        self.chunk.emit(Opcode::SetProperty);
+                        if computed {
+                            self.chunk.emit(Opcode::SetIndex);
+                        } else {
+                            self.chunk.emit(Opcode::SetProperty);
+                        }
                     }
                     target @ (Expression::ArrayLiteral(_) | Expression::ObjectLiteral(_)) => {
                         let pattern = assignment_binding_pattern(target)?;
@@ -1321,12 +1328,18 @@ impl Compiler {
                     self.chunk.emit(Opcode::StoreVar(name));
                 }
                 Expression::MemberAccess {
-                    object, property, ..
+                    object,
+                    property,
+                    computed,
                 } => {
                     self.compile_expression(*object)?;
                     self.compile_expression(*property)?;
                     self.chunk.emit(Opcode::Dup2);
-                    self.chunk.emit(Opcode::GetProperty);
+                    if computed {
+                        self.chunk.emit(Opcode::GetIndex);
+                    } else {
+                        self.chunk.emit(Opcode::GetProperty);
+                    }
                     if !prefix {
                         self.chunk.emit(Opcode::Dup);
                     }
@@ -1335,11 +1348,19 @@ impl Compiler {
                     } else {
                         Opcode::Decrement
                     });
-                    self.chunk.emit(if prefix {
-                        Opcode::SetProperty
+                    if prefix {
+                        if computed {
+                            self.chunk.emit(Opcode::SetIndex);
+                        } else {
+                            self.chunk.emit(Opcode::SetProperty);
+                        }
                     } else {
-                        Opcode::SetPropertyKeepOld
-                    });
+                        if computed {
+                            self.chunk.emit(Opcode::SetIndexKeepOld);
+                        } else {
+                            self.chunk.emit(Opcode::SetPropertyKeepOld);
+                        }
+                    }
                 }
                 _ => {
                     return Err(JSError::TypeError("Invalid update target".to_string()));
@@ -1486,20 +1507,25 @@ impl Compiler {
                 if computed {
                     // obj[prop] - property を評価
                     self.compile_expression(*property)?;
+                    self.chunk.emit(Opcode::GetIndex);
                 } else {
                     // obj.prop - property は文字列リテラル
                     self.compile_expression(*property)?;
+                    self.chunk.emit(Opcode::GetProperty);
                 }
-                self.chunk.emit(Opcode::GetProperty);
             }
             Expression::OptionalMemberAccess {
                 object,
                 property,
-                computed: _,
+                computed,
             } => {
                 self.compile_expression(*object)?;
                 self.compile_expression(*property)?;
-                self.chunk.emit(Opcode::GetProperty);
+                if computed {
+                    self.chunk.emit(Opcode::GetIndex);
+                } else {
+                    self.chunk.emit(Opcode::GetProperty);
+                }
             }
             Expression::Function {
                 name,
