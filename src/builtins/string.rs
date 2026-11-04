@@ -327,6 +327,32 @@ fn string_match(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     Ok(vm.array_from_values(values))
 }
 
+fn string_search(vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
+    let input = receiver(&args, "search")?;
+    let search_value = args.get(1).cloned().unwrap_or(JSValue::undefined());
+    let expression = if search_value
+        .as_object()
+        .is_some_and(|object| regexp::is_regexp(&object))
+    {
+        search_value.as_object().unwrap().clone()
+    } else {
+        let pattern = if search_value.is_undefined() {
+            String::new()
+        } else {
+            vm.to_string_value(search_value)?
+        };
+        regexp::create(&pattern, "").as_object().unwrap().clone()
+    };
+    let compiled = regexp::compile(&expression)?;
+    let sticky = regexp::flags(&expression).contains('y');
+    let index = compiled
+        .find_at(&input, 0)
+        .filter(|(start, _)| !sticky || *start == 0)
+        .map(|(start, _)| input[..start].encode_utf16().count() as f64)
+        .unwrap_or(-1.0);
+    Ok(JSValue::from_number(index))
+}
+
 fn string_includes(_vm: &mut VM, args: Vec<JSValue>) -> JSResult<JSValue> {
     let input = receiver(&args, "includes")?;
     let needle = args.get(1).map(JSValue::to_string).unwrap_or_default();
@@ -663,6 +689,10 @@ pub fn install(global: &Rc<RefCell<JSObject>>) {
     prototype.set(
         "match".to_string(),
         JSValue::from_native_function(string_match),
+    );
+    prototype.set(
+        "search".to_string(),
+        JSValue::from_native_function(string_search),
     );
     prototype.set(
         "includes".to_string(),
