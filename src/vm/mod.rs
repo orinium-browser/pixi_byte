@@ -578,6 +578,9 @@ impl VM {
             // it (a nested scope, an escaping object, ...). Leave it alone.
             return;
         }
+        if Rc::strong_count(env) != 1 + captured.len() {
+            return;
+        }
 
         let mut release_cache_entries = Vec::new();
         for (value, slots) in &captured {
