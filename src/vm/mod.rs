@@ -181,6 +181,8 @@ pub struct VM {
     pub(crate) last_error_fn: Option<String>,
     /// Function-name call stack (innermost first) at the terminal error.
     pub(crate) last_error_stack: Vec<String>,
+    /// Locals captured at the terminal error, innermost scope first.
+    pub(crate) last_error_variables: Vec<(String, String)>,
     /// Number of real arguments passed to the native function currently
     /// running (excluding the receiver that the call path prepends).
     ///
@@ -278,6 +280,7 @@ impl VM {
             current_pc: 0,
             last_error_fn: None,
             last_error_stack: Vec::new(),
+            last_error_variables: Vec::new(),
             string_prototype,
             number_prototype,
             callable_object_cache: HashMap::new(),
@@ -654,7 +657,16 @@ impl VM {
         &self.last_error_stack
     }
 
+    /// Local variables captured at the most recent terminal error.
+    pub fn last_error_variables(&self) -> &[(String, String)] {
+        &self.last_error_variables
+    }
+
     pub fn execute(&mut self, chunk: &BytecodeChunk) -> JSResult<JSValue> {
+        self.last_error_pc = None;
+        self.last_error_fn = None;
+        self.last_error_stack.clear();
+        self.last_error_variables.clear();
         let mut pc = 0; // プログラムカウンタ
         let mut handlers = Vec::new();
         let mut pending_finally = Vec::new();
@@ -722,6 +734,24 @@ impl VM {
                                         .unwrap_or_else(|| "<anon>".to_string())
                                 })
                                 .collect();
+                            self.last_error_variables.clear();
+                            let intern = chunk.intern.borrow();
+                            let mut seen = std::collections::HashSet::new();
+                            for frame in self.frames.iter().rev() {
+                                let mut environment = Some(Rc::clone(&frame.env));
+                                while let Some(env) = environment {
+                                    let borrowed = env.borrow();
+                                    for (name_id, value) in borrowed.bindings_snapshot() {
+                                        if seen.insert(name_id) {
+                                            self.last_error_variables.push((
+                                                intern.name(name_id).to_string(),
+                                                value.to_console_string(),
+                                            ));
+                                        }
+                                    }
+                                    environment = borrowed.outer();
+                                }
+                            }
                         }
                         return Err(terminal);
                     }
