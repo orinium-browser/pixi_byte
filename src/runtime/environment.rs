@@ -62,6 +62,15 @@ impl Environment {
         self.bindings.borrow().values().cloned().collect()
     }
 
+    /// Snapshot this environment's local bindings for debugger inspection.
+    pub fn bindings_snapshot(&self) -> Vec<(NameId, JSValue)> {
+        self.bindings
+            .borrow()
+            .iter()
+            .map(|(name, value)| (*name, value.clone()))
+            .collect()
+    }
+
     /// Drops every binding, breaking cycles between this scope and closures
     /// created inside it (`env -> f -> env`).
     ///
