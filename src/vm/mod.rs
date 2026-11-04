@@ -4,6 +4,8 @@
 //! - スタック (Vec<JSValue>) を使用
 //! - 関数呼び出し時はスタック/環境を切り替える
 
+pub mod optimize;
+
 use crate::compiler::{BytecodeChunk, Opcode};
 use crate::error::{JSError, JSResult};
 use crate::intern::{FunctionParam, NameId};

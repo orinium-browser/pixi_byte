@@ -111,6 +111,9 @@ impl JSEngine {
             }
         }
 
+        let mut bytecode = bytecode;
+        crate::vm::optimize::optimize(&mut bytecode);
+
         Ok(bytecode)
     }
 
