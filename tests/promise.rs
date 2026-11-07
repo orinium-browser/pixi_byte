@@ -1,6 +1,5 @@
 use pixi_byte::{JSEngine, JSValue};
 
-#[test]
 fn promise_then_runs_asynchronously_and_chains_values() {
     let mut engine = JSEngine::new();
     engine
@@ -30,7 +29,6 @@ fn promise_then_runs_asynchronously_and_chains_values() {
     );
 }
 
-#[test]
 fn babel_generator_async_helper_advances_generator_promises() {
     let mut engine = JSEngine::new();
     engine
@@ -68,7 +66,6 @@ fn babel_generator_async_helper_advances_generator_promises() {
     );
 }
 
-#[test]
 fn generator_switch_eagerly_evaluates_babel_chunk_yields() {
     let mut engine = JSEngine::new();
     engine
@@ -90,7 +87,6 @@ fn generator_switch_eagerly_evaluates_babel_chunk_yields() {
     assert_eq!(engine.eval("calls").unwrap(), JSValue::from_number(4.0));
 }
 
-#[test]
 fn promise_catch_handles_rejection() {
     let mut engine = JSEngine::new();
     engine
@@ -113,7 +109,6 @@ fn promise_catch_handles_rejection() {
     );
 }
 
-#[test]
 fn promise_ignores_later_settlement_attempts() {
     let mut engine = JSEngine::new();
     engine
@@ -137,7 +132,6 @@ fn promise_ignores_later_settlement_attempts() {
     );
 }
 
-#[test]
 fn promise_static_resolve_and_reject_create_settled_promises() {
     let mut engine = JSEngine::new();
     engine
@@ -162,7 +156,6 @@ fn promise_static_resolve_and_reject_create_settled_promises() {
     );
 }
 
-#[test]
 fn promise_all_preserves_input_order() {
     let mut engine = JSEngine::new();
     engine
@@ -183,7 +176,6 @@ fn promise_all_preserves_input_order() {
     );
 }
 
-#[test]
 fn await_unwraps_fulfilled_promises_and_synchronous_lazy_results() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -200,7 +192,6 @@ fn await_unwraps_fulfilled_promises_and_synchronous_lazy_results() {
     assert_eq!(result, JSValue::from_number(7.0));
 }
 
-#[test]
 fn await_drains_pending_promise_reactions() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -216,7 +207,6 @@ fn await_drains_pending_promise_reactions() {
     assert_eq!(result, JSValue::from_number(4.0));
 }
 
-#[test]
 fn await_stringifies_synchronous_lazy_result_css() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -238,7 +228,6 @@ fn await_stringifies_synchronous_lazy_result_css() {
     assert_eq!(result, JSValue::from_string("body{color:red}".to_string()));
 }
 
-#[test]
 fn eager_generator_evaluates_every_webpack_style_chunk_request() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -273,4 +262,27 @@ fn eager_generator_evaluates_every_webpack_style_chunk_request() {
         result,
         JSValue::from_string("5263,999,7674,5199,2299,2123:function".to_string())
     );
+}
+
+#[test]
+fn suite_promise_1() {
+    promise_then_runs_asynchronously_and_chains_values();
+    babel_generator_async_helper_advances_generator_promises();
+    generator_switch_eagerly_evaluates_babel_chunk_yields();
+    promise_catch_handles_rejection();
+}
+
+#[test]
+fn suite_promise_2() {
+    promise_ignores_later_settlement_attempts();
+    promise_static_resolve_and_reject_create_settled_promises();
+    promise_all_preserves_input_order();
+    await_unwraps_fulfilled_promises_and_synchronous_lazy_results();
+}
+
+#[test]
+fn suite_promise_3() {
+    await_drains_pending_promise_reactions();
+    await_stringifies_synchronous_lazy_result_css();
+    eager_generator_evaluates_every_webpack_style_chunk_request();
 }

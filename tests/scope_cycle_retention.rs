@@ -103,7 +103,7 @@ fn closure_scopes_and_settled_reactions_are_reclaimed() {
     let _profiler = Profiler::new_heap();
     let mut engine = JSEngine::new();
 
-    let mut measure = |engine: &mut JSEngine| Sample {
+    let measure = |engine: &mut JSEngine| Sample {
         live_bytes: HeapStats::get().curr_bytes,
         objects: count(&pixi_byte::live_census(), "objects"),
         environments: count(&pixi_byte::live_census(), "environments"),

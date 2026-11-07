@@ -1,6 +1,5 @@
 use pixi_byte::{JSEngine, JSValue};
 
-#[test]
 fn array_and_object_declarations_bind_values() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -15,7 +14,6 @@ fn array_and_object_declarations_bind_values() {
     assert_eq!(result, JSValue::from_number(9.0));
 }
 
-#[test]
 fn for_of_supports_array_binding_patterns() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -32,7 +30,6 @@ fn for_of_supports_array_binding_patterns() {
     assert_eq!(result, JSValue::from_number(5.0));
 }
 
-#[test]
 fn declaration_list_can_mix_identifiers_and_patterns() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -46,7 +43,6 @@ fn declaration_list_can_mix_identifiers_and_patterns() {
     assert_eq!(result, JSValue::from_number(5.0));
 }
 
-#[test]
 fn array_destructuring_assignment_updates_existing_bindings() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -61,7 +57,6 @@ fn array_destructuring_assignment_updates_existing_bindings() {
     assert_eq!(result, JSValue::from_number(7.0));
 }
 
-#[test]
 fn destructuring_assignment_supports_member_targets() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -76,7 +71,6 @@ fn destructuring_assignment_supports_member_targets() {
     assert_eq!(result, JSValue::from_number(5.0));
 }
 
-#[test]
 fn function_parameters_support_binding_patterns() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -92,7 +86,6 @@ fn function_parameters_support_binding_patterns() {
     assert_eq!(result, JSValue::from_number(5.0));
 }
 
-#[test]
 fn arrow_parameters_support_binding_patterns() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -106,7 +99,6 @@ fn arrow_parameters_support_binding_patterns() {
     assert_eq!(result, JSValue::from_number(5.0));
 }
 
-#[test]
 fn async_arrow_supports_binding_patterns_in_synchronous_mode() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -120,7 +112,6 @@ fn async_arrow_supports_binding_patterns_in_synchronous_mode() {
     assert_eq!(result, JSValue::from_number(5.0));
 }
 
-#[test]
 fn object_binding_patterns_support_rest() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -134,7 +125,6 @@ fn object_binding_patterns_support_rest() {
     assert_eq!(result, JSValue::from_number(5.0));
 }
 
-#[test]
 fn object_binding_patterns_accept_string_keys() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -148,7 +138,6 @@ fn object_binding_patterns_accept_string_keys() {
     assert_eq!(result, JSValue::from_number(42.0));
 }
 
-#[test]
 fn computed_key_bindings_exclude_the_key_from_rest() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -164,7 +153,6 @@ fn computed_key_bindings_exclude_the_key_from_rest() {
     assert_eq!(result, JSValue::from_string("2:1:3:false".to_string()));
 }
 
-#[test]
 fn numeric_computed_keys_bind_like_property_keys() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -178,7 +166,6 @@ fn numeric_computed_keys_bind_like_property_keys() {
     assert_eq!(result, JSValue::from_string("load:9".to_string()));
 }
 
-#[test]
 fn computed_key_bindings_support_defaults_and_nesting() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -193,7 +180,6 @@ fn computed_key_bindings_support_defaults_and_nesting() {
     assert_eq!(result, JSValue::from_number(5.0));
 }
 
-#[test]
 fn computed_key_expression_runs_once_per_binding() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -209,7 +195,6 @@ fn computed_key_expression_runs_once_per_binding() {
     assert_eq!(result, JSValue::from_string("7:1:false".to_string()));
 }
 
-#[test]
 fn computed_keys_work_in_for_of_and_parameter_patterns() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -226,7 +211,6 @@ fn computed_keys_work_in_for_of_and_parameter_patterns() {
     assert_eq!(result, JSValue::from_string("3:4".to_string()));
 }
 
-#[test]
 fn computed_keys_work_in_destructuring_assignments() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -242,7 +226,6 @@ fn computed_keys_work_in_destructuring_assignments() {
     assert_eq!(result, JSValue::from_number(4.0));
 }
 
-#[test]
 fn object_destructuring_assignment_supports_defaults() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -257,7 +240,6 @@ fn object_destructuring_assignment_supports_defaults() {
     assert_eq!(result, JSValue::from_string("5:2:5".to_string()));
 }
 
-#[test]
 fn array_destructuring_assignment_skips_elisions() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -270,4 +252,42 @@ fn array_destructuring_assignment_skips_elisions() {
         )
         .unwrap();
     assert_eq!(result, JSValue::from_string("1:3".to_string()));
+}
+
+#[test]
+fn suite_destructuring_1() {
+    array_and_object_declarations_bind_values();
+    for_of_supports_array_binding_patterns();
+    declaration_list_can_mix_identifiers_and_patterns();
+    array_destructuring_assignment_updates_existing_bindings();
+}
+
+#[test]
+fn suite_destructuring_2() {
+    destructuring_assignment_supports_member_targets();
+    function_parameters_support_binding_patterns();
+    arrow_parameters_support_binding_patterns();
+    async_arrow_supports_binding_patterns_in_synchronous_mode();
+}
+
+#[test]
+fn suite_destructuring_3() {
+    object_binding_patterns_support_rest();
+    object_binding_patterns_accept_string_keys();
+    computed_key_bindings_exclude_the_key_from_rest();
+    numeric_computed_keys_bind_like_property_keys();
+}
+
+#[test]
+fn suite_destructuring_4() {
+    computed_key_bindings_support_defaults_and_nesting();
+    computed_key_expression_runs_once_per_binding();
+    computed_keys_work_in_for_of_and_parameter_patterns();
+    computed_keys_work_in_destructuring_assignments();
+}
+
+#[test]
+fn suite_destructuring_5() {
+    object_destructuring_assignment_supports_defaults();
+    array_destructuring_assignment_skips_elisions();
 }

@@ -1,6 +1,5 @@
 use pixi_byte::{JSEngine, JSValue};
 
-#[test]
 fn class_expression_constructs_instances_and_calls_methods() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -20,7 +19,6 @@ fn class_expression_constructs_instances_and_calls_methods() {
     assert_eq!(result, JSValue::from_string("box:6".to_string()));
 }
 
-#[test]
 fn class_extends_and_super_constructor_preserve_prototype_chain() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -42,7 +40,6 @@ fn class_extends_and_super_constructor_preserve_prototype_chain() {
     assert_eq!(result, JSValue::from_string("true:true:5".to_string()));
 }
 
-#[test]
 fn bound_class_construction_uses_the_target_prototype_and_new_instance() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -63,7 +60,6 @@ fn bound_class_construction_uses_the_target_prototype_and_new_instance() {
     assert_eq!(result, JSValue::from_string("true:7:undefined".to_string()));
 }
 
-#[test]
 fn callable_object_constructor_uses_the_inner_function_prototype() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -83,7 +79,6 @@ fn callable_object_constructor_uses_the_inner_function_prototype() {
     assert_eq!(result, JSValue::from_string("true:9".to_string()));
 }
 
-#[test]
 fn callable_object_with_bound_constructor_preserves_class_construction() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -110,7 +105,6 @@ fn callable_object_with_bound_constructor_preserves_class_construction() {
     );
 }
 
-#[test]
 fn callable_object_exposes_inner_class_properties_and_is_constructible() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -132,7 +126,6 @@ fn callable_object_exposes_inner_class_properties_and_is_constructible() {
     assert_eq!(result, JSValue::from_string("Box:true:true:15".to_string()));
 }
 
-#[test]
 fn anonymous_class_expression_can_extend_a_base_class() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -147,7 +140,6 @@ fn anonymous_class_expression_can_extend_a_base_class() {
     assert_eq!(result, JSValue::from_number(4.0));
 }
 
-#[test]
 fn implicit_derived_constructor_forwards_arguments_to_base_class() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -167,7 +159,6 @@ fn implicit_derived_constructor_forwards_arguments_to_base_class() {
     assert_eq!(result, JSValue::from_string("ready".to_string()));
 }
 
-#[test]
 fn super_method_calls_use_the_derived_instance_as_receiver() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -187,7 +178,6 @@ fn super_method_calls_use_the_derived_instance_as_receiver() {
     assert_eq!(result, JSValue::from_string("child-base".to_string()));
 }
 
-#[test]
 fn async_method_and_await_are_accepted_in_synchronous_mode() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -203,7 +193,6 @@ fn async_method_and_await_are_accepted_in_synchronous_mode() {
     assert_eq!(result, JSValue::from_number(4.0));
 }
 
-#[test]
 fn async_function_expression_is_accepted_in_synchronous_mode() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -217,7 +206,6 @@ fn async_function_expression_is_accepted_in_synchronous_mode() {
     assert_eq!(result, JSValue::from_number(4.0));
 }
 
-#[test]
 fn generator_method_collects_yielded_values() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -239,7 +227,6 @@ fn generator_method_collects_yielded_values() {
     assert_eq!(result, JSValue::from_number(3.0));
 }
 
-#[test]
 fn generator_function_collects_yielded_values() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -259,7 +246,6 @@ fn generator_function_collects_yielded_values() {
     assert_eq!(result, JSValue::from_number(5.0));
 }
 
-#[test]
 fn generator_functions_return_iterator_result_objects() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -277,7 +263,6 @@ fn generator_functions_return_iterator_result_objects() {
     assert_eq!(result, JSValue::from_string("5:false:true".to_string()));
 }
 
-#[test]
 fn generator_function_expressions_return_iterators() {
     let mut engine = JSEngine::new();
     assert_eq!(
@@ -288,7 +273,6 @@ fn generator_function_expressions_return_iterators() {
     );
 }
 
-#[test]
 fn generator_can_yield_a_regular_expression_literal() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -302,7 +286,6 @@ fn generator_can_yield_a_regular_expression_literal() {
     assert_eq!(result, JSValue::from_bool(true));
 }
 
-#[test]
 fn method_parameters_support_destructuring_and_defaults() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -320,7 +303,6 @@ fn method_parameters_support_destructuring_and_defaults() {
     assert_eq!(result, JSValue::from_number(7.0));
 }
 
-#[test]
 fn class_accessors_are_invoked_as_properties() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -342,7 +324,6 @@ fn class_accessors_are_invoked_as_properties() {
     assert_eq!(result, JSValue::from_string("box:5:10".to_string()));
 }
 
-#[test]
 fn instance_fields_are_initialized_on_construction() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -362,7 +343,6 @@ fn instance_fields_are_initialized_on_construction() {
     assert_eq!(result, JSValue::from_string("3:L:undefined".to_string()));
 }
 
-#[test]
 fn static_fields_are_defined_on_the_class() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -380,7 +360,6 @@ fn static_fields_are_defined_on_the_class() {
     assert_eq!(result, JSValue::from_string("2:function".to_string()));
 }
 
-#[test]
 fn computed_instance_fields_resolve_their_key() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -398,7 +377,6 @@ fn computed_instance_fields_resolve_their_key() {
     assert_eq!(result, JSValue::from_number(7.0));
 }
 
-#[test]
 fn derived_class_instance_fields_run_after_super_constructor() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -423,7 +401,6 @@ fn derived_class_instance_fields_run_after_super_constructor() {
     assert_eq!(result, JSValue::from_string("base:5:6".to_string()));
 }
 
-#[test]
 fn object_async_method_shorthand_parses_as_a_method() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -441,7 +418,6 @@ fn object_async_method_shorthand_parses_as_a_method() {
     assert_eq!(result, JSValue::from_string("42:true".to_string()));
 }
 
-#[test]
 fn private_class_fields_and_methods_are_accessible_via_their_names() {
     let mut engine = JSEngine::new();
     let result = engine
@@ -460,4 +436,52 @@ fn private_class_fields_and_methods_are_accessible_via_their_names() {
         .unwrap();
 
     assert_eq!(result, JSValue::from_string("7:B".to_string()));
+}
+
+#[test]
+fn suite_class_syntax_1() {
+    class_expression_constructs_instances_and_calls_methods();
+    class_extends_and_super_constructor_preserve_prototype_chain();
+    bound_class_construction_uses_the_target_prototype_and_new_instance();
+    callable_object_constructor_uses_the_inner_function_prototype();
+}
+
+#[test]
+fn suite_class_syntax_2() {
+    callable_object_with_bound_constructor_preserves_class_construction();
+    callable_object_exposes_inner_class_properties_and_is_constructible();
+    anonymous_class_expression_can_extend_a_base_class();
+    implicit_derived_constructor_forwards_arguments_to_base_class();
+}
+
+#[test]
+fn suite_class_syntax_3() {
+    super_method_calls_use_the_derived_instance_as_receiver();
+    async_method_and_await_are_accepted_in_synchronous_mode();
+    async_function_expression_is_accepted_in_synchronous_mode();
+    generator_method_collects_yielded_values();
+}
+
+#[test]
+fn suite_class_syntax_4() {
+    generator_function_collects_yielded_values();
+    generator_functions_return_iterator_result_objects();
+    generator_function_expressions_return_iterators();
+    generator_can_yield_a_regular_expression_literal();
+}
+
+#[test]
+fn suite_class_syntax_5() {
+    method_parameters_support_destructuring_and_defaults();
+    class_accessors_are_invoked_as_properties();
+    instance_fields_are_initialized_on_construction();
+    static_fields_are_defined_on_the_class();
+}
+
+#[test]
+fn suite_class_syntax_6() {
+    computed_instance_fields_resolve_their_key();
+    derived_class_instance_fields_run_after_super_constructor();
+    object_async_method_shorthand_parses_as_a_method();
+    private_class_fields_and_methods_are_accessible_via_their_names();
 }
