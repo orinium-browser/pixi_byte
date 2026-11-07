@@ -21,7 +21,7 @@
 - `object_define_property` now uses `vm.to_property_key` instead of `to_string()`.
 - Arguments read via `let [obj_val, prop_name] = args.as_slice()` instead of `args.remove(0)`.
 
-### `tests/object_get_own_property_descriptor.rs` (new, 10 tests)
+### `tests/objects.rs` (getOwnPropertyDescriptor coverage)
 Covers: string primitive `length`/index descriptors (incl. attribute flags), `Object.keys(new Object("ab"))` is empty, null receiver throws, own-property-only lookup (no prototype-chain leak), accessor descriptor shape, symbol-like keys, missing-arg TypeError, function receiver with `prototype` property.
 
 ## Verification

@@ -289,18 +289,18 @@ Object Creation → Heap Allocation → GC Tracking
 - [x] オブジェクト型の実装（`JSObject`）
 - [x] プロパティアクセス（`get`/`set` の基本）
 - [x] プロトタイプチェーンの基礎（`prototype` フィールドと継承の探索）
-- [x] `Object.create()` / `Object.getPrototypeOf()` のグローバルAPI（builtins） (実装済み: ネイティブ関数として登録され、VM 経由で呼び出し可能) — 実装日: 2026-01-24, テスト: `tests/object_tests.rs`, `tests/object_accessor_tests.rs`
+- [x] `Object.create()` / `Object.getPrototypeOf()` のグローバルAPI（builtins） (実装済み: ネイティブ関数として登録され、VM 経由で呼び出し可能) — 実装日: 2026-01-24, テスト: `tests/objects.rs`
 - [x] プロパティディスクリプタ（基本構造 `Property` と `define_property`）
 - [x] `hasOwnProperty` 相当の機能（`has_own_property`） (実装済み: `Object.prototype.hasOwnProperty` をネイティブ関数として追加)
 - [x] `Object.create` の第2引数（プロパティディスクリプタ）の最小サポートを実装（value/writable/enumerable/configurable）
-- [x] `Object.preventExtensions` / `Object.isExtensible` を実装・登録（テスト: `tests/object_mutation_tests.rs`）
-- [x] `Object.seal` / `Object.freeze` を簡易実装・登録（テスト: `tests/object_mutation_tests.rs`）
-- [x] `Object.prototype.propertyIsEnumerable` を実装（テスト: `tests/object_proto_helpers_tests.rs` を追加予定/簡易テストは `tests/object_accessor_tests.rs` 等で補完）
+- [x] `Object.preventExtensions` / `Object.isExtensible` を実装・登録（テスト: `tests/objects.rs`）
+- [x] `Object.seal` / `Object.freeze` を簡易実装・登録（テスト: `tests/objects.rs`）
+- [x] `Object.prototype.propertyIsEnumerable` を実装（テスト: `tests/object_proto_helpers_tests.rs` を追加予定/簡易テストは `tests/objects.rs` 等で補完）
 - [x] `Object.prototype.isPrototypeOf` を実装（ネイティブ関数）
 - [x] `Object.prototype.toString` を実装（ネイティブ関数、簡易版）
 - [x] `Object.prototype.__proto__` アクセサ（getter/setter）を実装し、`Object.prototype` にアクセサとして登録
 - [x] `Object.defineProperty` と `Object.getOwnPropertyDescriptor` をネイティブ関数として実装・登録
-- [x] `Object.setPrototypeOf` をネイティブ関数として実装・登録（実装日: 2026-01-24, テスト: `tests/object_set_prototype_tests.rs`） — 循環チェック実装済
+- [x] `Object.setPrototypeOf` をネイティブ関数として実装・登録（実装日: 2026-01-24, テスト: `tests/objects.rs`） — 循環チェック実装済
 + - [x] コードベースにドキュメントコメント（`//!`, `///`）を追加、`NativeFunctionType` を再エクスポート（`crate::NativeFunctionType`）し、開発者向けドキュメント `docs/DEVELOPER.md` を追加
 
 #### 2.2 配列
@@ -387,7 +387,7 @@ Object Creation → Heap Allocation → GC Tracking
   - 目的: アクセサが正しい `this` を受け取り、副作用・戻り値が反映される
   - 見積: 中（4-16h）
   - 主要修正候補ファイル: `builtins/object.rs`, `builtins/function.rs`, `src/value/jsobject.rs`, `vm/mod.rs`, `runtime/mod.rs`
-  - テスト: `tests/object_accessor_tests.rs` — `getter_receives_this`, `setter_updates_internal_state`, `accessor_descriptor_enumeration`
+  - テスト: `tests/objects.rs` — `getter_receives_this`, `setter_updates_internal_state`, `accessor_descriptor_enumeration`
 
 - 作業C: `this` バインディング規則の実装（通常呼び出し / メソッド呼び出し / construct / call/apply/bind）
   - 目的: strict と non-strict を含めた ECMAScript の呼び出しセマンティクスの整合
@@ -399,7 +399,7 @@ Object Creation → Heap Allocation → GC Tracking
 - 作業D: `delete` 演算子と `configurable` の扱い、`Object.preventExtensions` / `Object.freeze` / `Object.seal`
   - 見積: 中（4-16h）
   - 主要ファイル候補: `src/vm/mod.rs`, `src/value/jsobject.rs`, `builtins/object.rs`
-  - テスト: `tests/object_mutation_tests.rs` — `delete_non_configurable_fails`, `prevent_extensions_prevents_add`, `freeze_prevents_write`
+  - テスト: `tests/objects.rs` — `delete_non_configurable_fails`, `prevent_extensions_prevents_add`, `freeze_prevents_write`
 
 - 作業E: `instanceof` / `isPrototypeOf` / `Object.getPrototypeOf` とプロトタイプチェーン整合性
   - 見積: 小〜中（状況次第）
@@ -505,4 +505,3 @@ pub type HostFunction = fn(&[JSValue]) -> Result<JSValue, JSError>;
 - **bumpalo**: アリーナアロケータ（GC用）
 - **logos**: レキサー生成器（検討）
 - **criterion**: ベンチマーク
-
