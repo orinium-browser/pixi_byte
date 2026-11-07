@@ -4,8 +4,10 @@
 //! - スタック (Vec<JSValue>) を使用
 //! - 関数呼び出し時はスタック/環境を切り替える
 
+pub mod inst;
 pub mod optimize;
 
+use self::inst::VMInst;
 use crate::compiler::{BytecodeChunk, Opcode};
 use crate::error::{JSError, JSResult};
 use crate::intern::{FunctionParam, NameId};
@@ -673,6 +675,8 @@ impl VM {
         self.last_error_stack.clear();
         self.last_error_variables.clear();
         let mut pc = 0; // プログラムカウンタ
+        let mut vm_code: Vec<VMInst> = chunk.code.iter().map(VMInst::from_opcode).collect();
+        crate::vm::optimize::optimize(&mut vm_code);
         let mut handlers = Vec::new();
         let mut pending_finally = Vec::new();
         // プロパティキー文字列のスクラッチバッファ。文字列キー（定数プール由来）は
@@ -688,8 +692,8 @@ impl VM {
             .unwrap_or(0);
         let trace_opcodes = census_every != 0 || opcode_limit != 0;
 
-        while pc < chunk.code.len() {
-            let opcode = &chunk.code[pc];
+        while pc < vm_code.len() {
+            let opcode = &vm_code[pc];
             pc += 1;
             self.current_pc = pc - 1;
             if trace_opcodes {
@@ -712,7 +716,13 @@ impl VM {
                 }
             }
 
-            let control = match self.execute_opcode(opcode, chunk, &mut key_scratch) {
+            let exec_result = match opcode {
+                VMInst::Op(op) => self.execute_opcode(op, chunk, &mut key_scratch),
+                VMInst::LoadVarGetIndex(name) => {
+                    self.execute_load_var_get_index(*name, chunk, &mut key_scratch)
+                }
+            };
+            let control = match exec_result {
                 Ok(control) => control,
                 Err(error) => {
                     pending_finally.pop();
@@ -873,6 +883,16 @@ impl VM {
     }
 
     /// バイトコードを実行（トップレベルはグローバル環境を使用）
+    fn execute_load_var_get_index(
+        &mut self,
+        name: NameId,
+        chunk: &BytecodeChunk,
+        key_scratch: &mut String,
+    ) -> JSResult<ControlFlow> {
+        self.execute_opcode(&Opcode::LoadVar(name), chunk, key_scratch)?;
+        self.execute_opcode(&Opcode::GetIndex, chunk, key_scratch)
+    }
+
     fn execute_opcode(
         &mut self,
         opcode: &Opcode,
@@ -3364,6 +3384,11 @@ fn inherited_property_descriptor(
 }
 
 fn to_uint32(value: f64) -> u32 {
+    if value.is_finite() && value.fract() == 0.0 {
+        if value >= 0.0 && value <= u32::MAX as f64 {
+            return value as u32;
+        }
+    }
     if !value.is_finite() || value == 0.0 {
         return 0;
     }
@@ -3371,5 +3396,10 @@ fn to_uint32(value: f64) -> u32 {
 }
 
 fn to_int32(value: f64) -> i32 {
+    if value.is_finite() && value.fract() == 0.0 {
+        if value >= i32::MIN as f64 && value <= i32::MAX as f64 {
+            return value as i32;
+        }
+    }
     to_uint32(value) as i32
 }

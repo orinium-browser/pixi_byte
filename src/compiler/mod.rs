@@ -1,3 +1,4 @@
+pub mod optimize;
 use crate::error::{JSError, JSResult};
 use crate::intern::{FunctionParam, InternTable, NameId};
 use crate::parser::{
@@ -137,11 +138,54 @@ pub enum Opcode {
 impl Opcode {
     fn remap_constants(mut self, offset: usize) -> Self {
         match self {
-            Self::LoadConst(ref mut u)
-            | Self::CreateFunction(ref mut u)
-            | Self::Jump(ref mut u)
-            | Self::JumpIfFalse(ref mut u) => {
+            Self::LoadConst(ref mut u) | Self::CreateFunction(ref mut u) => {
                 *u = u.checked_add(offset).expect("constant index overflow")
+            }
+            Self::Jump(ref mut u)
+            | Self::JumpIfFalse(ref mut u)
+            | Self::JumpIfTrue(ref mut u)
+            | Self::JumpIfNotNullish(ref mut u)
+            | Self::IteratorNext(ref mut u) => {
+                *u = u.checked_add(offset).expect("jump target overflow")
+            }
+            Self::PushTry {
+                ref mut catch_target,
+                ref mut finally_target,
+            } => {
+                if let Some(target) = catch_target {
+                    *target = target.checked_add(offset).expect("jump target overflow");
+                }
+                if let Some(target) = finally_target {
+                    *target = target.checked_add(offset).expect("jump target overflow");
+                }
+            }
+            _ => {}
+        }
+        self
+    }
+
+    pub(crate) fn remap_targets<F>(mut self, mut f: F) -> Self
+    where
+        F: FnMut(usize) -> usize,
+    {
+        match self {
+            Self::Jump(ref mut u)
+            | Self::JumpIfFalse(ref mut u)
+            | Self::JumpIfTrue(ref mut u)
+            | Self::JumpIfNotNullish(ref mut u)
+            | Self::IteratorNext(ref mut u) => {
+                *u = f(*u);
+            }
+            Self::PushTry {
+                ref mut catch_target,
+                ref mut finally_target,
+            } => {
+                if let Some(target) = catch_target {
+                    *target = f(*target);
+                }
+                if let Some(target) = finally_target {
+                    *target = f(*target);
+                }
             }
             _ => {}
         }
