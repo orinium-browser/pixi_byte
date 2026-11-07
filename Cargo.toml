@@ -19,7 +19,7 @@ name = "string_ops"
 num-bigint = "0.5"
 num-traits = "0.2"
 regex = "1.12"
-fancy-regex = "0.14"
+fancy-regex = "0.20"
 rustc-hash = "2.1"
 
 # Profiling: `--features dhat-heap --profile dhat` でヒープ計測を有効化する。

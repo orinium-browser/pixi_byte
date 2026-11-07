@@ -296,7 +296,7 @@ fn native_capture_spans(captures: &regex::Captures<'_>) -> Vec<Option<ByteSpan>>
         .collect()
 }
 
-fn fancy_capture_spans(captures: &fancy_regex::Captures<'_>) -> Vec<Option<ByteSpan>> {
+fn fancy_capture_spans(captures: &fancy_regex::Captures<'_, str>) -> Vec<Option<ByteSpan>> {
     captures
         .iter()
         .map(|capture| capture.map(|matched| (matched.start(), matched.end())))
