@@ -157,36 +157,72 @@ fn lower_try_catch(body: &str, tokens: &[Token], byte_at: &[usize]) -> Option<St
     let try_open =
         (try_at + 1..tokens.len()).find(|&i| matches!(tokens[i].kind, TokenKind::LeftBrace))?;
     let try_close = matching_brace(tokens, try_open)?;
-    let catch_at =
-        (try_close + 1..tokens.len()).find(|&i| matches!(tokens[i].kind, TokenKind::Catch))?;
-    let catch_open =
-        (catch_at + 1..tokens.len()).find(|&i| matches!(tokens[i].kind, TokenKind::LeftBrace))?;
-    let catch_close = matching_brace(tokens, catch_open)?;
+
+    let mut cursor = try_close + 1;
+    let mut catch: Option<(String, String)> = None;
+    if matches!(tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Catch)) {
+        let catch_at = cursor;
+        let catch_open =
+            (catch_at + 1..tokens.len()).find(|&i| matches!(tokens[i].kind, TokenKind::LeftBrace))?;
+        let catch_close = matching_brace(tokens, catch_open)?;
+        let catch_body =
+            &body[byte_at[tokens[catch_open].span.end]..byte_at[tokens[catch_close].span.start]];
+        let catch_name = if matches!(
+            tokens.get(catch_at + 1).map(|t| &t.kind),
+            Some(TokenKind::LeftParen)
+        ) {
+            tokens
+                .get(catch_at + 2)
+                .and_then(|token| match &token.kind {
+                    TokenKind::Identifier(name) => Some(name.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "error".to_string())
+        } else {
+            "error".to_string()
+        };
+        catch = Some((catch_name, catch_body.to_string()));
+        cursor = catch_close + 1;
+    }
+
+    let mut finally_body: Option<String> = None;
+    if matches!(tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Finally)) {
+        let finally_at = cursor;
+        let finally_open =
+            (finally_at + 1..tokens.len()).find(|&i| matches!(tokens[i].kind, TokenKind::LeftBrace))?;
+        let finally_close = matching_brace(tokens, finally_open)?;
+        finally_body = Some(
+            body[byte_at[tokens[finally_open].span.end]..byte_at[tokens[finally_close].span.start]]
+                .to_string(),
+        );
+        cursor = finally_close + 1;
+    }
+
+    if catch.is_none() && finally_body.is_none() {
+        return None;
+    }
+
     let try_body = lower_body(
         &body[byte_at[tokens[try_open].span.end]..byte_at[tokens[try_close].span.start]],
     )?;
     let prefix = &body[..byte_at[tokens[try_at].span.start]];
-    let catch_body =
-        &body[byte_at[tokens[catch_open].span.end]..byte_at[tokens[catch_close].span.start]];
-    let catch_name = if matches!(
-        tokens.get(catch_at + 1).map(|t| &t.kind),
-        Some(TokenKind::LeftParen)
-    ) {
-        tokens
-            .get(catch_at + 2)
-            .and_then(|token| match &token.kind {
-                TokenKind::Identifier(name) => Some(name.clone()),
-                _ => None,
-            })
-            .unwrap_or_else(|| "error".to_string())
+    let suffix = if cursor < tokens.len() {
+        &body[byte_at[tokens[cursor].span.start]..]
     } else {
-        "error".to_string()
+        ""
     };
-    let suffix = &body[byte_at[tokens[catch_close].span.end]..];
     let suffix = lower_body(suffix).unwrap_or_else(|| suffix.to_string());
-    Some(format!(
-        "{prefix}return Promise.resolve().then(function() {{ {try_body} }}).catch(function({catch_name}) {{ if (typeof __orinium_trace_caught_error === \"function\") __orinium_trace_caught_error({catch_name}, \"{catch_name}\"); {catch_body}}});{suffix}"
-    ))
+
+    let mut chain = format!("return Promise.resolve().then(function() {{ {try_body} }})");
+    if let Some((catch_name, catch_body)) = catch {
+        chain.push_str(&format!(
+            ".catch(function({catch_name}) {{ if (typeof __orinium_trace_caught_error === \"function\") __orinium_trace_caught_error({catch_name}, \"{catch_name}\"); {catch_body}}})"
+        ));
+    }
+    if let Some(finally_body) = finally_body {
+        chain.push_str(&format!(".finally(function() {{ {finally_body}}})"));
+    }
+    Some(format!("{prefix}{chain};{suffix}"))
 }
 
 fn matching_brace(tokens: &[Token], open: usize) -> Option<usize> {
