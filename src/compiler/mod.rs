@@ -904,6 +904,17 @@ impl Compiler {
                     self.chunk.emit(Opcode::LoadConst(undefined));
                 }
             }
+            Statement::With { object, body } => {
+                let _ = (object, body);
+                return Err(JSError::InternalError(
+                    "unsupported with statement".to_string(),
+                ));
+            }
+            Statement::Debugger => {
+                return Err(JSError::InternalError(
+                    "unsupported debugger statement".to_string(),
+                ));
+            }
             Statement::Throw(expression) => {
                 self.compile_expression(expression)?;
                 self.chunk.emit(Opcode::Throw);
@@ -2341,6 +2352,9 @@ fn collect_var_declarations(statements: &[Statement], names: &mut Vec<String>) {
             Statement::Block(body)
             | Statement::While { body, .. }
             | Statement::DoWhile { body, .. } => collect_var_declarations(body, names),
+            Statement::With { body, .. } => {
+                collect_var_declarations(std::slice::from_ref(body.as_ref()), names);
+            }
             Statement::Labeled { body, .. } => {
                 collect_var_declarations(std::slice::from_ref(body.as_ref()), names);
             }
@@ -2417,6 +2431,7 @@ fn collect_var_declarations(statements: &[Statement], names: &mut Vec<String>) {
             | Statement::Throw(_)
             | Statement::Break(_)
             | Statement::Continue(_)
+            | Statement::Debugger
             | Statement::ImportDeclaration { .. }
             | Statement::ExportAllDeclaration { .. } => {}
         }
@@ -2601,6 +2616,9 @@ fn statement_references_arguments(statement: &Statement) -> bool {
         Statement::ForIn { right, body, .. } | Statement::ForOf { right, body, .. } => {
             expression_references_arguments(right) || statements_reference_arguments(body)
         }
+        Statement::With { object, body } => {
+            expression_references_arguments(object) || statement_references_arguments(body)
+        }
         Statement::PatternDeclaration { init, .. } => expression_references_arguments(init),
         Statement::Throw(expr) => expression_references_arguments(expr),
         Statement::Try {
@@ -2626,7 +2644,7 @@ fn statement_references_arguments(statement: &Statement) -> bool {
                         || statements_reference_arguments(stmts)
                 })
         }
-        Statement::Break(_) | Statement::Continue(_) => false,
+        Statement::Break(_) | Statement::Continue(_) | Statement::Debugger => false,
         Statement::ImportDeclaration { .. } | Statement::ExportAllDeclaration { .. } => false,
         Statement::ExportNamedDeclaration { declaration, .. } => declaration
             .as_ref()

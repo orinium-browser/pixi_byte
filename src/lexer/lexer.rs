@@ -939,6 +939,8 @@ impl Lexer {
             "new" => TokenKind::New,
             "this" => TokenKind::This,
             "super" => TokenKind::Super,
+            "with" => TokenKind::With,
+            "debugger" => TokenKind::Debugger,
             "import" => TokenKind::Import,
             "export" => TokenKind::Export,
             "from" => TokenKind::From,

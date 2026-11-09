@@ -168,6 +168,12 @@ impl Statement {
                 println!("{prefix}{branch}Throw");
                 expression.dump_impl(next_prefix, true);
             }
+            Statement::With { object, body } => {
+                println!("{prefix}{branch}With");
+                object.dump_impl(next_prefix.clone(), false);
+                body.dump_impl(next_prefix, true);
+            }
+            Statement::Debugger => println!("{prefix}{branch}Debugger"),
             Statement::Try {
                 block,
                 handler,

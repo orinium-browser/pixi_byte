@@ -77,6 +77,11 @@ pub enum Statement {
         discriminant: Expression,
         cases: Vec<(Option<Expression>, Vec<Statement>)>,
     },
+    With {
+        object: Expression,
+        body: Box<Statement>,
+    },
+    Debugger,
     Break(Option<String>),
     Continue(Option<String>),
     // ES modules (minimal)
@@ -394,6 +399,8 @@ impl Parser {
             TokenKind::While => self.parse_while_statement(),
             TokenKind::Do => self.parse_do_while_statement(),
             TokenKind::For => self.parse_for_statement(),
+            TokenKind::With => self.parse_with_statement(),
+            TokenKind::Debugger => self.parse_debugger_statement(),
             TokenKind::Throw => self.parse_throw_statement(),
             TokenKind::Try => self.parse_try_statement(),
             TokenKind::Switch => self.parse_switch_statement(),
@@ -439,6 +446,24 @@ impl Parser {
                 Ok(Statement::Expression(expr))
             }
         }
+    }
+
+    fn parse_with_statement(&mut self) -> JSResult<Statement> {
+        self.expect(&TokenKind::With, "Expected 'with'")?;
+        self.expect(&TokenKind::LeftParen, "Expected '(' after 'with'")?;
+        let object = self.parse_expression()?;
+        self.expect(&TokenKind::RightParen, "Expected ')' after with object")?;
+        let body = self.parse_statement()?;
+        Ok(Statement::With {
+            object,
+            body: Box::new(body),
+        })
+    }
+
+    fn parse_debugger_statement(&mut self) -> JSResult<Statement> {
+        self.expect(&TokenKind::Debugger, "Expected 'debugger'")?;
+        self.consume_semicolon()?;
+        Ok(Statement::Debugger)
     }
 
     fn parse_throw_statement(&mut self) -> JSResult<Statement> {

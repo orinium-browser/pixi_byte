@@ -42,6 +42,8 @@ pub enum TokenKind {
     New,
     This,
     Super,
+    With,
+    Debugger,
     Import,
     Export,
     From,
@@ -190,6 +192,8 @@ impl fmt::Display for TokenKind {
                 write!(f, "JsRegExp(/{pattern_str}/{flags_str})")
             }
             TokenKind::Identifier(s) => write!(f, "JsIdentifier({})", truncate_debug_string(s)),
+            TokenKind::With => write!(f, "With"),
+            TokenKind::Debugger => write!(f, "Debugger"),
             _ => fmt::Display::fmt(self, f),
         }
     }
