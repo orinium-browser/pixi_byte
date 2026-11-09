@@ -232,6 +232,24 @@ impl Statement {
                     .map(|label| format!("({label})"))
                     .unwrap_or_default()
             ),
+            Statement::ImportDeclaration { source, .. } => {
+                println!("{prefix}{branch}Import(\"{source}\")")
+            }
+            Statement::ExportNamedDeclaration { source, .. } => {
+                println!(
+                    "{prefix}{branch}ExportNamed{}",
+                    source
+                        .as_ref()
+                        .map(|s| format!(" from \"{s}\""))
+                        .unwrap_or_default()
+                )
+            }
+            Statement::ExportDefaultDeclaration { .. } => {
+                println!("{prefix}{branch}ExportDefault")
+            }
+            Statement::ExportAllDeclaration { source } => {
+                println!("{prefix}{branch}ExportAll(\"{source}\")")
+            }
         }
     }
 }

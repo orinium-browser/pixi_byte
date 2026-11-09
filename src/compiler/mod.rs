@@ -1110,6 +1110,16 @@ impl Compiler {
                     loop_context.continue_jumps.push(jump);
                 }
             }
+            Statement::ImportDeclaration { .. }
+            | Statement::ExportNamedDeclaration { .. }
+            | Statement::ExportDefaultDeclaration { .. }
+            | Statement::ExportAllDeclaration { .. } => {
+                // TODO: compile ES modules properly (bindings/graph). Temporary no-op.
+                if is_last {
+                    let idx = self.chunk.add_constant(JSValue::undefined());
+                    self.chunk.emit(Opcode::LoadConst(idx));
+                }
+            }
         }
         Ok(())
     }
@@ -2390,6 +2400,14 @@ fn collect_var_declarations(statements: &[Statement], names: &mut Vec<String>) {
                     collect_var_declarations(body, names);
                 }
             }
+            Statement::ExportNamedDeclaration { declaration, .. } => {
+                if let Some(declaration) = declaration {
+                    collect_var_declarations(std::slice::from_ref(declaration.as_ref()), names);
+                }
+            }
+            Statement::ExportDefaultDeclaration { declaration } => {
+                collect_var_declarations(std::slice::from_ref(declaration.as_ref()), names);
+            }
             Statement::Empty
             | Statement::Expression(_)
             | Statement::VariableDeclaration { .. }
@@ -2398,7 +2416,9 @@ fn collect_var_declarations(statements: &[Statement], names: &mut Vec<String>) {
             | Statement::FunctionDeclaration { .. }
             | Statement::Throw(_)
             | Statement::Break(_)
-            | Statement::Continue(_) => {}
+            | Statement::Continue(_)
+            | Statement::ImportDeclaration { .. }
+            | Statement::ExportAllDeclaration { .. } => {}
         }
     }
 }
@@ -2607,6 +2627,13 @@ fn statement_references_arguments(statement: &Statement) -> bool {
                 })
         }
         Statement::Break(_) | Statement::Continue(_) => false,
+        Statement::ImportDeclaration { .. } | Statement::ExportAllDeclaration { .. } => false,
+        Statement::ExportNamedDeclaration { declaration, .. } => declaration
+            .as_ref()
+            .is_some_and(|stmt| statement_references_arguments(stmt)),
+        Statement::ExportDefaultDeclaration { declaration } => {
+            statement_references_arguments(declaration)
+        }
     }
 }
 

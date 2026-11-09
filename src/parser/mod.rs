@@ -79,7 +79,24 @@ pub enum Statement {
     },
     Break(Option<String>),
     Continue(Option<String>),
-    // TODO: 他の文を追加
+    // ES modules (minimal)
+    ImportDeclaration {
+        source: String,
+        default: Option<String>,
+        namespace: Option<String>,
+        named: Vec<(String, Option<String>)>,
+    },
+    ExportNamedDeclaration {
+        declaration: Option<Box<Statement>>,
+        specifiers: Vec<(String, Option<String>)>,
+        source: Option<String>,
+    },
+    ExportDefaultDeclaration {
+        declaration: Box<Statement>,
+    },
+    ExportAllDeclaration {
+        source: String,
+    },
 }
 
 /// 変数宣言の種類
@@ -414,6 +431,8 @@ impl Parser {
                 self.consume_semicolon()?;
                 Ok(Statement::Continue(label))
             }
+            TokenKind::Import => self.parse_import_declaration(),
+            TokenKind::Export => self.parse_export_declaration(),
             _ => {
                 let expr = self.parse_expression()?;
                 self.consume_semicolon()?;
@@ -427,6 +446,197 @@ impl Parser {
         let value = self.parse_expression()?;
         self.consume_semicolon()?;
         Ok(Statement::Throw(value))
+    }
+
+    fn parse_import_declaration(&mut self) -> JSResult<Statement> {
+        self.expect(&TokenKind::Import, "Expected 'import'")?;
+        // import "module"
+        if let TokenKind::String(source) = self.current().kind.clone() {
+            self.advance()?;
+            self.consume_semicolon()?;
+            return Ok(Statement::ImportDeclaration {
+                source,
+                default: None,
+                namespace: None,
+                named: Vec::new(),
+            });
+        }
+        let mut default = None;
+        let mut namespace = None;
+        let mut named = Vec::new();
+
+        // import default
+        if let TokenKind::Identifier(name) = self.current().kind.clone() {
+            if !self.check(&TokenKind::Star) && !self.check(&TokenKind::LeftBrace) {
+                self.advance()?;
+                default = Some(name);
+                if self.eat(&TokenKind::Comma)? {
+                    // continue to parse namespace/named
+                } else if self.check(&TokenKind::From) || self.eat_identifier_name("from")? {
+                    if self.check(&TokenKind::From) {
+                        self.advance()?;
+                    }
+                    if let TokenKind::String(source) = self.current().kind.clone() {
+                        self.advance()?;
+                        self.consume_semicolon()?;
+                        return Ok(Statement::ImportDeclaration {
+                            source,
+                            default,
+                            namespace,
+                            named,
+                        });
+                    }
+                    return Err(JSError::SyntaxError(
+                        "Expected module source".to_string(),
+                        self.current().span,
+                    ));
+                }
+            }
+        }
+
+        // import * as ns
+        if self.eat(&TokenKind::Star)? {
+            if self.check(&TokenKind::As) {
+                self.advance()?;
+            } else {
+                self.eat_identifier_name("as")?;
+            }
+            namespace = Some(self.expect_identifier_name("Expected namespace name")?);
+        } else if self.eat(&TokenKind::LeftBrace)? {
+            while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+                let imported = self.expect_identifier_name("Expected imported name")?;
+                let local = if self.check(&TokenKind::As) || self.eat_identifier_name("as")? {
+                    if self.check(&TokenKind::As) {
+                        self.advance()?;
+                    }
+                    Some(self.expect_identifier_name("Expected local name")?)
+                } else {
+                    None
+                };
+                named.push((imported, local));
+                if !self.eat(&TokenKind::Comma)? {
+                    break;
+                }
+            }
+            self.expect(&TokenKind::RightBrace, "Expected '}'")?;
+        } else if default.is_none() {
+            return Err(JSError::SyntaxError(
+                "Unsupported import syntax".to_string(),
+                self.current().span,
+            ));
+        }
+
+        if self.check(&TokenKind::From) {
+            self.advance()?;
+        } else {
+            self.eat_identifier_name("from")?;
+        }
+        if let TokenKind::String(source) = self.current().kind.clone() {
+            self.advance()?;
+            self.consume_semicolon()?;
+            return Ok(Statement::ImportDeclaration {
+                source,
+                default,
+                namespace,
+                named,
+            });
+        }
+        Err(JSError::SyntaxError(
+            "Expected module source".to_string(),
+            self.current().span,
+        ))
+    }
+
+    fn parse_export_declaration(&mut self) -> JSResult<Statement> {
+        self.expect(&TokenKind::Export, "Expected 'export'")?;
+        if self.eat(&TokenKind::Star)? {
+            self.expect(&TokenKind::From, "Expected 'from'")?;
+            if let TokenKind::String(source) = self.current().kind.clone() {
+                self.advance()?;
+                self.consume_semicolon()?;
+                return Ok(Statement::ExportAllDeclaration { source });
+            }
+            return Err(JSError::SyntaxError(
+                "Expected source in export *".to_string(),
+                self.current().span,
+            ));
+        }
+        // export default
+        if self.check(&TokenKind::Default) || self.eat_identifier_name("default")? {
+            if self.check(&TokenKind::Default) {
+                self.advance()?;
+            }
+            if self.check(&TokenKind::Function)
+                || self.check(&TokenKind::Class)
+                || (self.check(&TokenKind::Async) && matches!(self.next.kind, TokenKind::Function))
+            {
+                let stmt = self.parse_statement()?;
+                return Ok(Statement::ExportDefaultDeclaration {
+                    declaration: Box::new(stmt),
+                });
+            }
+            let expr = self.parse_expression()?;
+            self.consume_semicolon()?;
+            return Ok(Statement::ExportDefaultDeclaration {
+                declaration: Box::new(Statement::Expression(expr)),
+            });
+        }
+        if self.eat(&TokenKind::LeftBrace)? {
+            let mut specifiers = Vec::new();
+            while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+                let local = self.expect_identifier_name("Expected exported name")?;
+                let exported = if self.check(&TokenKind::As) || self.eat_identifier_name("as")? {
+                    if self.check(&TokenKind::As) {
+                        self.advance()?;
+                    }
+                    Some(self.expect_identifier_name("Expected exported name")?)
+                } else {
+                    None
+                };
+                specifiers.push((local, exported));
+                if !self.eat(&TokenKind::Comma)? {
+                    break;
+                }
+            }
+            self.expect(&TokenKind::RightBrace, "Expected '}'")?;
+            let source = if self.check(&TokenKind::From) || self.eat_identifier_name("from")? {
+                if self.check(&TokenKind::From) {
+                    self.advance()?;
+                }
+                if let TokenKind::String(s) = self.current().kind.clone() {
+                    self.advance()?;
+                    Some(s)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            self.consume_semicolon()?;
+            return Ok(Statement::ExportNamedDeclaration {
+                declaration: None,
+                specifiers,
+                source,
+            });
+        }
+        if self.check(&TokenKind::Var)
+            || self.check(&TokenKind::Let)
+            || self.check(&TokenKind::Const)
+            || self.check(&TokenKind::Function)
+            || self.check(&TokenKind::Class)
+            || (self.check(&TokenKind::Async) && matches!(self.next.kind, TokenKind::Function))
+        {
+            let stmt = self.parse_statement()?;
+            return Ok(Statement::ExportNamedDeclaration {
+                declaration: Some(Box::new(stmt)),
+                specifiers: Vec::new(),
+                source: None,
+            });
+        }
+        Err(JSError::SyntaxError(
+            "Unsupported export syntax".to_string(),
+            self.current().span,
+        ))
     }
 
     fn parse_try_statement(&mut self) -> JSResult<Statement> {
