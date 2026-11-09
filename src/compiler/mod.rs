@@ -840,7 +840,13 @@ impl Compiler {
                 kind,
                 right,
                 body,
+                is_await,
             } => {
+                if is_await {
+                    return Err(JSError::InternalError(
+                        "unsupported for await...of".to_string(),
+                    ));
+                }
                 let loop_label = self.pending_loop_label.take();
                 let iterator = format!("__pixi_for_of_iterator_{}", self.next_temporary);
                 self.next_temporary += 1;

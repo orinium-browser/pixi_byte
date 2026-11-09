@@ -61,6 +61,7 @@ pub enum Statement {
         kind: Option<VarKind>,
         right: Expression,
         body: Vec<Statement>,
+        is_await: bool,
     },
     PatternDeclaration {
         kind: VarKind,
@@ -792,7 +793,7 @@ impl Parser {
 
     fn parse_for_statement(&mut self) -> JSResult<Statement> {
         self.expect(&TokenKind::For, "Expected 'for'")?;
-        self.eat(&TokenKind::Await)?; // `for await (...)` binds to the enclosing async context
+        let is_await = self.eat(&TokenKind::Await)?;
         self.expect(&TokenKind::LeftParen, "Expected '(' after 'for'")?;
 
         if matches!(
@@ -812,10 +813,16 @@ impl Parser {
             {
                 *self = candidate;
                 if self.eat(&TokenKind::In)? {
+                    if is_await {
+                        return Err(JSError::SyntaxError(
+                            "for await can only be used with for-of".to_string(),
+                            self.current().span,
+                        ));
+                    }
                     return self.parse_for_in_tail(binding, Some(kind));
                 }
                 self.expect(&TokenKind::Of, "Expected 'of' after for-of binding")?;
-                return self.parse_for_of_tail(binding, Some(kind));
+                return self.parse_for_of_tail(binding, Some(kind), is_await);
             }
         } else if matches!(self.current().kind, TokenKind::Identifier(_))
             && matches!(self.next.kind, TokenKind::In | TokenKind::Of)
@@ -823,10 +830,23 @@ impl Parser {
             let binding =
                 BindingPattern::Identifier(self.expect_identifier("Expected for-in binding")?);
             if self.eat(&TokenKind::In)? {
+                if is_await {
+                    return Err(JSError::SyntaxError(
+                        "for await can only be used with for-of".to_string(),
+                        self.current().span,
+                    ));
+                }
                 return self.parse_for_in_tail(binding, None);
             }
             self.expect(&TokenKind::Of, "Expected 'of' after for-of binding")?;
-            return self.parse_for_of_tail(binding, None);
+            return self.parse_for_of_tail(binding, None, is_await);
+        }
+
+        if is_await {
+            return Err(JSError::SyntaxError(
+                "for await can only be used with for-of".to_string(),
+                self.current().span,
+            ));
         }
 
         let init = if self.eat(&TokenKind::Semicolon)? {
@@ -903,6 +923,7 @@ impl Parser {
         &mut self,
         binding: BindingPattern,
         kind: Option<VarKind>,
+        is_await: bool,
     ) -> JSResult<Statement> {
         let right = self.parse_expression()?;
         self.expect(
@@ -919,6 +940,7 @@ impl Parser {
             kind,
             right,
             body,
+            is_await,
         })
     }
 

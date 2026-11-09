@@ -157,8 +157,10 @@ impl Statement {
                 kind: _,
                 right,
                 body,
+                is_await,
             } => {
-                println!("{prefix}{branch}ForOf({binding:?})");
+                let label = if *is_await { "ForAwaitOf" } else { "ForOf" };
+                println!("{prefix}{branch}{label}({binding:?})");
                 right.dump_impl(next_prefix.clone(), body.is_empty());
                 for (index, statement) in body.iter().enumerate() {
                     statement.dump_impl(next_prefix.clone(), index + 1 == body.len());

@@ -32,24 +32,24 @@ fn nullish_coalescing_assignment_is_a_token_together() {
     assert_eq!(result, JSValue::from_string("42".to_string()));
 }
 
-fn for_await_of_parses_and_iterates_synchronously() {
+fn for_await_of_preserves_ast_and_is_unsupported_by_compiler() {
     let mut engine = JSEngine::new();
-    let result = engine
-        .eval(
-            r#"
-                const collected = [];
-                async function run() {
-                    for await (const item of [1, 2, 3]) {
-                        collected.push(item);
-                    }
-                    return collected.join(",");
+    let result = engine.eval(
+        r#"
+            const collected = [];
+            async function run() {
+                for await (const item of [1, 2, 3]) {
+                    collected.push(item);
                 }
-                collected.join("?");
-            "#,
-        )
-        .unwrap();
+                return collected.join(",");
+            }
+            collected.join("?");
+        "#,
+    );
 
-    assert_eq!(result, JSValue::from_string("".to_string()));
+    assert!(result.is_err());
+    let message = result.unwrap_err().to_string();
+    assert!(message.contains("unsupported for await...of"));
 }
 fn logical_assignment_operators_short_circuit_on_truthiness() {
     let mut engine = JSEngine::new();
@@ -386,7 +386,7 @@ fn interpolation_expressions_with_comments_and_regex_braces_scan_correctly() {
 fn suite_modern_syntax_1() {
     nullish_coalescing_assignment_falls_back_when_nullish();
     nullish_coalescing_assignment_is_a_token_together();
-    for_await_of_parses_and_iterates_synchronously();
+    for_await_of_preserves_ast_and_is_unsupported_by_compiler();
     logical_assignment_operators_short_circuit_on_truthiness();
 }
 
