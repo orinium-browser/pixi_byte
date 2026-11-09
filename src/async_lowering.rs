@@ -162,8 +162,8 @@ fn lower_try_catch(body: &str, tokens: &[Token], byte_at: &[usize]) -> Option<St
     let mut catch: Option<(String, String)> = None;
     if matches!(tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Catch)) {
         let catch_at = cursor;
-        let catch_open =
-            (catch_at + 1..tokens.len()).find(|&i| matches!(tokens[i].kind, TokenKind::LeftBrace))?;
+        let catch_open = (catch_at + 1..tokens.len())
+            .find(|&i| matches!(tokens[i].kind, TokenKind::LeftBrace))?;
         let catch_close = matching_brace(tokens, catch_open)?;
         let catch_body =
             &body[byte_at[tokens[catch_open].span.end]..byte_at[tokens[catch_close].span.start]];
@@ -186,10 +186,13 @@ fn lower_try_catch(body: &str, tokens: &[Token], byte_at: &[usize]) -> Option<St
     }
 
     let mut finally_body: Option<String> = None;
-    if matches!(tokens.get(cursor).map(|t| &t.kind), Some(TokenKind::Finally)) {
+    if matches!(
+        tokens.get(cursor).map(|t| &t.kind),
+        Some(TokenKind::Finally)
+    ) {
         let finally_at = cursor;
-        let finally_open =
-            (finally_at + 1..tokens.len()).find(|&i| matches!(tokens[i].kind, TokenKind::LeftBrace))?;
+        let finally_open = (finally_at + 1..tokens.len())
+            .find(|&i| matches!(tokens[i].kind, TokenKind::LeftBrace))?;
         let finally_close = matching_brace(tokens, finally_open)?;
         finally_body = Some(
             body[byte_at[tokens[finally_open].span.end]..byte_at[tokens[finally_close].span.start]]
