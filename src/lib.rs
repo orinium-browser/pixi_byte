@@ -57,12 +57,22 @@ pub struct EvalOptions {
 pub struct JSEngine {
     /// 仮想マシンインスタンス
     vm: vm::VM,
+    /// Engine-lifetime name interning table shared by all compilations.
+    ///
+    /// `NameId` values are table-local, and lexical environment bindings store
+    /// `NameId` keys that persist across `eval` calls. Sharing a single table
+    /// for the whole engine keeps binding keys and every compiled chunk's
+    /// `NameId`s in the same namespace.
+    intern: std::rc::Rc<std::cell::RefCell<intern::InternTable>>,
 }
 
 impl JSEngine {
     /// 新しいJSエンジンインスタンスを作成
     pub fn new() -> Self {
-        Self { vm: vm::VM::new() }
+        Self {
+            vm: vm::VM::new(),
+            intern: std::rc::Rc::new(std::cell::RefCell::new(intern::InternTable::new())),
+        }
     }
 
     /// JavaScriptコードを評価
@@ -101,7 +111,8 @@ impl JSEngine {
             ast.dump();
         }
 
-        let bytecode = compiler::Compiler::new().compile(ast)?;
+        let bytecode = compiler::Compiler::with_shared_intern(std::rc::Rc::clone(&self.intern))
+            .compile(ast)?;
 
         if options.dump_bytecode {
             println!("=== BYTECODE ===");

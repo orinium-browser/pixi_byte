@@ -346,13 +346,32 @@ impl Compiler {
         }
     }
 
+    /// Creates a top-level compiler that shares an engine-provided interning table.
+    pub fn with_shared_intern(intern: Rc<RefCell<InternTable>>) -> Self {
+        Self {
+            chunk: BytecodeChunk::with_intern(Rc::clone(&intern)),
+            intern,
+            loops: Vec::new(),
+            break_scopes: Vec::new(),
+            labels: Vec::new(),
+            pending_loop_label: None,
+            lexical_loop_depth: 0,
+            next_temporary: 0,
+            super_binding: None,
+            generator_output: None,
+        }
+    }
+
     /// 指定した共有インターニングテーブルを持つコンパイラを作成。
     ///
     /// **ネスト関数のコンパイルは必ずこのメソッドで**、親の `self.intern` を
     /// クローンして渡すこと。これによりネストコンパイラが独自テーブルを
     /// 生成することは構造的に防がれ、同一コンパイル単位の全チャンクが
     /// 同一の `NameId` 空間を共有する。
-    fn with_intern(intern: Rc<RefCell<InternTable>>, super_binding: Option<String>) -> Self {
+    pub(crate) fn with_intern(
+        intern: Rc<RefCell<InternTable>>,
+        super_binding: Option<String>,
+    ) -> Self {
         Self {
             chunk: BytecodeChunk::with_intern(Rc::clone(&intern)),
             intern,
