@@ -371,6 +371,10 @@ impl Expression {
                 }
             }
 
+            Expression::MetaProperty { meta, property } => {
+                println!("{prefix}{branch}MetaProperty({meta:?}, {property})");
+            }
+
             Expression::Unary { op, arg } => {
                 println!("{prefix}{branch}Unary({op:?})");
 

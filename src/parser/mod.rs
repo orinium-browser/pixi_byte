@@ -197,6 +197,10 @@ pub enum Expression {
         callee: Box<Expression>,
         args: Vec<Expression>,
     },
+    MetaProperty {
+        meta: MetaPropertyKind,
+        property: String,
+    },
     Function {
         name: Option<String>,
         params: Vec<String>,
@@ -219,7 +223,12 @@ pub enum Expression {
         methods: Vec<ClassMethod>,
         fields: Vec<ClassField>,
     },
-    // TODO: 他の式を追加
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetaPropertyKind {
+    NewTarget,
+    ImportMeta,
 }
 
 #[derive(Debug, Clone)]
@@ -438,7 +447,15 @@ impl Parser {
                 self.consume_semicolon()?;
                 Ok(Statement::Continue(label))
             }
-            TokenKind::Import => self.parse_import_declaration(),
+            TokenKind::Import => {
+                if matches!(self.next.kind, TokenKind::Dot) {
+                    let expr = self.parse_expression()?;
+                    self.consume_semicolon()?;
+                    Ok(Statement::Expression(expr))
+                } else {
+                    self.parse_import_declaration()
+                }
+            }
             TokenKind::Export => self.parse_export_declaration(),
             _ => {
                 let expr = self.parse_expression()?;
@@ -1764,6 +1781,21 @@ impl Parser {
                 self.advance()?;
                 Ok(Expression::Super)
             }
+            TokenKind::Import => {
+                self.advance()?;
+                self.expect(&TokenKind::Dot, "Expected '.' after 'import'")?;
+                let property = self.expect_identifier_name("Expected 'meta' after 'import.'")?;
+                if property != "meta" {
+                    return Err(JSError::SyntaxError(
+                        "Expected 'meta' after 'import.'".to_string(),
+                        self.current().span,
+                    ));
+                }
+                Ok(Expression::MetaProperty {
+                    meta: MetaPropertyKind::ImportMeta,
+                    property,
+                })
+            }
             TokenKind::Identifier(s) => {
                 let s = s.clone();
 
@@ -1821,16 +1853,16 @@ impl Parser {
     fn parse_new_expression(&mut self) -> JSResult<Expression> {
         self.advance()?; // consume 'new'
         if self.eat(&TokenKind::Dot)? {
-            // `new.target` meta-property; approximated by `this.constructor`,
-            // which is the value of `new.target` for ordinary instance
-            // construction and preserves the `.prototype` uses bundles rely on.
-            self.expect_identifier_name("Expected 'target' after 'new.'")?;
-            return Ok(Expression::MemberAccess {
-                object: Box::new(Expression::This),
-                property: Box::new(Expression::Literal(Literal::String(
-                    "constructor".to_string(),
-                ))),
-                computed: false,
+            let property = self.expect_identifier_name("Expected 'target' after 'new.'")?;
+            if property != "target" {
+                return Err(JSError::SyntaxError(
+                    "Expected 'target' after 'new.'".to_string(),
+                    self.current().span,
+                ));
+            }
+            return Ok(Expression::MetaProperty {
+                meta: MetaPropertyKind::NewTarget,
+                property,
             });
         }
         let mut callee = self.parse_primary()?;

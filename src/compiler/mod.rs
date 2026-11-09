@@ -1611,6 +1611,11 @@ impl Compiler {
                     self.chunk.emit(Opcode::GetProperty);
                 }
             }
+            Expression::MetaProperty { meta, property } => {
+                return Err(JSError::InternalError(format!(
+                    "unsupported meta property: {meta:?}.{property}"
+                )));
+            }
             Expression::Function {
                 name,
                 params,
@@ -2662,7 +2667,10 @@ fn expression_references_arguments_slice(exprs: &[Expression]) -> bool {
 fn expression_references_arguments(expression: &Expression) -> bool {
     match expression {
         Expression::Identifier(name) => name == "arguments",
-        Expression::Literal(_) | Expression::This | Expression::Super => false,
+        Expression::Literal(_)
+        | Expression::This
+        | Expression::Super
+        | Expression::MetaProperty { .. } => false,
         Expression::Binary { left, right, .. } | Expression::Assignment { left, right, .. } => {
             expression_references_arguments(left) || expression_references_arguments(right)
         }
