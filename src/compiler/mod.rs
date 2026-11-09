@@ -2724,6 +2724,32 @@ fn expression_references_arguments(expression: &Expression) -> bool {
             is_generator: _,
         }
         | Expression::ArrowFunction { params: _, body } => statements_reference_arguments(body),
-        Expression::Class { .. } => false,
+        Expression::Class {
+            super_class,
+            constructor,
+            methods,
+            fields,
+            ..
+        } => {
+            super_class
+                .as_ref()
+                .is_some_and(|expr| expression_references_arguments(expr))
+                || constructor
+                    .as_ref()
+                    .is_some_and(|method| statements_reference_arguments(&method.body))
+                || methods
+                    .iter()
+                    .any(|method| statements_reference_arguments(&method.body))
+                || fields.iter().any(|field| {
+                    field
+                        .computed_name
+                        .as_ref()
+                        .is_some_and(|expr| expression_references_arguments(expr))
+                        || field
+                            .initializer
+                            .as_ref()
+                            .is_some_and(expression_references_arguments)
+                })
+        }
     }
 }
