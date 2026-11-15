@@ -11,15 +11,14 @@ pub fn optimize(code: &mut Vec<VMInst>) {
     let mut i = 0;
     while i < old_len {
         map[i] = out.len();
-        if i + 1 < old_len {
-            if let (VMInst::Op(Opcode::LoadVar(name)), VMInst::Op(Opcode::GetIndex)) =
+        if i + 1 < old_len
+            && let (VMInst::Op(Opcode::LoadVar(name)), VMInst::Op(Opcode::GetIndex)) =
                 (&code[i], &code[i + 1])
-            {
-                out.push(VMInst::LoadVarGetIndex(*name));
-                map[i + 1] = out.len() - 1;
-                i += 2;
-                continue;
-            }
+        {
+            out.push(VMInst::LoadVarGetIndex(*name));
+            map[i + 1] = out.len() - 1;
+            i += 2;
+            continue;
         }
         out.push(code[i].clone());
         i += 1;

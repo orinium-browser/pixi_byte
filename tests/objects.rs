@@ -40,16 +40,13 @@ fn test_object_builtins_registered_and_functional() {
                 assert!(got.is_some());
                 if let Some(gp) = got {
                     // 同一参照かどうか
-                    assert_eq!(
-                        std::rc::Rc::ptr_eq(
-                            &gp,
-                            &std::rc::Rc::new(std::cell::RefCell::new(
-                                pixi_byte::value::jsobject::JSObject::new()
-                            ))
-                            .clone()
-                        ),
-                        false
-                    );
+                    assert!(!std::rc::Rc::ptr_eq(
+                        &gp,
+                        &std::rc::Rc::new(std::cell::RefCell::new(
+                            pixi_byte::value::jsobject::JSObject::new()
+                        ))
+                        .clone()
+                    ));
                     // ここでは proto_obj と同じプロトタイプが設定されていることを期待
                 }
             }
@@ -124,7 +121,7 @@ fn test_object_create_with_descriptors() {
                         _ => panic!("property 'a' not defined correctly"),
                     }
                     let deleted = new_obj_ref.borrow_mut().delete("a");
-                    assert_eq!(deleted, false);
+                    assert!(!deleted);
                 }
                 _ => panic!("Object.create with descriptors did not return object"),
             }
@@ -598,10 +595,7 @@ fn host_property_hooks_handle_missing_properties() {
     target.set(
         pixi_byte::value::jsobject::HOST_GET_PROPERTY.to_string(),
         JSValue::from_native_function(|_vm, args| {
-            Ok(JSValue::from_string(format!(
-                "read:{}",
-                args[1].to_string()
-            )))
+            Ok(JSValue::from_string(format!("read:{}", args[1])))
         }),
     );
     target.set(
@@ -934,7 +928,7 @@ fn test_prevent_extensions_and_is_extensible() {
         if let Some(is_ext) = obj_ref.borrow().get("isExtensible").as_native_function() {
             let res = is_ext(&mut vm, vec![val.clone()]).unwrap();
             match res.as_boolean() {
-                Some(b) => assert_eq!(b, false),
+                Some(b) => assert!(!b),
                 _ => panic!("isExtensible returned non-boolean"),
             }
         } else {
@@ -969,13 +963,13 @@ fn test_seal_prevents_adding_and_makes_non_configurable() {
     let added = rc
         .borrow_mut()
         .set("b".to_string(), JSValue::from_number(2.0));
-    assert_eq!(added, false);
+    assert!(!added);
 
     // Existing property should become non-configurable
     let desc = rc.borrow().get_property_descriptor("a");
     assert!(desc.is_some());
     if let Some(d) = desc {
-        assert_eq!(d.configurable, false);
+        assert!(!d.configurable);
     }
 }
 
@@ -1003,14 +997,14 @@ fn test_freeze_makes_non_writable_and_non_configurable() {
     let changed = rc
         .borrow_mut()
         .set("x".to_string(), JSValue::from_number(20.0));
-    assert_eq!(changed, false);
+    assert!(!changed);
 
     // Property should be non-configurable
     let desc = rc.borrow().get_property_descriptor("x");
     assert!(desc.is_some());
     if let Some(d) = desc {
-        assert_eq!(d.configurable, false);
-        assert_eq!(d.writable, false);
+        assert!(!d.configurable);
+        assert!(!d.writable);
     }
 }
 

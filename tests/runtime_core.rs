@@ -80,35 +80,35 @@ fn test_boolean_operations() {
     let mut engine = JSEngine::new();
 
     let result = engine.eval("true && true").unwrap();
-    assert_eq!(result.to_boolean(), true);
+    assert!(result.to_boolean());
 
     let result = engine.eval("true && false").unwrap();
-    assert_eq!(result.to_boolean(), false);
+    assert!(!result.to_boolean());
 
     let result = engine.eval("false || true").unwrap();
-    assert_eq!(result.to_boolean(), true);
+    assert!(result.to_boolean());
 
     let result = engine.eval("!true").unwrap();
-    assert_eq!(result.to_boolean(), false);
+    assert!(!result.to_boolean());
 }
 
 fn test_comparisons() {
     let mut engine = JSEngine::new();
 
     let result = engine.eval("5 > 3").unwrap();
-    assert_eq!(result.to_boolean(), true);
+    assert!(result.to_boolean());
 
     let result = engine.eval("2 < 1").unwrap();
-    assert_eq!(result.to_boolean(), false);
+    assert!(!result.to_boolean());
 
     let result = engine.eval("5 === 5").unwrap();
-    assert_eq!(result.to_boolean(), true);
+    assert!(result.to_boolean());
 
     let result = engine.eval("5 === '5'").unwrap();
-    assert_eq!(result.to_boolean(), false);
+    assert!(!result.to_boolean());
 
     let result = engine.eval("5 == '5'").unwrap();
-    assert_eq!(result.to_boolean(), true);
+    assert!(result.to_boolean());
 }
 
 fn test_typeof() {

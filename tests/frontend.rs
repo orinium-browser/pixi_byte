@@ -6,7 +6,6 @@ fn test_tokenize_numbers() {
         .iter()
         .map(|v| v.unwrap())
         .map(|t| t.kind.clone())
-        .into_iter()
         .filter(|k| *k != TokenKind::Eof)
         .collect();
     assert_eq!(
@@ -25,7 +24,6 @@ fn test_weird_number_digits() {
         .iter()
         .map(|v| v.unwrap())
         .map(|t| t.kind.clone())
-        .into_iter()
         .filter(|k| *k != TokenKind::Eof)
         .collect();
     assert_eq!(

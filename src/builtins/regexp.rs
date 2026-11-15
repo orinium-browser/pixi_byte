@@ -223,10 +223,10 @@ pub(crate) fn compile(object: &Rc<RefCell<JSObject>>) -> JSResult<CompiledRegex>
     // `regex` rejects `\x{D800}`-style surrogate escapes (code units are not
     // Unicode scalar values). Swap them for U+FFFD and retry.
     let sanitized = sanitize_surrogate_escapes(&pattern);
-    if sanitized != pattern {
-        if let Ok(regex) = build_native(&sanitized, &flags) {
-            return Ok(CompiledRegex::Native(regex));
-        }
+    if sanitized != pattern
+        && let Ok(regex) = build_native(&sanitized, &flags)
+    {
+        return Ok(CompiledRegex::Native(regex));
     }
     // Slow path: look-around and backreferences are not supported by `regex`,
     // so fall back to the backtracking `fancy-regex` engine. Real-world bundles
@@ -234,10 +234,10 @@ pub(crate) fn compile(object: &Rc<RefCell<JSObject>>) -> JSResult<CompiledRegex>
     if let Some(regex) = build_fancy(&pattern, &flags) {
         return Ok(CompiledRegex::Fancy(regex));
     }
-    if sanitized != pattern {
-        if let Some(regex) = build_fancy(&sanitized, &flags) {
-            return Ok(CompiledRegex::Fancy(regex));
-        }
+    if sanitized != pattern
+        && let Some(regex) = build_fancy(&sanitized, &flags)
+    {
+        return Ok(CompiledRegex::Fancy(regex));
     }
     // Last resort: never-match regex so pattern failures degrade to "no match"
     // instead of throwing out of the program.

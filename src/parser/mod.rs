@@ -509,31 +509,32 @@ impl Parser {
         let mut named = Vec::new();
 
         // import default
-        if let TokenKind::Identifier(name) = self.current().kind.clone() {
-            if !self.check(&TokenKind::Star) && !self.check(&TokenKind::LeftBrace) {
-                self.advance()?;
-                default = Some(name);
-                if self.eat(&TokenKind::Comma)? {
-                    // continue to parse namespace/named
-                } else if self.check(&TokenKind::From) || self.eat_identifier_name("from")? {
-                    if self.check(&TokenKind::From) {
-                        self.advance()?;
-                    }
-                    if let TokenKind::String(source) = self.current().kind.clone() {
-                        self.advance()?;
-                        self.consume_semicolon()?;
-                        return Ok(Statement::ImportDeclaration {
-                            source,
-                            default,
-                            namespace,
-                            named,
-                        });
-                    }
-                    return Err(JSError::SyntaxError(
-                        "Expected module source".to_string(),
-                        self.current().span,
-                    ));
+        if let TokenKind::Identifier(name) = self.current().kind.clone()
+            && !self.check(&TokenKind::Star)
+            && !self.check(&TokenKind::LeftBrace)
+        {
+            self.advance()?;
+            default = Some(name);
+            if self.eat(&TokenKind::Comma)? {
+                // continue to parse namespace/named
+            } else if self.check(&TokenKind::From) || self.eat_identifier_name("from")? {
+                if self.check(&TokenKind::From) {
+                    self.advance()?;
                 }
+                if let TokenKind::String(source) = self.current().kind.clone() {
+                    self.advance()?;
+                    self.consume_semicolon()?;
+                    return Ok(Statement::ImportDeclaration {
+                        source,
+                        default,
+                        namespace,
+                        named,
+                    });
+                }
+                return Err(JSError::SyntaxError(
+                    "Expected module source".to_string(),
+                    self.current().span,
+                ));
             }
         }
 

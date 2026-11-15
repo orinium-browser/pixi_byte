@@ -703,7 +703,7 @@ impl VM {
                         "opcode limit {opcode_limit} reached (diagnostic)"
                     )));
                 }
-                if census_every != 0 && total % census_every == 0 {
+                if census_every != 0 && total.is_multiple_of(census_every) {
                     eprintln!(
                         "[census] opcodes={total} pc={} callables={} jobs={} frames={} stack={} | {}",
                         pc,
@@ -1415,12 +1415,12 @@ impl VM {
                                     return Ok(ControlFlow::Continue);
                                 }
                             } else if key.is_string() {
-                                if let Some(idx_str) = key.as_string() {
-                                    if let Ok(idx) = idx_str.parse::<usize>() {
-                                        let value = obj_ref.borrow().get_index(idx);
-                                        self.stack.push(value);
-                                        return Ok(ControlFlow::Continue);
-                                    }
+                                if let Some(idx_str) = key.as_string()
+                                    && let Ok(idx) = idx_str.parse::<usize>()
+                                {
+                                    let value = obj_ref.borrow().get_index(idx);
+                                    self.stack.push(value);
+                                    return Ok(ControlFlow::Continue);
                                 }
                             } else {
                                 let num = key.to_number();
@@ -1557,12 +1557,12 @@ impl VM {
                                 return Ok(ControlFlow::Continue);
                             }
                         } else if key.is_string() {
-                            if let Some(idx_str) = key.as_string() {
-                                if let Ok(idx) = idx_str.parse::<usize>() {
-                                    obj_ref.borrow_mut().set_index(idx, value.clone());
-                                    self.stack.push(value);
-                                    return Ok(ControlFlow::Continue);
-                                }
+                            if let Some(idx_str) = key.as_string()
+                                && let Ok(idx) = idx_str.parse::<usize>()
+                            {
+                                obj_ref.borrow_mut().set_index(idx, value.clone());
+                                self.stack.push(value);
+                                return Ok(ControlFlow::Continue);
                             }
                         } else {
                             let num = key.to_number();
@@ -1603,12 +1603,12 @@ impl VM {
                                 return Ok(ControlFlow::Continue);
                             }
                         } else if key.is_string() {
-                            if let Some(idx_str) = key.as_string() {
-                                if let Ok(idx) = idx_str.parse::<usize>() {
-                                    obj_ref.borrow_mut().set_index(idx, value.clone());
-                                    self.stack.push(old_value);
-                                    return Ok(ControlFlow::Continue);
-                                }
+                            if let Some(idx_str) = key.as_string()
+                                && let Ok(idx) = idx_str.parse::<usize>()
+                            {
+                                obj_ref.borrow_mut().set_index(idx, value.clone());
+                                self.stack.push(old_value);
+                                return Ok(ControlFlow::Continue);
                             }
                         } else {
                             let num = key.to_number();
@@ -1750,7 +1750,7 @@ impl VM {
                     let intern = chunk.intern.borrow();
                     for key in source.borrow().enumerable_keys() {
                         let is_excluded = excluded.iter().any(|&id| intern.name(id) == key)
-                            || computed_keys.iter().any(|computed| *computed == key);
+                            || computed_keys.contains(&key);
                         if !is_excluded {
                             let value = source.borrow().get(&key);
                             result.set(key, value);
@@ -3384,10 +3384,8 @@ fn inherited_property_descriptor(
 }
 
 fn to_uint32(value: f64) -> u32 {
-    if value.is_finite() && value.fract() == 0.0 {
-        if value >= 0.0 && value <= u32::MAX as f64 {
-            return value as u32;
-        }
+    if value.is_finite() && value.fract() == 0.0 && value >= 0.0 && value <= u32::MAX as f64 {
+        return value as u32;
     }
     if !value.is_finite() || value == 0.0 {
         return 0;
@@ -3396,10 +3394,12 @@ fn to_uint32(value: f64) -> u32 {
 }
 
 fn to_int32(value: f64) -> i32 {
-    if value.is_finite() && value.fract() == 0.0 {
-        if value >= i32::MIN as f64 && value <= i32::MAX as f64 {
-            return value as i32;
-        }
+    if value.is_finite()
+        && value.fract() == 0.0
+        && value >= i32::MIN as f64
+        && value <= i32::MAX as f64
+    {
+        return value as i32;
     }
     to_uint32(value) as i32
 }

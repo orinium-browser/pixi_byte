@@ -26,22 +26,19 @@ fn fold_constants(chunk: &mut BytecodeChunk) -> bool {
     let mut i = 0;
     while i < old_len {
         map[i] = out.len();
-        if i + 2 < old_len {
-            if let (Opcode::LoadConst(a), Opcode::LoadConst(b)) =
+        if i + 2 < old_len
+            && let (Opcode::LoadConst(a), Opcode::LoadConst(b)) =
                 (chunk.code[i].clone(), chunk.code[i + 1].clone())
-            {
-                if let Some(folded) =
-                    fold_binary_const(&chunk.constants[a], &chunk.constants[b], &chunk.code[i + 2])
-                {
-                    let idx = chunk.add_constant(folded);
-                    out.push(Opcode::LoadConst(idx));
-                    map[i + 1] = out.len() - 1;
-                    map[i + 2] = out.len() - 1;
-                    i += 3;
-                    changed = true;
-                    continue;
-                }
-            }
+            && let Some(folded) =
+                fold_binary_const(&chunk.constants[a], &chunk.constants[b], &chunk.code[i + 2])
+        {
+            let idx = chunk.add_constant(folded);
+            out.push(Opcode::LoadConst(idx));
+            map[i + 1] = out.len() - 1;
+            map[i + 2] = out.len() - 1;
+            i += 3;
+            changed = true;
+            continue;
         }
         out.push(chunk.code[i].clone());
         i += 1;
@@ -79,13 +76,13 @@ fn fold_binary_const(a: &JSValue, b: &JSValue, op: &Opcode) -> Option<JSValue> {
         };
         return Some(JSValue::from_number(result));
     }
-    if matches!(op, Opcode::Add) {
-        if let (Some(sa), Some(sb)) = (a.as_string(), b.as_string()) {
-            let mut out = String::with_capacity(sa.len() + sb.len());
-            out.push_str(sa);
-            out.push_str(sb);
-            return Some(JSValue::from_string(out));
-        }
+    if matches!(op, Opcode::Add)
+        && let (Some(sa), Some(sb)) = (a.as_string(), b.as_string())
+    {
+        let mut out = String::with_capacity(sa.len() + sb.len());
+        out.push_str(sa);
+        out.push_str(sb);
+        return Some(JSValue::from_string(out));
     }
     if let (JsValueKind::BigInt, JsValueKind::BigInt) = (a.kind(), b.kind()) {
         let ba = a.as_bigint().unwrap();

@@ -1209,7 +1209,7 @@ mod tests {
         for (v, expected) in values.iter().zip(&chars) {
             let mut buf = [0u8; 4];
             let expected: &str = expected.encode_utf8(&mut buf);
-            assert_eq!(v.as_string(), Some(expected).as_deref());
+            assert_eq!(v.as_string(), Some(expected));
             // すべての char は 4B 以下なので必ずインラインになる
             assert!(
                 is_inline_str_bits(v.0),

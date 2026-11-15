@@ -5,10 +5,10 @@ fn main() {
     let (eval_options, args) = parse_args();
 
     let path = args
-        .get(0)
+        .first()
         .expect("Usage: cargo run --example eval <file.js>");
 
-    let source = fs::read_to_string(&path).expect("Failed to read file");
+    let source = fs::read_to_string(path).expect("Failed to read file");
 
     let mut engine = JSEngine::new();
 
