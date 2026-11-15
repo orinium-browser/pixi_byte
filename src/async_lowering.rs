@@ -83,8 +83,7 @@ fn lower_body(body: &str) -> Option<String> {
     let mut parens = 0usize;
     let mut brackets = 0usize;
     let mut await_at = None;
-    for i in 0..tokens.len() {
-        let token = &tokens[i];
+    for (i, token) in tokens.iter().enumerate() {
         if matches!(token.kind, TokenKind::Await) && braces == 0 && parens == 0 && brackets == 0 {
             await_at = Some(i);
             break;
@@ -117,8 +116,8 @@ fn lower_body(body: &str) -> Option<String> {
     let mut b = 0usize;
     let mut c = 0usize;
     let mut end = None;
-    for i in await_at + 1..tokens.len() {
-        match tokens[i].kind {
+    for (i, token) in tokens.iter().enumerate().skip(await_at + 1) {
+        match token.kind {
             TokenKind::LeftParen => p += 1,
             TokenKind::RightParen => p = p.saturating_sub(1),
             TokenKind::LeftBracket => b += 1,
