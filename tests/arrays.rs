@@ -567,6 +567,95 @@ fn test_array_prototype_push_pop_native() {
     }
 }
 
+fn sparse_large_length_does_not_allocate_proportional_memory() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const a = [];
+            a.length = 2147483648;
+            a.length === 2147483648;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::from_bool(true));
+}
+
+fn sparse_index_assignment_with_large_length() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const a = [];
+            a.length = 2147483648;
+            a[100] = "hello";
+            a.length === 2147483648 && a[100] === "hello";
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::from_bool(true));
+}
+
+fn holes_and_undefined_are_different() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const a = [];
+            a.length = 2147483648;
+            a[100] = "hello";
+            !(50 in a) && a[50] === undefined;
+            a[50] = undefined;
+            50 in a && a[50] === undefined;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::from_bool(true));
+}
+
+fn shrinking_length_removes_elements() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const a = [];
+            a.length = 2147483648;
+            a[100] = "hello";
+            a[50] = undefined;
+            a.length = 10;
+            a.length === 10 && !(50 in a) && !(100 in a);
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::from_bool(true));
+}
+
+fn invalid_length_is_silently_ignored() {
+    let mut engine = JSEngine::new();
+    let result = engine
+        .eval(
+            r#"
+            const a = [];
+            a.length = 5;
+            a.length = -1;
+            a.length = 1.5;
+            a.length = 4294967296;
+            a.length === 5;
+            "#,
+        )
+        .unwrap();
+    assert_eq!(result, JSValue::from_bool(true));
+}
+
+#[test]
+fn suite_array_sparse_storage() {
+    sparse_large_length_does_not_allocate_proportional_memory();
+    sparse_index_assignment_with_large_length();
+    holes_and_undefined_are_different();
+    shrinking_length_removes_elements();
+    invalid_length_is_silently_ignored();
+}
+
 #[test]
 fn suite_array_tests_1() {
     test_array_create();

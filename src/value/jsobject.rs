@@ -73,19 +73,80 @@ fn format_index_key(index: u32, buffer: &mut [u8; 10]) -> &str {
     std::str::from_utf8(&buffer[end..]).unwrap()
 }
 
+/// 配列の要素ストレージ。
+///
+/// `length` は配列の論理的な長さであり、`elements` は実際に存在する
+/// 要素だけを保持する。巨大な `length` に対しても、実際に代入された
+/// 要素のみを保持するため、比例したメモリ確保を発生させない。
+#[derive(Debug, Clone)]
+pub struct ArrayStorage {
+    /// 配列の論理的な長さ（`0 <= length <= u32::MAX`）
+    length: u32,
+    /// 実際に存在する要素。マップに存在すること自体が「要素あり」を意味し、
+    /// 値が `undefined` でも穴とは見なさない。
+    elements: FxHashMap<u32, JSValue>,
+}
+
+impl ArrayStorage {
+    pub fn new() -> Self {
+        Self {
+            length: 0,
+            elements: FxHashMap::default(),
+        }
+    }
+
+    /// length を変更する。縮小時は範囲外の要素を削除するが、
+    /// 拡張時は要素ストレージを拡張しない。
+    pub fn set_length(&mut self, new_length: u32) {
+        if new_length < self.length {
+            self.elements.retain(|&index, _| index < new_length);
+        }
+        self.length = new_length;
+    }
+
+    /// インデックス `index` の要素を取得する。存在しない場合は `None`（穴）。
+    pub fn get(&self, index: u32) -> Option<&JSValue> {
+        self.elements.get(&index)
+    }
+
+    /// インデックス `index` に値を設定する。
+    /// `index >= length` の場合は `length` を `index + 1` に更新する。
+    pub fn set(&mut self, index: u32, value: JSValue) {
+        self.elements.insert(index, value);
+        if index >= self.length {
+            self.length = index + 1;
+        }
+    }
+
+    /// インデックス `index` の要素を削除する。
+    pub fn delete(&mut self, index: u32) -> bool {
+        self.elements.remove(&index).is_some()
+    }
+
+    /// インデックス `index` の要素が存在するか。
+    pub fn contains(&self, index: u32) -> bool {
+        self.elements.contains_key(&index)
+    }
+}
+
+impl Default for ArrayStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// JavaScript オブジェクトの内部表現
 #[derive(Debug)]
 pub struct JSObject {
     /// プロパティマップ
     properties: Rc<RefCell<FxHashMap<String, Property>>>,
-    /// 密な配列要素ストレージ（配列のみ `Some`）。
+    /// 配列要素ストレージ（配列のみ `Some`）。
     ///
-    /// `elements[i]` は配列インデックス `i` の要素を表し、
-    /// - `Some(value)` → 要素が存在（`undefined` も明示的に保持）
-    /// - `None` → 穴（`delete arr[i]` 後など）
-    /// という invariant を持つ（通常のプロパティマップと同じく存在判定に使われる）。
+    /// `elements` は配列インデックスをキーとした要素ストレージを表し、
+    /// マップに存在すること自体が「要素あり」を意味し、値が `undefined`
+    /// でも穴とは見なさない。不在は穴（`delete arr[i]` 後など）を表す。
     /// プロパティマップを優先するため、`defineProperty` 等で上書きされた要素も正しく扱える。
-    elements: Option<Rc<RefCell<Vec<Option<JSValue>>>>>,
+    elements: Option<Rc<RefCell<ArrayStorage>>>,
     /// プロトタイプチェーン（__proto__）
     prototype: Option<Rc<RefCell<JSObject>>>,
     /// `false` means an ordinary object whose implicit prototype is supplied
@@ -213,11 +274,13 @@ impl JSObject {
     /// 生成が不要になり、O(n) の move だけで済みます。
     pub fn with_elements(elements: Vec<JSValue>) -> Self {
         crate::census::object_created();
+        let mut storage = ArrayStorage::new();
+        for (index, value) in elements.into_iter().enumerate() {
+            storage.set(index as u32, value);
+        }
         Self {
             properties: Rc::new(RefCell::new(FxHashMap::default())),
-            elements: Some(Rc::new(RefCell::new(
-                elements.into_iter().map(Some).collect(),
-            ))),
+            elements: Some(Rc::new(RefCell::new(storage))),
             prototype: None,
             prototype_is_explicit: false,
             extensible: true,
@@ -236,15 +299,15 @@ impl JSObject {
     fn array_length(&self) -> Option<usize> {
         self.elements
             .as_ref()
-            .map(|elements| elements.borrow().len())
+            .map(|elements| elements.borrow().length as usize)
     }
 
     /// Resize the dense element storage (array `length` write).
-    fn set_array_length(&mut self, length: usize) -> bool {
+    fn set_array_length(&mut self, length: u32) -> bool {
         let Some(elements) = &self.elements else {
             return false;
         };
-        elements.borrow_mut().resize(length, None);
+        elements.borrow_mut().set_length(length);
         true
     }
 
@@ -267,7 +330,7 @@ impl JSObject {
             && let Some(elements) = &self.elements
         {
             let elements = elements.borrow();
-            if let Some(Some(value)) = elements.get(index) {
+            if let Some(value) = elements.get(index as u32) {
                 return Some(Property::data(value.clone()));
             }
         }
@@ -287,10 +350,10 @@ impl JSObject {
             return JSValue::from_number(length as f64);
         }
 
-        // 配列要素を検索（穴は undefined として扱う）
+        // 配列要素を検索（存在しないインデックスは穴として undefined を返す）
         if let Some(index) = canonical_array_index(key)
             && let Some(elements) = &self.elements
-            && let Some(element) = elements.borrow().get(index).and_then(Option::as_ref)
+            && let Some(element) = elements.borrow().get(index as u32)
         {
             return element.clone();
         }
@@ -318,7 +381,7 @@ impl JSObject {
             }
         }
         if let Some(elements) = &self.elements
-            && let Some(Some(value)) = elements.borrow().get(index)
+            && let Some(value) = elements.borrow().get(index as u32)
         {
             return value.clone();
         }
@@ -349,17 +412,10 @@ impl JSObject {
             return self.set(index.to_string(), value);
         }
         let mut elements = elements.borrow_mut();
-        if index < elements.len() {
-            // 既存要素の上書き
-            elements[index] = Some(value);
-            return true;
-        }
-        // 新しい要素: 拡張可能性を尊重
-        if !self.extensible {
+        if !self.extensible && !elements.contains(index as u32) {
             return false;
         }
-        elements.resize(index + 1, None);
-        elements[index] = Some(value);
+        elements.set(index as u32, value);
         true
     }
 
@@ -373,10 +429,7 @@ impl JSObject {
             }
         }
         if let Some(elements) = &self.elements
-            && elements
-                .borrow()
-                .get(index)
-                .is_some_and(|slot| slot.is_some())
+            && elements.borrow().contains(index as u32)
         {
             return true;
         }
@@ -399,10 +452,10 @@ impl JSObject {
 
         if key == "length" && self.is_array() {
             let raw = value.to_number();
-            if !raw.is_finite() || raw < 0.0 {
+            if !raw.is_finite() || raw < 0.0 || raw.fract() != 0.0 || raw > u32::MAX as f64 {
                 return false;
             }
-            return self.set_array_length(raw as usize);
+            return self.set_array_length(raw as u32);
         }
 
         // 配列要素ストレージへの書き込み
@@ -410,17 +463,10 @@ impl JSObject {
             && let Some(elements) = &self.elements
         {
             let mut elements = elements.borrow_mut();
-            if index < elements.len() {
-                // 既存要素の上書き
-                elements[index] = Some(value);
-                return true;
-            }
-            // 新しい要素: 拡張可能性を尊重
-            if !self.extensible {
+            if !self.extensible && !elements.contains(index as u32) {
                 return false;
             }
-            elements.resize(index + 1, None);
-            elements[index] = Some(value);
+            elements.set(index as u32, value);
             return true;
         }
 
@@ -445,10 +491,7 @@ impl JSObject {
         }
         if let Some(index) = canonical_array_index(key)
             && let Some(elements) = &self.elements
-            && elements
-                .borrow()
-                .get(index)
-                .is_some_and(|slot| slot.is_some())
+            && elements.borrow().contains(index as u32)
         {
             return true;
         }
@@ -494,19 +537,17 @@ impl JSObject {
             // delete 後はマップと同じく「穴」として扱う（古い要素の復活を防ぐ）
             if let Some(index) = canonical_array_index(key)
                 && let Some(elements) = &self.elements
-                && let Some(slot) = elements.borrow_mut().get_mut(index)
             {
-                *slot = None;
+                elements.borrow_mut().delete(index as u32);
             }
             return true;
         }
 
-        // 配列要素は穴（None）にする
+        // 配列要素はマップから削除
         if let Some(index) = canonical_array_index(key)
             && let Some(elements) = &self.elements
-            && let Some(slot) = elements.borrow_mut().get_mut(index)
         {
-            *slot = None;
+            elements.borrow_mut().delete(index as u32);
         }
 
         true
@@ -526,20 +567,16 @@ impl JSObject {
                 Some(false) => return false,
                 Some(true) => {
                     self.properties.borrow_mut().remove(key);
-                    if let Some(elements) = &self.elements
-                        && let Some(slot) = elements.borrow_mut().get_mut(index)
-                    {
-                        *slot = None;
+                    if let Some(elements) = &self.elements {
+                        elements.borrow_mut().delete(index as u32);
                     }
                     return true;
                 }
                 None => {}
             }
         }
-        if let Some(elements) = &self.elements
-            && let Some(slot) = elements.borrow_mut().get_mut(index)
-        {
-            *slot = None;
+        if let Some(elements) = &self.elements {
+            elements.borrow_mut().delete(index as u32);
         }
         true
     }
@@ -582,10 +619,9 @@ impl JSObject {
         if let Some(elements) = &self.elements {
             let elements = elements.borrow();
             let props = self.properties.borrow();
-            for (index, slot) in elements.iter().enumerate() {
-                if slot.is_none() {
-                    continue;
-                }
+            let mut indices: Vec<u32> = elements.elements.keys().copied().collect();
+            indices.sort_unstable();
+            for index in indices {
                 // キー文字列は contains_key と push で共通利用（二重アロケーションを回避）
                 let key = index.to_string();
                 if !props.contains_key(&key) {
@@ -605,10 +641,9 @@ impl JSObject {
         if let Some(elements) = &self.elements {
             let elements = elements.borrow();
             let props = self.properties.borrow();
-            for (index, slot) in elements.iter().enumerate() {
-                if slot.is_none() {
-                    continue;
-                }
+            let mut indices: Vec<u32> = elements.elements.keys().copied().collect();
+            indices.sort_unstable();
+            for index in indices {
                 // キー文字列は contains_key と push で共通利用（二重アロケーションを回避）
                 let key = index.to_string();
                 if !props.contains_key(&key) {
@@ -638,10 +673,10 @@ impl JSObject {
     pub fn define_property(&mut self, key: String, property: Property) -> bool {
         if key == "length" && self.is_array() {
             let raw = property.value.to_number();
-            if !raw.is_finite() || raw < 0.0 {
+            if !raw.is_finite() || raw < 0.0 || raw.fract() != 0.0 || raw > u32::MAX as f64 {
                 return false;
             }
-            return self.set_array_length(raw as usize);
+            return self.set_array_length(raw as u32);
         }
         // New properties cannot be added
         if !self.extensible && !self.has_own_property(&key) {
