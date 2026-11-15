@@ -2364,7 +2364,13 @@ impl VM {
             if property.getter.is_some() || !property.writable {
                 return Ok(());
             }
-            object_ref.borrow_mut().set(key_string.to_string(), value);
+            if key_string == "length" && object_ref.borrow().is_array() {
+                if !object_ref.borrow_mut().set(key_string.to_string(), value) {
+                    return Err(JSError::RangeError("Invalid array length".to_string()));
+                }
+            } else {
+                object_ref.borrow_mut().set(key_string.to_string(), value);
+            }
             update_array_length_after_index_write(&object_ref, key_index);
             return Ok(());
         }
@@ -2387,7 +2393,13 @@ impl VM {
             return Ok(());
         }
 
-        object_ref.borrow_mut().set(key_string.to_string(), value);
+        if key_string == "length" && object_ref.borrow().is_array() {
+            if !object_ref.borrow_mut().set(key_string.to_string(), value) {
+                return Err(JSError::RangeError("Invalid array length".to_string()));
+            }
+        } else {
+            object_ref.borrow_mut().set(key_string.to_string(), value);
+        }
         update_array_length_after_index_write(&object_ref, key_index);
         Ok(())
     }

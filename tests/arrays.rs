@@ -630,17 +630,19 @@ fn shrinking_length_removes_elements() {
     assert_eq!(result, JSValue::from_bool(true));
 }
 
-fn invalid_length_is_silently_ignored() {
+fn invalid_length_throws_range_error() {
     let mut engine = JSEngine::new();
     let result = engine
         .eval(
             r#"
             const a = [];
-            a.length = 5;
-            a.length = -1;
-            a.length = 1.5;
-            a.length = 4294967296;
-            a.length === 5;
+            let threw = false;
+            try { a.length = -1; } catch (e) { threw = e instanceof RangeError; }
+            threw = false;
+            try { a.length = 1.5; } catch (e) { threw = e instanceof RangeError; }
+            threw = false;
+            try { a.length = 4294967296; } catch (e) { threw = e instanceof RangeError; }
+            threw;
             "#,
         )
         .unwrap();
@@ -653,7 +655,7 @@ fn suite_array_sparse_storage() {
     sparse_index_assignment_with_large_length();
     holes_and_undefined_are_different();
     shrinking_length_removes_elements();
-    invalid_length_is_silently_ignored();
+    invalid_length_throws_range_error();
 }
 
 #[test]
