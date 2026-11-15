@@ -698,9 +698,7 @@ impl JSValue {
                 Some(d.identity | BOUND_CALLABLE_ID_BIT)
             }
             JsValueKind::NativeFunction => {
-                let Some(f) = self.as_native_function() else {
-                    return None;
-                };
+                let f = self.as_native_function().unwrap();
                 Some((f as usize as u64) | NATIVE_CALLABLE_ID_BIT)
             }
             _ => self.user_function_identity(),
